@@ -1,0 +1,15 @@
+node_modules
+.git
+.gitignore
+pnpm-debug.log
+npm-debug.log
+yarn-error.log
+artifacts/*/dist
+artifacts/wick-betts-mobile/static-build
+artifacts/wick-betts-mobile/.expo
+artifacts/wick-betts-mobile/.expo-shared
+archive
+coverage
+.vscode
+.local
+.cache
