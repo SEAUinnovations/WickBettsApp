@@ -24,7 +24,7 @@ Set these service variables before first production start:
 
 - `NODE_ENV=production`
 - `PORT=8080` (or let Railway inject `PORT` if configured)
-- `DATABASE_URL=<Railway Postgres connection string>`
+- `DATABASE_URL=${{ Postgres.DATABASE_PRIVATE_URL }}`
 - `APP_ORIGIN=https://app.yourdomain.com`
 - `CORS_ALLOWED_ORIGINS=https://app.yourdomain.com`
 - `CORS_ALLOW_REPLIT_ORIGINS=false`
@@ -40,6 +40,11 @@ Optional:
 
 - `OPENAI_API_KEY=<key>`
 - `WEB_DIST_DIR=<custom path>` (only if the default static bundle path is changed)
+
+Database note:
+
+- Use the Railway Postgres private-network reference shown in the Postgres connect dialog.
+- Do not point this app at MySQL; the backend uses `pg` and `drizzle-orm/node-postgres`, so it requires a Postgres connection string.
 
 ## 3. Clerk and Stripe Console Updates
 

@@ -7,6 +7,7 @@ Phase A: Railway project setup
 3. Confirm Railway picks up railway.json.
 4. Add a Railway Postgres database.
 5. Add variables from ops/railway.production.env.template.
+6. Set `DATABASE_URL` in the app service to `${{ Postgres.DATABASE_PRIVATE_URL }}` from the Railway Postgres connect dialog.
 
 Phase B: First deploy
 
