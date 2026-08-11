@@ -13,7 +13,7 @@
   },
   "private": true,
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.0.0 <23"
   },
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.1"
