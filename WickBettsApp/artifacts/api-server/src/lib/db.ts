@@ -1,0 +1,36 @@
+// Central DB + schema export for the api-server.
+// TypeScript resolves @workspace/db via the project reference in tsconfig.json,
+// so all types come from lib/db/dist after `tsc --build lib/db`.
+export { db, pool } from "@workspace/db";
+
+// Re-export the full schema surface so route files import from one place.
+export {
+  // Users
+  usersTable,
+  insertUserSchema,
+  userRoleEnum,
+  type InsertUser,
+  type User,
+  // Subscriptions
+  subscriptionsTable,
+  insertSubscriptionSchema,
+  planEnum,
+  subStatusEnum,
+  type InsertSubscription,
+  type Subscription,
+  // Signals
+  signalsTable,
+  insertSignalSchema,
+  marketEnum,
+  directionEnum,
+  signalStatusEnum,
+  optionTypeEnum,
+  type InsertSignal,
+  type Signal,
+  // Community
+  communityPostsTable,
+  communityThreadEnum,
+  insertCommunityPostSchema,
+  type InsertCommunityPost,
+  type CommunityPost,
+} from "@workspace/db";

@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/wick-betts-mobile/"
+title = "Wick Betts Mobile"
+description = "A React Native mobile membership experience for Wick Betts, bringing market signals, news, community, mentorship booking, and account controls to iOS and Android."
+version = "1.0.0"
+id = "artifacts/wick-betts-mobile"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/wick-betts-mobile/" ]
+localPort = 25270
+
+[services.development]
+run = "pnpm --filter @workspace/wick-betts-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/wick-betts-mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/wick-betts-mobile", "run", "serve" ]
+
+[services.env]
+PORT = "25270"
+BASE_PATH = "/wick-betts-mobile/"

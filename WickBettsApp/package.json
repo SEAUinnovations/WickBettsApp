@@ -1,0 +1,24 @@
+{
+  "name": "workspace",
+  "version": "0.0.0",
+  "license": "MIT",
+  "scripts": {
+    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; ua=\"${npm_config_user_agent:-}\"; execp=\"${npm_execpath:-}\"; if [ -n \"$ua\" ]; then case \"$ua\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac; else case \"$execp\" in *pnpm*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac; fi'",
+    "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "typecheck:libs": "tsc --build",
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
+    "railway:build": "PORT=3000 BASE_PATH=/ pnpm --filter @workspace/wick-betts build && pnpm --filter @workspace/api-server build",
+    "railway:start": "node artifacts/api-server/dist/index.mjs"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@replit/connectors-sdk": "^0.4.1"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6",
+    "typescript": "~5.9.3"
+  }
+}

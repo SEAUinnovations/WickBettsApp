@@ -1,0 +1,905 @@
+Yes. Based on your answers, I’d structure **Wick Betts** as a paid stock/crypto signals and mentorship platform with two clear membership paths, a built-in calendar/booking system, and exactly three community threads.
+
+# Wick Betts — App Creation Plan
+
+## 1. Core business model
+
+### Plan A — Daily Signals
+
+**$250/month**
+
+Members receive access to:
+
+* Daily stock and crypto signals
+* Signal explanations
+* Market/news updates
+* Signal history
+* The **Signals** thread
+* The **News** thread
+* The **Community Chat** thread
+
+The $250 subscription automatically renews monthly until canceled.
+
+### Plan B — Mentorship
+
+**$500/month / 30-day membership**
+
+Includes everything in the Signals membership, plus:
+
+* One-on-one mentorship
+* **2 one-hour calls per week**
+* Maximum **8 one-hour calls during a 30-day period**
+* Personal mentorship calendar
+* Appointment booking
+* Available time slots
+* Upcoming appointment reminders
+* Ability to reschedule/cancel according to your rules
+
+I would make mentorship an upgrade from the $250 service rather than creating a completely separate app.
+
+---
+
+# 2. User journey
+
+The experience should be extremely simple:
+
+**Landing Page → Create Account → Choose Plan → Pay → Dashboard**
+
+### Step 1 — Landing page
+
+The homepage should introduce:
+
+**WICK BETTS**
+
+*Stocks • Crypto • Signals • Mentorship*
+
+Then explain the two services.
+
+**Daily Signals — $250/month**
+
+* Daily market signals
+* Stock & crypto coverage
+* Market/news updates
+* Private member community
+
+**Wick Betts Mentorship — $500/month**
+
+* Everything in Daily Signals
+* One-on-one mentorship
+* 2 one-hour sessions per week
+* Personal booking calendar
+
+Buttons:
+
+**JOIN SIGNALS**
+
+**JOIN MENTORSHIP**
+
+---
+
+# 3. Account creation
+
+Users should create an account before purchasing.
+
+Information:
+
+* First name
+* Last name
+* Email
+* Phone number
+* Password
+* Time zone
+* Optional username/profile name
+
+For mentorship, you could also collect:
+
+* Trading/investing experience
+* Stocks, crypto, or both
+* Experience level
+* Main goals
+* Preferred call times
+
+This gives Wick Betts useful information before the first mentorship call.
+
+---
+
+# 4. Subscription/payment system
+
+The app should have recurring billing.
+
+### Signals
+
+**$250 / month**
+
+Access begins after successful payment.
+
+### Mentorship
+
+**$500 / month**
+
+Access begins after successful payment.
+
+The system should automatically determine the user's permissions based on their active subscription.
+
+For example:
+
+| Feature           | Signals $250 | Mentorship $500 |
+| ----------------- | -----------: | --------------: |
+| Daily signals     |            ✓ |               ✓ |
+| Stock signals     |            ✓ |               ✓ |
+| Crypto signals    |            ✓ |               ✓ |
+| News              |            ✓ |               ✓ |
+| Community         |            ✓ |               ✓ |
+| Calendar          |            — |               ✓ |
+| Book calls        |            — |               ✓ |
+| 1-on-1 mentorship |            — |               ✓ |
+| 2 calls/week      |            — |               ✓ |
+
+---
+
+# 5. Main user dashboard
+
+After logging in, users should land on a clean dashboard.
+
+### Dashboard layout
+
+**WICK BETTS**
+
+**Good evening, [Name]**
+
+Then show:
+
+### Today's Market
+
+* Market status
+* Important market news
+* Today's signals
+* Latest Wick Betts updates
+
+### Quick Actions
+
+**View Signals**
+
+**View News**
+
+**Community**
+
+Mentorship members additionally see:
+
+**Book a Mentorship Call**
+
+**Upcoming Call**
+
+**My Calendar**
+
+---
+
+# 6. The three-thread system
+
+You specifically wanted only **three threads**, so I would make these permanent sections rather than allowing users to create additional channels.
+
+## THREAD 1 — SIGNALS
+
+This is where Wick Betts posts trading/investing signals.
+
+Example:
+
+**BTC/USD — LONG**
+
+Entry: $XX,XXX
+Target: $XX,XXX
+Stop: $XX,XXX
+
+**Reason:**
+Technical/market reasoning behind the setup.
+
+The admin should be able to attach:
+
+* Charts
+* Images
+* Videos
+* PDFs
+* Links
+* Signal status
+
+Signal status could be:
+
+🟢 Active
+🟡 Watching
+🔵 Closed
+🔴 Stopped
+
+Users can receive push notifications whenever a new signal is posted.
+
+---
+
+# 7. THREAD 2 — NEWS
+
+This is the market-information feed.
+
+Posts can include:
+
+* Stock market news
+* Crypto news
+* Economic events
+* Earnings
+* Federal Reserve announcements
+* Major company announcements
+* Regulatory news
+* Market-moving events
+
+Each post can have:
+
+**Headline**
+
+**Summary**
+
+**Why it matters**
+
+**Affected assets**
+
+**Wick Betts commentary**
+
+This keeps news separate from actual signals.
+
+---
+
+# 8. THREAD 3 — COMMUNITY CHAT
+
+This is the social area.
+
+Users can:
+
+* Talk to other members
+* Ask questions
+* Discuss markets
+* Share ideas
+* Reply to posts
+* React to messages
+
+I'd give the admin/moderator additional controls:
+
+* Delete message
+* Remove user
+* Mute user
+* Ban user
+* Pin message
+* Report review
+* Keyword moderation
+
+Importantly, **users cannot create additional threads/channels**. Wick Betts controls the three official areas.
+
+---
+
+# 9. Mentorship calendar
+
+This is one of the most important pieces.
+
+Mentorship users get a dedicated:
+
+## **MENTORSHIP CALENDAR**
+
+The calendar displays available appointment times.
+
+For example:
+
+**Monday**
+
+* 10:00 AM — Available
+* 2:00 PM — Booked
+* 5:00 PM — Available
+
+**Tuesday**
+
+* 11:00 AM — Available
+* 3:00 PM — Available
+
+When the user selects an available time:
+
+**Mentorship Session**
+
+Duration: **1 hour**
+
+**Confirm Booking**
+
+---
+
+# 10. Two-call-per-week enforcement
+
+This needs to be handled automatically by the software.
+
+The system tracks each mentorship member's calls.
+
+Example:
+
+**Week 1**
+
+Call #1 — Monday — Completed
+Call #2 — Thursday — Scheduled
+
+The booking system should prevent them from booking a third call during that week.
+
+Display:
+
+> **2 of 2 weekly mentorship sessions used**
+
+Then the following week:
+
+> **0 of 2 weekly mentorship sessions used**
+
+This should be enforced by the backend, not merely displayed on the screen.
+
+---
+
+# 11. 30-day mentorship period
+
+When someone purchases mentorship, the system creates a **30-day membership period**.
+
+Example:
+
+**Mentorship Started:** August 10
+**Membership Ends:** September 9
+
+The dashboard displays:
+
+**Mentorship — Active**
+
+**Days Remaining: 30**
+
+After renewal:
+
+**New 30-day period begins**
+
+The system should also handle the difference between:
+
+* Subscription billing date
+* Membership period
+* Weekly call allowance
+
+I'd have a developer define these rules precisely before coding so there aren't disputes over calls near the end of a billing cycle.
+
+---
+
+# 12. Booking rules
+
+The admin should have a scheduling dashboard.
+
+You control:
+
+### Available days
+
+For example:
+
+* Monday
+* Tuesday
+* Wednesday
+* Thursday
+
+### Available hours
+
+For example:
+
+* 9 AM–5 PM
+
+### Call duration
+
+**60 minutes**
+
+### Buffer time
+
+For example:
+
+* 15 minutes between appointments
+
+### Maximum calls
+
+**2 per member per week**
+
+The admin should be able to block out:
+
+* Vacations
+* Holidays
+* Personal appointments
+* Unavailable days
+
+---
+
+# 13. Automatic reminders
+
+Mentorship bookings should trigger notifications.
+
+### Immediately after booking
+
+> Your Wick Betts mentorship session is confirmed.
+
+### 24 hours before
+
+> Reminder: Your Wick Betts mentorship session is tomorrow.
+
+### 1 hour before
+
+> Your Wick Betts mentorship session starts in 1 hour.
+
+The notification can contain a **Join Call** button.
+
+---
+
+# 14. Video calls
+
+I would integrate the mentorship booking system with a video-call provider rather than trying to build video conferencing from scratch.
+
+Each booking generates a private meeting room/link.
+
+The admin and member both see:
+
+**Join Mentorship Call**
+
+The meeting link should only become available to the appropriate mentor/member.
+
+---
+
+# 15. Admin dashboard
+
+This is essentially the control center for Wick Betts.
+
+The owner/admin should see:
+
+### Users
+
+* All users
+* Active users
+* Canceled users
+* Signals members
+* Mentorship members
+* New registrations
+
+### Revenue
+
+* Monthly recurring revenue
+* Signals subscribers
+* Mentorship subscribers
+* Failed payments
+* Cancellations
+
+### Content
+
+* Create signal
+* Edit signal
+* Post news
+* Manage community
+* Pin posts
+* Delete posts
+
+### Mentorship
+
+* Calendar
+* Availability
+* Upcoming calls
+* Completed calls
+* Missed calls
+* Member call usage
+
+---
+
+# 16. Signal creation system
+
+Instead of typing signals directly into the community every time, I'd build a dedicated **Create Signal** form.
+
+Admin enters:
+
+**Asset:** BTC
+**Market:** Crypto
+**Direction:** Long / Short
+**Entry:**
+**Stop Loss:**
+**Target:**
+**Timeframe:**
+**Risk Level:**
+**Analysis:**
+**Chart:**
+**Expiration:**
+
+Then:
+
+**POST SIGNAL**
+
+The app automatically publishes it into the Signals thread.
+
+This will make Wick Betts look much more professional and keep signal formatting consistent.
+
+---
+
+# 17. Signal history
+
+Members should be able to go back and review previous signals.
+
+Filters:
+
+**Stocks | Crypto | Long | Short | Active | Closed**
+
+Each signal gets a permanent record.
+
+For example:
+
+> BTC/USD — Long
+> Posted Aug. 10
+> Entry: $XX
+> Status: Closed
+
+This is also useful for internal recordkeeping and transparency.
+
+---
+
+# 18. Notifications
+
+Users should be able to control notifications.
+
+### Signals
+
+🔔 New signal
+
+### News
+
+🔔 Major news
+
+### Community
+
+🔔 Community activity
+
+### Mentorship
+
+🔔 Booking confirmation
+🔔 Appointment reminder
+🔔 Schedule changes
+
+I'd also include a setting for:
+
+**Push Notifications: ON/OFF**
+
+---
+
+# 19. Subscription management
+
+Users should have a:
+
+## My Subscription
+
+Showing:
+
+**Wick Betts Signals**
+
+$250/month
+
+**Status:** Active
+
+**Next billing date:** [date]
+
+Buttons:
+
+**Manage Subscription**
+
+**Cancel Subscription**
+
+Mentorship members:
+
+**Wick Betts Mentorship**
+
+$500/month
+
+**Status:** Active
+
+**Mentorship period:** [dates]
+
+**Calls remaining this week:** 2
+
+---
+
+# 20. Upgrade path
+
+A Signals member should be able to upgrade easily.
+
+For example:
+
+> **Want more personalized help?**
+>
+> Upgrade to Wick Betts Mentorship for $500/month and receive everything in Signals plus two 1-hour mentorship sessions every week.
+
+**UPGRADE TO MENTORSHIP**
+
+The system should handle the subscription change without making the customer create another account.
+
+---
+
+# 21. Recommended app navigation
+
+I'd keep the bottom navigation extremely simple:
+
+**Home | Signals | News | Community | Profile**
+
+For mentorship users, the Home screen additionally displays:
+
+**📅 Book Mentorship**
+
+You could also have Calendar accessible from Profile/Mentorship, but I wouldn't clutter the main navigation.
+
+---
+
+# 22. Recommended technology structure
+
+For a modern version of this app, I'd build:
+
+### Frontend
+
+A responsive web app that works on:
+
+* Desktop
+* iPhone
+* Android
+
+Then, if the business grows, package it as native iOS/Android apps.
+
+### Backend
+
+Responsible for:
+
+* Accounts
+* Authentication
+* Subscriptions
+* User permissions
+* Signals
+* News
+* Chat
+* Calendar
+* Bookings
+* Call limits
+* Notifications
+
+### Database
+
+Core tables would include:
+
+* Users
+* Subscriptions
+* Plans
+* Signals
+* News Posts
+* Community Messages
+* Mentorship Sessions
+* Availability
+* Notifications
+* Payments
+* Moderation Reports
+
+---
+
+# 23. Important financial/regulatory consideration
+
+Because Wick Betts will charge people for **stock/crypto signals and mentorship**, this needs to be addressed **before launch**, not after the app is built.
+
+The SEC describes an investment adviser broadly around providing advice about securities for compensation as part of a business, and it specifically discusses compensated advice/analysis and investment recommendations. ([SEC][1])
+
+That means the exact way Wick Betts provides signals and mentorship could have regulatory implications depending on what you recommend, how personalized the advice becomes, who you serve, and how the business is structured.
+
+The marketing side matters too. The SEC's current guidance covers claims, performance information, testimonials/endorsements, and recordkeeping for investment-adviser marketing. ([SEC][2])
+
+**I would therefore put a securities/financial-regulatory attorney review into Phase 1 of the project.** The app shouldn't launch with claims such as guaranteed returns, "never lose," or unsupported performance claims.
+
+---
+
+# 24. Legal pages the app should have
+
+Before someone purchases:
+
+* Terms of Service
+* Privacy Policy
+* Subscription/Refund Policy
+* Risk Disclosure
+* Investment/financial disclaimer appropriate to the actual service
+* Community rules
+* Mentorship terms
+* Cancellation policy
+
+The exact legal language should be drafted/reviewed by qualified counsel rather than copied from another app.
+
+---
+
+# 25. MVP — first version
+
+I would **not** try to build every possible feature initially.
+
+The first Wick Betts release should contain:
+
+### Customer side
+
+**Account**
+
+* Sign up
+* Login
+* Forgot password
+
+**Membership**
+
+* $250 Signals
+* $500 Mentorship
+* Recurring billing
+
+**Dashboard**
+
+**Signals**
+
+* Post
+* View
+* Signal history
+
+**News**
+
+* Posts
+* Comments/reactions if desired
+
+**Community**
+
+* One community chat
+
+**Mentorship**
+
+* Calendar
+* Available times
+* Booking
+* Cancellation/rescheduling
+* 2 calls/week enforcement
+* 30-day membership tracking
+
+**Notifications**
+
+**Profile**
+
+### Admin side
+
+* User management
+* Subscription management
+* Signal posting
+* News posting
+* Community moderation
+* Calendar management
+* Availability management
+* Mentorship bookings
+* Member call tracking
+* Basic revenue/subscription reporting
+
+---
+
+# 26. Development phases
+
+### Phase 1 — Business & compliance
+
+**1–2 weeks**
+
+* Finalize Wick Betts business model
+* Define exactly what constitutes a "signal"
+* Define mentorship service
+* Determine applicable regulatory requirements
+* Terms/privacy/risk disclosures
+* Refund/cancellation rules
+
+### Phase 2 — UX/UI design
+
+**1–2 weeks**
+
+Design:
+
+* Logo/branding
+* Landing page
+* Sign-up
+* Checkout
+* Dashboard
+* Signals
+* News
+* Community
+* Calendar
+* Booking
+* Profile
+* Admin dashboard
+
+### Phase 3 — Core development
+
+**4–8 weeks**
+
+Build:
+
+* Authentication
+* Database
+* Subscriptions
+* User permissions
+* Dashboard
+* Signals
+* News
+* Community
+* Admin panel
+
+### Phase 4 — Mentorship system
+
+**2–3 weeks**
+
+Build:
+
+* Calendar
+* Availability
+* Booking
+* 2-call limit
+* 30-day tracking
+* Reminders
+* Video meeting integration
+* Rescheduling/cancellation
+
+### Phase 5 — Testing
+
+**1–2 weeks**
+
+Test:
+
+* Payments
+* Failed payments
+* Cancellations
+* Upgrades
+* Booking conflicts
+* Weekly call limits
+* Expired memberships
+* Notifications
+* Security
+* Mobile responsiveness
+
+### Phase 6 — Launch
+
+Start with a controlled group of members before opening it publicly.
+
+---
+
+# 27. The overall Wick Betts experience
+
+The finished product should feel like this:
+
+**WICK BETTS**
+
+**Choose your level**
+
+### SIGNALS
+
+**$250/month**
+
+Stocks + Crypto
+Daily signals
+Market news
+Private community
+
+**JOIN WICK BETTS**
+
+### MENTORSHIP
+
+**$500/month**
+
+Everything in Signals
++
+2 × 1-hour calls every week
++
+Personal mentorship
++
+Private booking calendar
+
+**JOIN MENTORSHIP**
+
+Then once inside:
+
+**HOME**
+↓
+**SIGNALS**
+**NEWS**
+**COMMUNITY**
+**MENTORSHIP CALENDAR**
+**PROFILE**
+
+That gives you a very clean product without turning it into a complicated social network.
+
+**My recommendation:** build the first version around **one Wick Betts account, two subscription levels, three permanent community threads, and one tightly controlled mentorship calendar.** That keeps the product simple while giving you a strong foundation to add features later.
+
+[1]: https://www.sec.gov/rules-regulations/2004/08/certain-broker-dealers-deemed-not-be-investment-advisers?utm_source=chatgpt.com "SEC.gov | Certain Broker-Dealers Deemed Not To Be Investment Advisers"
+[2]: https://www.sec.gov/resources-small-businesses/small-business-compliance-guides/investment-adviser-marketing?utm_source=chatgpt.com "SEC.gov | Investment Adviser Marketing"

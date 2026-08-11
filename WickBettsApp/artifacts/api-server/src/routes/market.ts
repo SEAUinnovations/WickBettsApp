@@ -1,0 +1,172 @@
+import { Router } from "express";
+import { logger } from "../lib/logger.js";
+
+const router = Router();
+
+// ── Ticker universe ───────────────────────────────────────────────────────────
+type AssetClass = "etf" | "stocks";
+interface TickerMeta { assetclass: AssetClass; group: string; shortName: string }
+
+const EQUITY_TICKERS: Record<string, TickerMeta> = {
+  // Indices / broad ETFs
+  SPY:  { assetclass: "etf",    group: "indices", shortName: "S&P 500 ETF" },
+  QQQ:  { assetclass: "etf",    group: "indices", shortName: "Nasdaq 100 ETF" },
+  IWM:  { assetclass: "etf",    group: "indices", shortName: "Russell 2000 ETF" },
+  DIA:  { assetclass: "etf",    group: "indices", shortName: "Dow Jones ETF" },
+  // Macro / bonds
+  GLD:  { assetclass: "etf",    group: "macro",   shortName: "Gold" },
+  TLT:  { assetclass: "etf",    group: "macro",   shortName: "20Y Treasury" },
+  SLV:  { assetclass: "etf",    group: "macro",   shortName: "Silver" },
+  USO:  { assetclass: "etf",    group: "macro",   shortName: "Oil" },
+  // Sectors
+  XLK:  { assetclass: "etf",    group: "sectors", shortName: "Tech" },
+  XLF:  { assetclass: "etf",    group: "sectors", shortName: "Financials" },
+  XLV:  { assetclass: "etf",    group: "sectors", shortName: "Health" },
+  XLE:  { assetclass: "etf",    group: "sectors", shortName: "Energy" },
+  XLY:  { assetclass: "etf",    group: "sectors", shortName: "Cons. Disc." },
+  XLI:  { assetclass: "etf",    group: "sectors", shortName: "Industrials" },
+  XLRE: { assetclass: "etf",    group: "sectors", shortName: "Real Estate" },
+  XLU:  { assetclass: "etf",    group: "sectors", shortName: "Utilities" },
+  XLP:  { assetclass: "etf",    group: "sectors", shortName: "Staples" },
+  XLC:  { assetclass: "etf",    group: "sectors", shortName: "Comms" },
+  XLB:  { assetclass: "etf",    group: "sectors", shortName: "Materials" },
+  // Mega-cap tech
+  AAPL: { assetclass: "stocks", group: "megacap", shortName: "Apple" },
+  MSFT: { assetclass: "stocks", group: "megacap", shortName: "Microsoft" },
+  NVDA: { assetclass: "stocks", group: "megacap", shortName: "Nvidia" },
+  AMZN: { assetclass: "stocks", group: "megacap", shortName: "Amazon" },
+  GOOGL:{ assetclass: "stocks", group: "megacap", shortName: "Alphabet" },
+  META: { assetclass: "stocks", group: "megacap", shortName: "Meta" },
+  TSLA: { assetclass: "stocks", group: "megacap", shortName: "Tesla" },
+  ORCL: { assetclass: "stocks", group: "megacap", shortName: "Oracle" },
+  AMD:  { assetclass: "stocks", group: "megacap", shortName: "AMD" },
+  AVGO: { assetclass: "stocks", group: "megacap", shortName: "Broadcom" },
+  // Finance
+  JPM:  { assetclass: "stocks", group: "finance", shortName: "JPMorgan" },
+  GS:   { assetclass: "stocks", group: "finance", shortName: "Goldman Sachs" },
+  V:    { assetclass: "stocks", group: "finance", shortName: "Visa" },
+  MA:   { assetclass: "stocks", group: "finance", shortName: "Mastercard" },
+  BAC:  { assetclass: "stocks", group: "finance", shortName: "BofA" },
+  MS:   { assetclass: "stocks", group: "finance", shortName: "Morgan Stanley" },
+  // Crypto-adjacent stocks
+  COIN: { assetclass: "stocks", group: "crypto",  shortName: "Coinbase" },
+  MSTR: { assetclass: "stocks", group: "crypto",  shortName: "MicroStrategy" },
+};
+
+const CRYPTO_TICKERS: Record<string, { id: string; shortName: string }> = {
+  "BTC-USD": { id: "bitcoin",  shortName: "Bitcoin" },
+  "ETH-USD": { id: "ethereum", shortName: "Ethereum" },
+};
+
+export interface QuoteItem {
+  symbol: string; shortName: string; price: number; change: number;
+  changePercent: number; volume: number; group: string; currency: string;
+}
+
+interface CacheEntry { quotes: QuoteItem[]; fetchedAt: number }
+let cache: CacheEntry | null = null;
+const CACHE_MS = 60 * 1000;
+
+const HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept": "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Origin": "https://www.nasdaq.com",
+  "Referer": "https://www.nasdaq.com/",
+};
+
+function parseMoney(s: string): number {
+  return parseFloat(s.replace(/[$,%+\s]/g, "")) || 0;
+}
+
+async function fetchNasdaqQuote(symbol: string, meta: TickerMeta): Promise<QuoteItem | null> {
+  try {
+    const url = `https://api.nasdaq.com/api/quote/${symbol}/info?assetclass=${meta.assetclass}`;
+    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const json = await res.json() as {
+      data?: {
+        primaryData?: {
+          lastSalePrice?: string; netChange?: string; percentageChange?: string; volume?: string;
+        };
+      };
+    };
+    const d = json?.data?.primaryData;
+    if (!d) return null;
+    const price = parseMoney(d.lastSalePrice ?? "");
+    if (!price) return null;
+    const changePercent = parseMoney(d.percentageChange ?? "");
+    const change = parseMoney(d.netChange ?? "");
+    const volume = parseMoney(d.volume?.replace(/,/g, "") ?? "");
+    return { symbol, shortName: meta.shortName, price, change, changePercent, volume, group: meta.group, currency: "USD" };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchCryptoQuotes(): Promise<QuoteItem[]> {
+  try {
+    const ids = Object.values(CRYPTO_TICKERS).map((c) => c.id).join(",");
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return [];
+    const json = await res.json() as Record<string, { usd: number; usd_24h_change: number }>;
+    return Object.entries(CRYPTO_TICKERS).map(([symbol, meta]) => {
+      const data = json[meta.id];
+      if (!data) return null;
+      const price = data.usd ?? 0;
+      const changePercent = data.usd_24h_change ?? 0;
+      const change = price * (changePercent / 100);
+      return { symbol, shortName: meta.shortName, price, change, changePercent, volume: 0, group: "crypto", currency: "USD" } satisfies QuoteItem;
+    }).filter((q): q is QuoteItem => q !== null);
+  } catch {
+    return [];
+  }
+}
+
+async function refreshAllQuotes(): Promise<QuoteItem[]> {
+  // Fetch all equity tickers in parallel, plus crypto concurrently
+  const equityEntries = Object.entries(EQUITY_TICKERS);
+  const [equityResults, cryptoResults] = await Promise.all([
+    Promise.allSettled(equityEntries.map(([symbol, meta]) => fetchNasdaqQuote(symbol, meta))),
+    fetchCryptoQuotes(),
+  ]);
+
+  const quotes: QuoteItem[] = [];
+  for (const result of equityResults) {
+    if (result.status === "fulfilled" && result.value) {
+      quotes.push(result.value);
+    }
+  }
+  quotes.push(...cryptoResults);
+  return quotes;
+}
+
+// GET /api/market/quotes
+router.get("/quotes", async (_req, res) => {
+  if (cache && Date.now() - cache.fetchedAt < CACHE_MS) {
+    res.json({ quotes: cache.quotes, fetchedAt: cache.fetchedAt, delayedMinutes: 15 });
+    return;
+  }
+  try {
+    const quotes = await refreshAllQuotes();
+    if (quotes.length > 0) {
+      cache = { quotes, fetchedAt: Date.now() };
+    }
+    res.json({ quotes: cache?.quotes ?? [], fetchedAt: cache?.fetchedAt ?? Date.now(), delayedMinutes: 15 });
+  } catch (err) {
+    logger.error(err, "Market quotes fetch failed");
+    if (cache) {
+      res.json({ quotes: cache.quotes, fetchedAt: cache.fetchedAt, delayedMinutes: 15, stale: true });
+    } else {
+      res.status(502).json({ error: "Unable to fetch market data. Try again shortly." });
+    }
+  }
+});
+
+// GET /api/market/tickers
+router.get("/tickers", (_req, res) => {
+  res.json({ equity: Object.keys(EQUITY_TICKERS), crypto: Object.keys(CRYPTO_TICKERS) });
+});
+
+export default router;

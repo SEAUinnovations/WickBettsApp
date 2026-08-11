@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Wick Betts"
+description = "A premium stock and crypto signals membership experience with a public plan-selection landing page, member dashboard, market intelligence feeds, community discussion, and a mentorship booking view."
+version = "1.0.0"
+id = "artifacts/wick-betts"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18088
+
+[services.development]
+run = "pnpm --filter @workspace/wick-betts run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/wick-betts", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/wick-betts/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18088"
+BASE_PATH = "/"

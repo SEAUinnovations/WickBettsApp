@@ -1,0 +1,2 @@
+- [Auth and Stripe Architecture](auth-stripe-architecture.md) — Google OAuth + Stripe subscriptions wired to Express API; relay `/api/*` paths; lib/db must be rebuilt before api-server typecheck.
+- [Design system parity](design-system-parity.md) — mobile app is the visual source of truth (dark plum #08070D, purple #A855F7, Inter); web must match its tokens.
