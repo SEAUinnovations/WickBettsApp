@@ -1,4 +1,4 @@
-FROM node:22.14.0-alpine AS build
+FROM node:22.14.0-bookworm-slim AS build
 WORKDIR /app
 
 RUN npm install -g pnpm@11.21.0
@@ -8,7 +8,7 @@ COPY . .
 RUN pnpm install --frozen-lockfile
 RUN PORT=3000 BASE_PATH=/ pnpm run railway:build
 
-FROM node:22.14.0-alpine AS runtime
+FROM node:22.14.0-bookworm-slim AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production

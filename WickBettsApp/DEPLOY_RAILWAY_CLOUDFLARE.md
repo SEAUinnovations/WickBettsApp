@@ -13,6 +13,11 @@ This setup deploys one Railway service and exposes one public Cloudflare domain.
 3. Ensure Railway reads [railway.json](railway.json).
 4. Provision a Railway Postgres database and attach it to the same project.
 
+Build note:
+
+- The Docker deployment path intentionally uses a Debian `bookworm-slim` Node image, not Alpine.
+- The workspace pnpm overrides strip several `linux-x64-musl` native optional packages, so switching the image back to Alpine will break Vite/Rollup native module resolution during build.
+
 ## 2. Required Railway Variables
 
 Set these service variables before first production start:
