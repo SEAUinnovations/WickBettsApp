@@ -1,7 +1,16 @@
 #!/usr/bin/env sh
 set -eu
 
-cd WickBettsApp
+if [ -f package.json ]; then
+	APP_DIR="."
+elif [ -f WickBettsApp/package.json ]; then
+	APP_DIR="WickBettsApp"
+else
+	echo "Could not find package.json in current directory or ./WickBettsApp" >&2
+	exit 1
+fi
+
+cd "$APP_DIR"
 
 if command -v pnpm >/dev/null 2>&1; then
 	pnpm run railway:build
