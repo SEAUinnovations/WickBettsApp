@@ -135,8 +135,16 @@ export default function LoginScreen() {
           <Text style={[styles.errorText, { color: '#ef4444' }]}>{error}</Text>
         ) : null}
 
+        {/* Sign up link */}
+        <View style={styles.signUpRow}>
+          <Text style={[styles.signUpText, { color: colors.mutedForeground }]}>New here? </Text>
+          <Pressable onPress={() => router.push('/sign-up' as never)}>
+            <Text style={[styles.signUpLink, { color: '#a78bfa' }]}>Create an account</Text>
+          </Pressable>
+        </View>
+
         <Text style={[styles.disclaimer, { color: colors.mutedForeground }]}>
-          Sign in or create an account to access signals, news, and market intelligence.
+          Sign in to access signals, news, and market intelligence.
         </Text>
       </View>
 
@@ -207,6 +215,9 @@ const styles = StyleSheet.create({
   googleIconText: { fontSize: 13, fontWeight: '700', color: '#4285F4', lineHeight: 18 },
   googleButtonText: { fontSize: 15, fontFamily: 'Inter_600SemiBold' },
   errorText: { fontSize: 12, textAlign: 'center', marginBottom: 12 },
+  signUpRow: { flexDirection: 'row', justifyContent: 'center', marginBottom: 20, marginTop: 4 },
+  signUpText: { fontSize: 14, fontFamily: 'Inter_400Regular' },
+  signUpLink: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
   disclaimer: {
     fontSize: 11,
     fontFamily: 'Inter_400Regular',

@@ -49,7 +49,7 @@ const proxyUrl: string | undefined =
 function isPublicRoute(segments: string[]): boolean {
   const first = segments[0];
   if (!first) return true;
-  return first === 'login' || first === 'sign-in' || first === 'auth';
+  return first === 'login' || first === 'sign-in' || first === 'auth' || first === 'sign-up';
 }
 
 function isAuthRoute(segments: string[]): boolean {
@@ -92,6 +92,7 @@ function RootLayoutNav() {
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="login" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="sign-in" options={{ headerShown: false, animation: 'none' }} />
+      <Stack.Screen name="sign-up" options={{ headerShown: false, animation: 'slide_from_right' }} />
       <Stack.Screen name="auth" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="app" options={{ headerShown: false }} />
       <Stack.Screen name="mentorship" options={{ headerShown: false }} />
