@@ -53,6 +53,7 @@ Set these service variables:
 - `STRIPE_WEBHOOK_SECRET=<stripe-webhook-secret>`
 - `STRIPE_PRICE_SIGNALS=<price_id>`
 - `STRIPE_PRICE_MENTORSHIP=<price_id>`
+- `STRIPE_PRICE_MEMBERSHIP=<price_id>`
 
 Optional Pages Worker variable:
 

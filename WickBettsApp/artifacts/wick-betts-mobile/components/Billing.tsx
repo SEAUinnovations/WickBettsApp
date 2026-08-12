@@ -11,7 +11,7 @@ import { useAuth, type Plan } from '@/context/AuthContext';
  * lapsed-recovery behaviour (see wick-betts/src/App.tsx).
  */
 
-type BillingAction = 'signals' | 'mentorship' | 'portal';
+type BillingAction = 'signals' | 'mentorship' | 'membership' | 'portal';
 
 function useBillingActions() {
   const { startCheckout, openBillingPortal } = useAuth();
@@ -109,6 +109,15 @@ export function SubscribePanel() {
         testID="subscribe-mentorship"
       >
         Subscribe · Mentorship $500
+      </ActionButton>
+      <ActionButton
+        onPress={() => void runCheckout('membership')}
+        icon="sparkles-outline"
+        busy={loading === 'membership'}
+        disabled={loading !== null}
+        testID="subscribe-membership"
+      >
+        Subscribe · Membership
       </ActionButton>
       <ErrorLine message={error} />
     </View>

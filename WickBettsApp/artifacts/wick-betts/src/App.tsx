@@ -17,7 +17,7 @@ const clerkPubKey = (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string) ?? ''
 const clerkProxyUrl = import.meta.env.PROD
   ? (import.meta.env.VITE_CLERK_PROXY_URL as string | undefined) || undefined
   : undefined;
-type Plan = 'signals' | 'mentorship';
+type Plan = 'signals' | 'mentorship' | 'membership';
 type SignalStatus = 'Active' | 'Watching' | 'Closed' | 'Stopped';
 type Direction = 'Long' | 'Short';
 type Thread = 'Signals' | 'News' | 'Community Chat';
@@ -180,6 +180,9 @@ function Landing() {
             <button className="button button-quiet" data-testid="button-hero-mentorship" onClick={() => void handlePlan('mentorship')} disabled={checkoutLoading !== null}>
               {checkoutLoading === 'mentorship' ? 'Redirecting…' : 'Explore mentorship'}
             </button>
+            <button className="button button-quiet" data-testid="button-hero-membership" onClick={() => void handlePlan('membership')} disabled={checkoutLoading !== null}>
+              {checkoutLoading === 'membership' ? 'Redirecting…' : 'Unlock membership'}
+            </button>
           </div>
           {checkoutError ? <p className="checkout-error">{checkoutError}</p> : null}
         </div>
@@ -221,6 +224,15 @@ function Landing() {
               <ul className="plan-list"><li>All daily signals with full Greeks</li><li>Options contract analysis</li><li>Weekly one-hour private call</li><li>Live calendar booking</li><li>Process review and trade journaling</li></ul>
               <button className="button button-primary" data-testid="button-plan-mentorship" onClick={() => void handlePlan('mentorship')} disabled={checkoutLoading !== null}>
                 {checkoutLoading === 'mentorship' ? 'Redirecting…' : 'Enter the closer room'} <ArrowRight size={14} />
+              </button>
+            </article>
+            <article className="plan-card animate-in delay-3">
+              <span className="eyebrow">The full membership</span><h3>Membership</h3>
+              <div className="price">Premium <small>/ month</small></div>
+              <p className="plan-detail">A complete member path for desks that want broad platform access in one subscription.</p>
+              <ul className="plan-list"><li>Unified member subscription</li><li>Checkout and billing portal access</li><li>Subscription status syncing via webhooks</li><li>Protected desk access after activation</li><li>Same secure Stripe checkout flow</li></ul>
+              <button className="button button-dark" data-testid="button-plan-membership" onClick={() => void handlePlan('membership')} disabled={checkoutLoading !== null}>
+                {checkoutLoading === 'membership' ? 'Redirecting…' : 'Join membership'} <ArrowRight size={14} />
               </button>
             </article>
           </div>
@@ -386,7 +398,7 @@ function MemberShell({ children }: { children: React.ReactNode }) {
             ? <img src={user.avatarUrl} alt={memberName} className="avatar-img" referrerPolicy="no-referrer" />
             : <span className="avatar">{initials(memberName)}</span>
           }
-          <div><strong>{memberName}</strong><span>{plan === 'mentorship' ? 'Mentorship member' : 'Signals member'}</span></div>
+          <div><strong>{memberName}</strong><span>{plan === 'mentorship' ? 'Mentorship member' : plan === 'membership' ? 'Membership member' : 'Signals member'}</span></div>
         </div>
         <button className="sidebar-logout" onClick={() => void logout()} title="Sign out">
           <LogOut size={13} /> Sign out

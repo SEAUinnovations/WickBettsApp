@@ -3,7 +3,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { usersTable } from "./users";
 
-export const planEnum = pgEnum("plan", ["signals", "mentorship"]);
+export const planEnum = pgEnum("plan", ["signals", "mentorship", "membership"]);
 export const subStatusEnum = pgEnum("sub_status", ["active", "past_due", "canceled", "trialing", "incomplete"]);
 
 export const subscriptionsTable = pgTable("subscriptions", {

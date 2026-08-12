@@ -14,7 +14,7 @@ import * as WebBrowser from 'expo-web-browser';
 import Constants from 'expo-constants';
 import { API_BASE } from '@/lib/apiUrl';
 
-export type Plan = 'signals' | 'mentorship';
+export type Plan = 'signals' | 'mentorship' | 'membership';
 
 export interface AuthUser {
   id: string;

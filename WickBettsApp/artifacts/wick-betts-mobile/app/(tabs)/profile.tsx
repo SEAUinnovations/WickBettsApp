@@ -19,6 +19,7 @@ const ACTIVE_STATUSES = ['active', 'trialing'];
 const PLAN_LABELS: Record<string, string> = {
   signals: 'Wick Betts Signals',
   mentorship: 'Wick Betts Mentorship',
+  membership: 'Wick Betts Membership',
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -132,7 +133,13 @@ export default function ProfileScreen() {
         {isAdmin ? (
           <Tag tone="green">ADMIN</Tag>
         ) : subscription ? (
-          <Tag>{planLabel?.includes('Mentorship') ? 'MENTORSHIP' : 'SIGNALS'}</Tag>
+          <Tag>
+            {planLabel?.includes('Mentorship')
+              ? 'MENTORSHIP'
+              : planLabel?.includes('Membership')
+                ? 'MEMBERSHIP'
+                : 'SIGNALS'}
+          </Tag>
         ) : null}
       </View>
 

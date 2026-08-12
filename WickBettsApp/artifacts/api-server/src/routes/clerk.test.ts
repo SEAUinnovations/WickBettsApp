@@ -65,6 +65,7 @@ async function seedUser(overrides: {
  */
 async function seedSubscription(
   userId: string,
+  plan: "signals" | "mentorship" | "membership" = "signals",
   status: "active" | "trialing" | "canceled" | "past_due" | "incomplete" = "active",
   currentPeriodEnd?: Date,
 ) {
@@ -72,7 +73,7 @@ async function seedSubscription(
   await db.insert(subscriptionsTable).values({
     id,
     userId,
-    plan: "signals",
+    plan,
     status,
     stripeSubscriptionId: `sub_smoke_${id}`,
     stripeCustomerId: `cus_smoke_${id}`,
@@ -197,7 +198,7 @@ test("requireActiveSubscription — 403 SUBSCRIPTION_REQUIRED when user has no s
 
 test("requireActiveSubscription — calls next() for active subscription", async () => {
   const user = await seedUser({ email: `active${TEST_DOMAIN}`, role: "member" });
-  await seedSubscription(user.id, "active");
+  await seedSubscription(user.id, "signals", "active");
   const req = makeMockReq(user);
   const res = makeMockRes();
   let nextCalled = false;
@@ -209,7 +210,7 @@ test("requireActiveSubscription — calls next() for active subscription", async
 
 test("requireActiveSubscription — calls next() for trialing subscription", async () => {
   const user = await seedUser({ email: `trialing${TEST_DOMAIN}`, role: "member" });
-  await seedSubscription(user.id, "trialing");
+  await seedSubscription(user.id, "signals", "trialing");
   const req = makeMockReq(user);
   const res = makeMockRes();
   let nextCalled = false;
@@ -221,7 +222,7 @@ test("requireActiveSubscription — calls next() for trialing subscription", asy
 
 test("requireActiveSubscription — 403 for canceled subscription", async () => {
   const user = await seedUser({ email: `canceled${TEST_DOMAIN}`, role: "member" });
-  await seedSubscription(user.id, "canceled");
+  await seedSubscription(user.id, "signals", "canceled");
   const req = makeMockReq(user);
   const res = makeMockRes();
   let nextCalled = false;
@@ -231,6 +232,18 @@ test("requireActiveSubscription — 403 for canceled subscription", async () => 
   assert.equal(nextCalled, false, "next() must not be called for a canceled subscription");
   assert.equal(res._status, 403);
   assert.equal((res._body as { code?: string })?.code, "SUBSCRIPTION_REQUIRED");
+});
+
+test("requireActiveSubscription — calls next() for active membership subscription", async () => {
+  const user = await seedUser({ email: `membership${TEST_DOMAIN}`, role: "member" });
+  await seedSubscription(user.id, "membership", "active");
+  const req = makeMockReq(user);
+  const res = makeMockRes();
+  let nextCalled = false;
+
+  await requireActiveSubscription(req as Request, res as unknown as Response, () => { nextCalled = true; });
+
+  assert.equal(nextCalled, true, "next() must be called for an active membership subscription");
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

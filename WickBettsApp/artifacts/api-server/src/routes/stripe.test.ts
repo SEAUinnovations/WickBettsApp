@@ -104,7 +104,7 @@ test("Stripe webhook signing works against the configured webhook secret", { ski
       object: {
         id: "sub_test_123",
         object: "subscription",
-        metadata: { userId: "ci-user-1", plan: "signals" },
+        metadata: { userId: "ci-user-1", plan: "membership" },
         status: "active",
       },
     },
@@ -118,4 +118,5 @@ test("Stripe webhook signing works against the configured webhook secret", { ski
   const event = stripe.webhooks.constructEvent(payload, header, secret);
   assert.equal(event.type, "customer.subscription.created");
   assert.equal(event.data.object.id, "sub_test_123");
+  assert.equal((event.data.object as { metadata?: { plan?: string } }).metadata?.plan, "membership");
 });
