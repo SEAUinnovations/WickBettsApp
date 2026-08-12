@@ -24,9 +24,10 @@ async function proxyToClerk(request, env) {
 
   const headers = new Headers(request.headers);
   headers.delete('host');
-  headers.set('Clerk-Proxy-Url', `${url.origin}${CLERK_PROXY_PREFIX}`);
-  headers.set('x-forwarded-host', url.host);
+  // Clerk needs to see its custom domain as the host to identify the instance
+  headers.set('x-forwarded-host', 'clerk.wickbetts.com');
   headers.set('x-forwarded-proto', 'https');
+  headers.set('Clerk-Proxy-Url', `${url.origin}${CLERK_PROXY_PREFIX}`);
   if (env.CLERK_SECRET_KEY) {
     headers.set('Clerk-Secret-Key', env.CLERK_SECRET_KEY);
   }
