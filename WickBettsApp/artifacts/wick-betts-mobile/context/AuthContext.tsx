@@ -38,6 +38,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   subscription: AuthSubscription | null;
   isLoading: boolean;
+  isSignedIn: boolean;
   signOut: () => Promise<void>;
   /** Retrieve a fresh Clerk session JWT for Bearer-authenticated API calls */
   getToken: () => Promise<string | null>;
@@ -145,6 +146,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [clerkGetToken]);
 
+  const getTokenWithTimeout = useCallback(async (): Promise<string | null> => {
+    const timeout = new Promise<null>((resolve) => {
+      setTimeout(() => resolve(null), 8000);
+    });
+    return await Promise.race([getToken(), timeout]);
+  }, [getToken]);
+
   useEffect(() => {
     if (!isLoaded) return;
 
@@ -157,7 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void (async () => {
       setIsLoadingData(true);
       try {
-        const token = await getToken();
+        const token = await getTokenWithTimeout();
         if (!token) return;
 
         const [me, sub] = await Promise.all([
@@ -174,7 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoadingData(false);
       }
     })();
-  }, [isLoaded, isSignedIn, getToken]);
+  }, [isLoaded, isSignedIn, getTokenWithTimeout]);
 
   const signOut = useCallback(async () => {
     await clerkSignOut();
@@ -278,6 +286,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       subscription,
       isLoading,
+      isSignedIn: !!isSignedIn,
       signOut,
       getToken,
       updateNotificationPrefs,
@@ -289,6 +298,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       subscription,
       isLoading,
+      isSignedIn,
       signOut,
       getToken,
       updateNotificationPrefs,

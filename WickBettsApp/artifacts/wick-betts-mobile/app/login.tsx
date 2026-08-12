@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
-import * as AuthSession from 'expo-auth-session';
 import { useSSO } from '@clerk/expo';
 import { useRouter } from 'expo-router';
 import { useColors } from '@/hooks/useColors';
@@ -29,16 +28,6 @@ function useWarmUpBrowser() {
   }, []);
 }
 
-/** Returns the correct OAuth redirect URI for the current platform */
-function getRedirectUrl(): string {
-  if (Platform.OS === 'web') {
-    // On web, Clerk needs to redirect back to this page after OAuth
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://wickbetts.com';
-    return `${origin}/sign-in`;
-  }
-  return AuthSession.makeRedirectUri();
-}
-
 export default function LoginScreen() {
   useWarmUpBrowser();
   const { startSSOFlow } = useSSO();
@@ -51,15 +40,15 @@ export default function LoginScreen() {
     setLoading(true);
     setError('');
     try {
-      const redirectUrl = getRedirectUrl();
       const { createdSessionId, setActive } = await startSSOFlow({
         strategy: 'oauth_google',
-        redirectUrl,
       });
 
       if (createdSessionId && setActive) {
         await setActive({ session: createdSessionId });
         // AuthGate in _layout.tsx detects the active session and navigates to /(tabs)
+      } else {
+        setError('Google sign-in did not complete. Please try again.');
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

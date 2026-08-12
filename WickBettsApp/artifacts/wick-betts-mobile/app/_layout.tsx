@@ -47,7 +47,7 @@ const proxyUrl: string | undefined =
 function isPublicRoute(segments: string[]): boolean {
   const first = segments[0];
   if (!first) return true;
-  return first === 'login' || first === 'sign-in' || first === 'auth' || first === 'sign-up';
+  return first === 'login' || first === 'sign-in' || first === 'auth' || first === 'sign-up' || first === 'sso-callback';
 }
 
 function isAuthRoute(segments: string[]): boolean {
@@ -57,22 +57,22 @@ function isAuthRoute(segments: string[]): boolean {
 
 /** Auth guard — redirects to /login when unauthenticated, or to tabs when authenticated. */
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, isSignedIn } = useAuth();
   const router = useRouter();
   const segments = useSegments();
 
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading && !isSignedIn) return;
     const inAuthScreen = isAuthRoute(segments);
     const inPublicRoute = isPublicRoute(segments);
-    if (!user && !inPublicRoute) {
+    if (!isSignedIn && !inPublicRoute) {
       router.replace('/login');
-    } else if (user && inAuthScreen) {
+    } else if (isSignedIn && inAuthScreen) {
       router.replace('/(tabs)');
     }
-  }, [user, isLoading, segments, router]);
+  }, [user, isLoading, isSignedIn, segments, router]);
 
-  if (isLoading) {
+  if (isLoading && !isSignedIn) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator size="large" color="#7C3AED" />
@@ -91,6 +91,7 @@ function RootLayoutNav() {
       <Stack.Screen name="login" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="sign-in" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="sign-up" options={{ headerShown: false, animation: 'slide_from_right' }} />
+      <Stack.Screen name="sso-callback" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="auth" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="mentorship" options={{ headerShown: false }} />
       <Stack.Screen name="admin" options={{ headerShown: false }} />
