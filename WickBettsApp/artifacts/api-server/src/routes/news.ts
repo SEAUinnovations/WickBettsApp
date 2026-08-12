@@ -1,6 +1,10 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { XMLParser } from "fast-xml-parser";
+import { and, eq } from "drizzle-orm";
+import { randomUUID } from "crypto";
+import { db, newsOverridesTable } from "../lib/db.js";
 import { logger } from "../lib/logger.js";
+import { requireAuth, requireAdmin } from "../middlewares/requireAuth.js";
 
 const router = Router();
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
@@ -13,6 +17,16 @@ interface NewsArticle {
   publishedAt: string;
   category: string;
   summary: string;
+}
+
+interface NewsArticleOverride {
+  sourceArticleId: string;
+  headline: string | null;
+  summary: string | null;
+  category: string | null;
+  source: string | null;
+  url: string | null;
+  publishedAt: string | null;
 }
 
 interface NewsCache {
@@ -129,6 +143,38 @@ async function refreshCache(): Promise<NewsArticle[]> {
   return deduped.slice(0, 40);
 }
 
+async function fetchOverrides(): Promise<NewsArticleOverride[]> {
+  return await db
+    .select({
+      sourceArticleId: newsOverridesTable.sourceArticleId,
+      headline: newsOverridesTable.headline,
+      summary: newsOverridesTable.summary,
+      category: newsOverridesTable.category,
+      source: newsOverridesTable.source,
+      url: newsOverridesTable.url,
+      publishedAt: newsOverridesTable.publishedAt,
+    })
+    .from(newsOverridesTable);
+}
+
+function applyOverrides(articles: NewsArticle[], overrides: NewsArticleOverride[]): NewsArticle[] {
+  if (overrides.length === 0) return articles;
+  const overrideMap = new Map(overrides.map((item) => [item.sourceArticleId, item]));
+  return articles.map((article) => {
+    const override = overrideMap.get(article.id);
+    if (!override) return article;
+    return {
+      ...article,
+      headline: override.headline || article.headline,
+      summary: override.summary || article.summary,
+      category: override.category || article.category,
+      source: override.source || article.source,
+      url: override.url || article.url,
+      publishedAt: override.publishedAt || article.publishedAt,
+    };
+  });
+}
+
 function getChicagoClockParts(now = new Date()): {
   year: string;
   month: string;
@@ -207,10 +253,14 @@ startScheduler();
 
 // GET /api/news/feed
 router.get("/feed", async (_req, res) => {
+  const overrides = await fetchOverrides().catch((err) => {
+    logger.warn({ err }, "Failed to fetch news overrides");
+    return [] as NewsArticleOverride[];
+  });
   if (cache) {
     const ageMs = Date.now() - cache.fetchedAt;
     res.json({
-      articles: cache.articles,
+      articles: applyOverrides(cache.articles, overrides),
       cachedAt: cache.fetchedAt,
       fresh: ageMs <= SCHEDULE_MS,
       stale: ageMs > CLIENT_POLL_MS,
@@ -222,7 +272,7 @@ router.get("/feed", async (_req, res) => {
   try {
     const nextCache = await ensureCache("request-miss");
     res.json({
-      articles: nextCache.articles,
+      articles: applyOverrides(nextCache.articles, overrides),
       cachedAt: nextCache.fetchedAt,
       fresh: true,
       stale: false,
@@ -231,6 +281,72 @@ router.get("/feed", async (_req, res) => {
   } catch (err) {
     logger.error(err, "News feed refresh failed");
     res.status(502).json({ error: "Unable to fetch news feed. Try again shortly." });
+  }
+});
+
+router.get("/overrides", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const overrides = await db.select().from(newsOverridesTable);
+    res.json({ overrides });
+  } catch (err) {
+    logger.error(err, "Failed to fetch news overrides");
+    res.status(500).json({ error: "Failed to fetch news overrides" });
+  }
+});
+
+router.patch("/overrides", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const user = req.dbUser!;
+  const { sourceArticleId, headline, summary, category, source, url, publishedAt } = req.body as {
+    sourceArticleId?: string;
+    headline?: string;
+    summary?: string;
+    category?: string;
+    source?: string;
+    url?: string;
+    publishedAt?: string;
+  };
+
+  if (!sourceArticleId?.trim()) {
+    res.status(400).json({ error: "sourceArticleId is required" });
+    return;
+  }
+
+  const normalizedId = sourceArticleId.trim();
+  const payload = {
+    headline: typeof headline === "string" ? (headline.trim() || null) : null,
+    summary: typeof summary === "string" ? (summary.trim() || null) : null,
+    category: typeof category === "string" ? (category.trim() || null) : null,
+    source: typeof source === "string" ? (source.trim() || null) : null,
+    url: typeof url === "string" ? (url.trim() || null) : null,
+    publishedAt: typeof publishedAt === "string" ? (publishedAt.trim() || null) : null,
+    updatedBy: user.id,
+    updatedAt: new Date(),
+  };
+
+  try {
+    const existing = await db
+      .select()
+      .from(newsOverridesTable)
+      .where(eq(newsOverridesTable.sourceArticleId, normalizedId))
+      .limit(1);
+
+    if (existing[0]) {
+      await db
+        .update(newsOverridesTable)
+        .set(payload)
+        .where(eq(newsOverridesTable.sourceArticleId, normalizedId));
+    } else {
+      await db.insert(newsOverridesTable).values({
+        id: randomUUID(),
+        sourceArticleId: normalizedId,
+        ...payload,
+      } as any);
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error(err, "Failed to save news override");
+    res.status(500).json({ error: "Failed to save news override" });
   }
 });
 

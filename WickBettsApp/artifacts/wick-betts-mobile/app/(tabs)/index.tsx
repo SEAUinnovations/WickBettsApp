@@ -9,11 +9,11 @@ import { useAuth } from '@/context/AuthContext';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { Card, Header, Metric, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
 
-const HIGHLIGHT_SYMBOLS = ['SPY', 'QQQ', '^VIX', 'BTC-USD'];
+const DEFAULT_TRACKED_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'DIA', 'AAPL', 'NVDA'];
 
 function changeColor(pct: number, positive: string, negative: string, neutral: string): string {
-  if (pct > 0.15) return positive;
-  if (pct < -0.15) return negative;
+  if (pct > 0) return positive;
+  if (pct < 0) return negative;
   return neutral;
 }
 
@@ -49,9 +49,12 @@ export default function HomeScreen() {
     pushProtected('/mentorship');
   };
 
-  const highlights = HIGHLIGHT_SYMBOLS.map((sym) =>
-    market?.quotes.find((q) => q.symbol === sym)
-  ).filter(Boolean);
+  const trackedSymbols = [...new Set([...DEFAULT_TRACKED_SYMBOLS, ...watchlistItems.map((item) => item.symbol)])];
+
+  const highlights = trackedSymbols
+    .map((sym) => market?.quotes.find((q) => q.symbol === sym))
+    .filter(Boolean)
+    .slice(0, 10);
 
   const watchlistQuotes = watchlistItems.map((item) => ({
     item,
@@ -61,7 +64,8 @@ export default function HomeScreen() {
   const handleAddWatchlistItem = async () => {
     const symbol = symbolInput.trim().toUpperCase();
     if (!symbol) return;
-    await addItem({ symbol, note: noteInput.trim(), targetPrice: targetInput.trim() });
+    const added = await addItem({ symbol, note: noteInput.trim(), targetPrice: targetInput.trim() });
+    if (!added) return;
     setSymbolInput('');
     setNoteInput('');
     setTargetInput('');
@@ -100,7 +104,7 @@ export default function HomeScreen() {
       </View>
 
       {/* Live Market Snapshot */}
-      <SectionLabel>Market snapshot</SectionLabel>
+      <SectionLabel>Tracked board</SectionLabel>
       <Card style={styles.metricsCard}>
         {marketLoading && highlights.length === 0 ? (
           <View style={styles.loadingRow}>
@@ -108,29 +112,30 @@ export default function HomeScreen() {
             <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading market data…</Text>
           </View>
         ) : (
-          <View style={styles.metricRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.metricScroll}>
             {highlights.map((q) => {
               if (!q) return null;
               const pos = changeColor(q.changePercent, '#7AE2AA', '#E27A7A', colors.mutedForeground);
-              const label = q.symbol === '^VIX' ? 'VIX' : q.symbol === 'BTC-USD' ? 'BTC / USD' : q.symbol;
+              const label = q.symbol === 'BTC-USD' ? 'BTC / USD' : q.symbol;
               const detail = `${q.changePercent >= 0 ? '+' : ''}${q.changePercent.toFixed(2)}%`;
               return (
-                <Metric
-                  key={q.symbol}
-                  label={label}
-                  value={q.symbol === '^VIX' ? q.price.toFixed(1) : formatPrice(q.price, q.symbol)}
-                  detail={detail}
-                  color={pos}
-                />
+                <View key={q.symbol} style={styles.metricCardWrap}>
+                  <Metric
+                    label={label}
+                    value={formatPrice(q.price, q.symbol)}
+                    detail={detail}
+                    color={pos}
+                  />
+                </View>
               );
             })}
-          </View>
+          </ScrollView>
         )}
         <View style={[styles.microLine, { backgroundColor: colors.border }]}>
           <Text style={[styles.microText, { color: colors.mutedForeground }]}>
             {market?.fetchedAt
-              ? `Updated ${new Date(market.fetchedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} · Data delayed 15 min`
-              : '15-min delayed data via Yahoo Finance'}
+              ? `Updated ${new Date(market.fetchedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} · SPY, QQQ, IWM, DIA, AAPL, NVDA and your watchlist`
+              : 'Main ETF and leader board via delayed market data'}
           </Text>
         </View>
       </Card>
@@ -346,7 +351,8 @@ const styles = StyleSheet.create({
   metricsCard: { marginBottom: 22 },
   loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
   loadingText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
-  metricRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  metricScroll: { gap: 14, paddingRight: 8 },
+  metricCardWrap: { minWidth: 110 },
   microLine: { height: 1, marginTop: 14, marginBottom: 10 },
   microText: { fontSize: 9, fontFamily: 'Inter_400Regular', marginTop: 10, textAlign: 'center', letterSpacing: 0.5 },
   filters: { gap: 8, paddingBottom: 14 },

@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { Card, Header, SectionLabel, Tag } from '@/components/WickUI';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
+import { API_BASE } from '@/lib/apiUrl';
 import { useNewsFeed, type NewsArticle } from '@/hooks/useNewsFeed';
 
 type ToneType = 'purple' | 'orange' | 'muted' | 'green';
@@ -102,17 +104,55 @@ function NewsCard({ article, isSaved, onToggleSave }: {
 
 export default function NewsScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, getToken } = useAuth();
   const colors = useColors();
   const { articles, loading, error, refresh } = useNewsFeed();
   const [saved, setSaved] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const isAdmin = user?.role === 'admin';
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [headlineDraft, setHeadlineDraft] = useState('');
+  const [summaryDraft, setSummaryDraft] = useState('');
+  const [categoryDraft, setCategoryDraft] = useState('');
+  const [savingOverride, setSavingOverride] = useState(false);
 
   const onRefresh = async () => {
     setRefreshing(true);
     await refresh();
     setRefreshing(false);
+  };
+
+  const startEditing = (article: NewsArticle) => {
+    setEditingId(article.id);
+    setHeadlineDraft(article.headline);
+    setSummaryDraft(article.summary);
+    setCategoryDraft(article.category);
+  };
+
+  const saveOverride = async (article: NewsArticle) => {
+    setSavingOverride(true);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+      const res = await fetch(`${API_BASE}/news/overrides`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          sourceArticleId: article.id,
+          headline: headlineDraft,
+          summary: summaryDraft,
+          category: categoryDraft,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setEditingId(null);
+      await onRefresh();
+    } finally {
+      setSavingOverride(false);
+    }
   };
 
   return (
@@ -162,18 +202,61 @@ export default function NewsScreen() {
         <>
           <SectionLabel>Latest briefings</SectionLabel>
           {articles.map((article) => (
-            <NewsCard
-              key={article.id}
-              article={article}
-              isSaved={saved.includes(article.id)}
-              onToggleSave={() =>
-                setSaved((curr) =>
-                  curr.includes(article.id)
-                    ? curr.filter((x) => x !== article.id)
-                    : [...curr, article.id]
-                )
-              }
-            />
+            <View key={article.id}>
+              <NewsCard
+                article={article}
+                isSaved={saved.includes(article.id)}
+                onToggleSave={() =>
+                  setSaved((curr) =>
+                    curr.includes(article.id)
+                      ? curr.filter((x) => x !== article.id)
+                      : [...curr, article.id]
+                  )
+                }
+              />
+              {isAdmin ? (
+                <Card style={styles.adminCardInline}>
+                  {editingId === article.id ? (
+                    <View style={styles.editorStack}>
+                      <TextInput
+                        value={headlineDraft}
+                        onChangeText={setHeadlineDraft}
+                        style={[styles.editorInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card }]}
+                        placeholder="Headline"
+                        placeholderTextColor={colors.mutedForeground}
+                      />
+                      <TextInput
+                        value={summaryDraft}
+                        onChangeText={setSummaryDraft}
+                        style={[styles.editorInput, styles.editorMultiline, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card }]}
+                        placeholder="Summary"
+                        placeholderTextColor={colors.mutedForeground}
+                        multiline
+                      />
+                      <TextInput
+                        value={categoryDraft}
+                        onChangeText={setCategoryDraft}
+                        style={[styles.editorInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card }]}
+                        placeholder="Category"
+                        placeholderTextColor={colors.mutedForeground}
+                      />
+                      <View style={styles.editorActions}>
+                        <Pressable onPress={() => setEditingId(null)} style={styles.retryButton} accessibilityRole="button">
+                          <Text style={[styles.retryText, { color: colors.mutedForeground }]}>Cancel</Text>
+                        </Pressable>
+                        <Pressable onPress={() => void saveOverride(article)} style={styles.retryButton} accessibilityRole="button">
+                          <Text style={[styles.retryText, { color: colors.primary }]}>{savingOverride ? 'Saving…' : 'Save override'}</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : (
+                    <Pressable onPress={() => startEditing(article)} accessibilityRole="button">
+                      <Text style={[styles.retryText, { color: colors.primary }]}>Edit article copy</Text>
+                    </Pressable>
+                  )}
+                </Card>
+              ) : null}
+            </View>
           ))}
           <Text style={[styles.disclaimer, { color: colors.mutedForeground }]}>
             Data sourced from public RSS feeds. Delayed 15–20 min. Not investment advice.
@@ -191,6 +274,11 @@ const styles = StyleSheet.create({
   mastheadTitle: { fontSize: 32, lineHeight: 36, fontFamily: 'Inter_700Bold', letterSpacing: -1 },
   mastheadBody: { fontSize: 12, lineHeight: 18, fontFamily: 'Inter_400Regular', marginTop: 10, maxWidth: 290 },
   adminCard: { marginBottom: 16 },
+  adminCardInline: { marginBottom: 12, marginTop: -4 },
+  editorStack: { gap: 10 },
+  editorInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, fontFamily: 'Inter_400Regular' },
+  editorMultiline: { minHeight: 90, textAlignVertical: 'top' },
+  editorActions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   loadingWrap: { alignItems: 'center', paddingVertical: 40, gap: 14 },
   loadingText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
   errorCard: { borderWidth: 1, borderRadius: 16, padding: 20, alignItems: 'center', gap: 10, marginBottom: 20 },

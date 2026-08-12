@@ -70,8 +70,10 @@ export function useWatchlist() {
         throw new Error(err.error ?? 'Failed to add watchlist item');
       }
       await fetchItems();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add watchlist item');
+      return false;
     } finally {
       setSaving(false);
     }

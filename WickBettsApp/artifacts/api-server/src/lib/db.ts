@@ -38,4 +38,9 @@ export {
   insertWatchlistSchema,
   type InsertWatchlist,
   type Watchlist,
+  // News overrides
+  newsOverridesTable,
+  insertNewsOverrideSchema,
+  type InsertNewsOverride,
+  type NewsOverride,
 } from "@workspace/db";
