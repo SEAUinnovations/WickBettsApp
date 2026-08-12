@@ -15,6 +15,34 @@ import { logger } from "./lib/logger.js";
 import router from "./routes/index.js";
 
 const app: Express = express();
+
+function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    if (value && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+// Accept legacy/alternate variable names so production envs do not break
+// during migrations between hosting providers or CI setups.
+const clerkPublishableKey = firstNonEmpty(
+  process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY,
+  process.env.CLERK_PUBLISHABLE_KEY,
+  process.env.CLERK_PUBLISHABLE,
+);
+
+const clerkSecretKey = firstNonEmpty(
+  process.env.CLERK_SECRET_KEY,
+  process.env.CLERK_SECRET,
+  process.env.CLERK_API_KEY,
+);
+
+if (!clerkSecretKey) {
+  throw new Error(
+    "Missing Clerk Secret Key. Set CLERK_SECRET_KEY (preferred) or CLERK_SECRET in runtime environment.",
+  );
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webDistDir = process.env.WEB_DIST_DIR
   ? path.resolve(process.env.WEB_DIST_DIR)
@@ -90,8 +118,9 @@ app.use(
   clerkMiddleware((req) => ({
     publishableKey: publishableKeyFromHost(
       getClerkProxyHost(req) ?? "",
-      process.env.CLERK_PUBLISHABLE_KEY,
+      clerkPublishableKey,
     ),
+    secretKey: clerkSecretKey,
   }))
 );
 

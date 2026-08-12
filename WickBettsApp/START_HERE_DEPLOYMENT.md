@@ -16,8 +16,21 @@ Phase B: Frontend deploy automation
    - `CLOUDFLARE_API_TOKEN`
    - `CLOUDFLARE_ACCOUNT_ID`
    - `CLOUDFLARE_PAGES_PROJECT_NAME`
-2. Confirm workflow `.github/workflows/deploy-cloudflare-pages.yml` is present on `main`.
-3. Push to `main` and verify Pages production deploy succeeds.
+   - `CLERK_PUBLISHABLE_KEY` (or `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`)
+   - `EXPO_PUBLIC_API_URL` (recommended production value: `https://wickbetts.com`)
+2. Optional GitHub variables fallback supported by workflows:
+   - `CLERK_PUBLISHABLE_KEY` or `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`
+   - `EXPO_PUBLIC_API_URL`
+3. Confirm workflow `.github/workflows/deploy-cloudflare-pages.yml` is present on `main`.
+4. Push to `main` and verify Pages production deploy succeeds.
+
+Phase B.1: Backend CI test coverage
+
+1. Confirm workflow `.github/workflows/backend-test.yml` is present on `main`.
+2. Add auth/runtime test secrets (or variables) for CI:
+   - `CLERK_SECRET_KEY`
+   - `SESSION_SECRET`
+3. Push to `main` and verify backend smoke tests pass.
 
 Phase C: Cloudflare Pages + DNS
 

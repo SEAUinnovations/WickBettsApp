@@ -16,6 +16,11 @@ export default function LandingScreen() {
     router.push(user ? '/(tabs)' : '/login');
   };
 
+  const goToSignIn = () => {
+    // Keep /sign-in as canonical web path; file alias renders Clerk-backed LoginScreen.
+    router.push('/sign-in' as never);
+  };
+
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}> 
       <LinearGradient
@@ -26,6 +31,20 @@ export default function LandingScreen() {
       />
 
       <View style={styles.content}>
+        <View style={styles.topRow}>
+          <Pressable
+            onPress={goToSignIn}
+            disabled={isLoading || !!user}
+            style={({ pressed }) => [
+              styles.topSignInButton,
+              { borderColor: colors.border, backgroundColor: pressed ? '#171528' : '#0f0d18' },
+              (isLoading || !!user) && { opacity: 0.45 },
+            ]}
+          >
+            <Text style={[styles.topSignInText, { color: colors.foreground }]}>{user ? 'Signed in' : 'Sign in'}</Text>
+          </Pressable>
+        </View>
+
         <View style={styles.brandRow}>
           <Image source={WB_LOGO} style={styles.logo} resizeMode="contain" />
           <View>
@@ -79,6 +98,25 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 28,
+    paddingTop: 20,
+  },
+  topRow: {
+    position: 'absolute',
+    top: 20,
+    left: 28,
+    right: 28,
+    alignItems: 'flex-end',
+  },
+  topSignInButton: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  topSignInText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    letterSpacing: 0.2,
   },
   brandRow: {
     flexDirection: 'row',
