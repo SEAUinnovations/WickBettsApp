@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -39,9 +39,12 @@ const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
  */
 const proxyUrl: string | undefined =
   process.env.EXPO_PUBLIC_CLERK_PROXY_URL ||
-  // Proxy only works in production native builds — web can call Clerk FAPI directly.
-  // Without this guard, a Railway outage breaks Clerk init on web too.
-  (Platform.OS !== 'web' && !__DEV__ && AUTH_DOMAIN ? `${AUTH_DOMAIN}/api/__clerk` : undefined);
+  // Route all Clerk FAPI calls through our own backend so clerk.wickbetts.com
+  // DNS is never needed. In production this goes:
+  //   Browser → wickbetts.com/api/__clerk → Cloudflare Worker → Railway → Clerk
+  // In dev this goes: app → localhost:8080/api/__clerk → Clerk
+  // Only skip the proxy in local Expo dev mode (dev instances don't support proxying).
+  (!__DEV__ && AUTH_DOMAIN ? `${AUTH_DOMAIN}/api/__clerk` : undefined);
 
 function isPublicRoute(segments: string[]): boolean {
   const first = segments[0];
