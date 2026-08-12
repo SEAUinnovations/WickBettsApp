@@ -103,6 +103,7 @@ jobs:
               printf '%s' "$CLERK_SECRET_KEY" | pnpm dlx wrangler@4 secret put CLERK_SECRET_KEY \
                 --name="$CLOUDFLARE_WORKER_NAME" && echo "CLERK_SECRET_KEY secret set successfully."
             fi
+          fi
 
       - name: Sync Worker secrets
         if: env.CLOUDFLARE_DEPLOY_TARGET != 'pages'
@@ -121,5 +122,4 @@ jobs:
           else
             echo "✗ CLERK_SECRET_KEY missing from GitHub secrets — add it to stunning-gratitude/production"
             exit 1
-          fi
           fi
