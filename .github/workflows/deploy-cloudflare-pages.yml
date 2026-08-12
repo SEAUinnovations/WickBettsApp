@@ -46,6 +46,13 @@ jobs:
           EXPO_PUBLIC_API_URL: ${{ env.EXPO_PUBLIC_API_URL }}
         run: pnpm --filter @workspace/wick-betts-mobile build:web
 
+      - name: Verify deploy artifact routes
+        working-directory: WickBettsApp/artifacts/wick-betts-mobile/dist
+        run: |
+          test -f _redirects
+          test -f _worker.js
+          test -f index.html
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:

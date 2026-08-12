@@ -160,7 +160,7 @@ function Landing() {
     <header className="landing-nav">
       <Brand />
       <div className="nav-kicker">
-        {isLoading ? null : isAuthenticated ? (
+        {!isLoading && isAuthenticated ? (
           <a href="/app/home" className="button button-dark" style={{ fontSize: 12 }}>Enter desk <ArrowRight size={12} /></a>
         ) : (
           <SignInButton label="Sign in" className="button-nav-signin" />
