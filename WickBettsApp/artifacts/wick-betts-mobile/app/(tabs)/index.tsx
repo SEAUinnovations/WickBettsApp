@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { useMarketData } from '@/hooks/useMarketData';
+import { useAuth } from '@/context/AuthContext';
 import { Card, Header, Metric, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
 
 const HIGHLIGHT_SYMBOLS = ['SPY', 'QQQ', '^VIX', 'BTC-USD'];
@@ -25,10 +26,19 @@ export default function HomeScreen() {
   const router = useRouter();
   const colors = useColors();
   const { data: market, loading: marketLoading } = useMarketData();
+  const { user } = useAuth();
+
+  const pushProtected = (href: '/mentorship' | '/(tabs)/signals') => {
+    if (!user) {
+      router.push('/login');
+      return;
+    }
+    router.push(href);
+  };
 
   const openMentorship = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push('/mentorship');
+    pushProtected('/mentorship');
   };
 
   const highlights = HIGHLIGHT_SYMBOLS.map((sym) =>
@@ -108,7 +118,7 @@ export default function HomeScreen() {
 
       {/* Active signal teaser */}
       <SectionLabel>Active signals</SectionLabel>
-      <Card style={styles.signalTeaser} onPress={() => router.push('/(tabs)/signals')}>
+      <Card style={styles.signalTeaser} onPress={() => pushProtected('/(tabs)/signals')}>
         <View style={styles.signalTeaserRow}>
           <View style={[styles.signalBadge, { backgroundColor: colors.secondary }]}>
             <Ionicons name="pulse-outline" size={18} color={colors.primary} />

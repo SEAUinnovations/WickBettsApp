@@ -35,9 +35,9 @@ jobs:
         working-directory: WickBettsApp
         run: pnpm install --frozen-lockfile
 
-      - name: Build web app
+      - name: Build mobile web app
         working-directory: WickBettsApp
-        run: PORT=3000 BASE_PATH=/ pnpm --filter @workspace/wick-betts build
+        run: pnpm --filter @workspace/wick-betts-mobile build:web
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
@@ -45,7 +45,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: >-
-            pages deploy WickBettsApp/artifacts/wick-betts/dist/public
+            pages deploy WickBettsApp/artifacts/wick-betts-mobile/dist
             --project-name=${{ secrets.CLOUDFLARE_PAGES_PROJECT_NAME || 'polished-haze-422' }}
             --branch=main
             --commit-hash=${{ github.sha }}

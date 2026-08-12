@@ -44,6 +44,17 @@ const proxyUrl: string | undefined =
   // in dev we fall back to direct Clerk FAPI calls with the dev key.
   (!__DEV__ && AUTH_DOMAIN ? `${AUTH_DOMAIN}/api/__clerk` : undefined);
 
+function isPublicRoute(segments: string[]): boolean {
+  const first = segments[0];
+  if (!first) return true;
+  return first === 'login' || first === 'auth';
+}
+
+function isAuthRoute(segments: string[]): boolean {
+  const first = segments[0];
+  return first === 'login' || first === 'auth';
+}
+
 /** Auth guard — redirects to /login when unauthenticated, or to tabs when authenticated. */
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -52,8 +63,9 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isLoading) return;
-    const inAuthScreen = segments[0] === 'login';
-    if (!user && !inAuthScreen) {
+    const inAuthScreen = isAuthRoute(segments);
+    const inPublicRoute = isPublicRoute(segments);
+    if (!user && !inPublicRoute) {
       router.replace('/login');
     } else if (user && inAuthScreen) {
       router.replace('/(tabs)');
@@ -74,8 +86,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 function RootLayoutNav() {
   return (
     <Stack screenOptions={{ headerShown: false, headerBackTitle: 'Back' }}>
+      <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="login" options={{ headerShown: false, animation: 'none' }} />
+      <Stack.Screen name="auth" options={{ headerShown: false, animation: 'none' }} />
+      <Stack.Screen name="app" options={{ headerShown: false }} />
       <Stack.Screen name="mentorship" options={{ headerShown: false }} />
       <Stack.Screen name="admin" options={{ headerShown: false }} />
       <Stack.Screen name="admin/users" options={{ headerShown: false }} />
