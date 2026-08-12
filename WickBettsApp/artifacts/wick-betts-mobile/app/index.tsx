@@ -1,8 +1,8 @@
-import React from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, type Plan } from '@/context/AuthContext';
 import { useColors } from '@/hooks/useColors';
 
 const WB_LOGO = require('@/assets/images/wb-logo.png') as number;
@@ -10,19 +10,32 @@ const WB_LOGO = require('@/assets/images/wb-logo.png') as number;
 export default function LandingScreen() {
   const router = useRouter();
   const colors = useColors();
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, subscription, startCheckout } = useAuth();
+  const [checkoutLoading, setCheckoutLoading] = useState<Plan | null>(null);
+  const [checkoutError, setCheckoutError] = useState('');
 
-  const goToMainApp = () => {
-    router.push(user ? '/(tabs)' : '/login');
-  };
-
-  const goToSignIn = () => {
-    // Keep /sign-in as canonical web path; file alias renders Clerk-backed LoginScreen.
-    router.push('/sign-in' as never);
+  const handlePlan = async (plan: Plan) => {
+    if (!user) {
+      router.push('/sign-in' as never);
+      return;
+    }
+    if (subscription?.status === 'active') {
+      router.replace('/(tabs)');
+      return;
+    }
+    setCheckoutError('');
+    setCheckoutLoading(plan);
+    try {
+      await startCheckout(plan);
+    } catch (err) {
+      setCheckoutError((err as Error).message ?? 'Something went wrong.');
+    } finally {
+      setCheckoutLoading(null);
+    }
   };
 
   return (
-    <View style={[styles.root, { backgroundColor: colors.background }]}> 
+    <View style={styles.root}>
       <LinearGradient
         colors={['#1a0a2e', '#08070D']}
         style={StyleSheet.absoluteFill}
@@ -30,153 +43,202 @@ export default function LandingScreen() {
         end={{ x: 0.5, y: 0.7 }}
       />
 
-      <View style={styles.content}>
-        <View style={styles.topRow}>
-          <Pressable
-            onPress={goToSignIn}
-            disabled={isLoading || !!user}
-            style={({ pressed }) => [
-              styles.topSignInButton,
-              { borderColor: colors.border, backgroundColor: pressed ? '#171528' : '#0f0d18' },
-              (isLoading || !!user) && { opacity: 0.45 },
-            ]}
-          >
-            <Text style={[styles.topSignInText, { color: colors.foreground }]}>{user ? 'Signed in' : 'Sign in'}</Text>
-          </Pressable>
+      {/* ── Top nav bar ── */}
+      <View style={styles.navbar}>
+        <View style={styles.brand}>
+          <Image source={WB_LOGO} style={styles.brandLogo} resizeMode="contain" />
+          <Text style={[styles.brandName, { color: colors.foreground }]}>Wick Betts</Text>
         </View>
 
-        <View style={styles.brandRow}>
-          <Image source={WB_LOGO} style={styles.logo} resizeMode="contain" />
-          <View>
-            <Text style={[styles.brandName, { color: colors.foreground }]}>WICK BETTS</Text>
-            <Text style={[styles.brandSub, { color: colors.mutedForeground }]}>PRIVATE MARKET INTELLIGENCE</Text>
+        {isLoading ? (
+          <ActivityIndicator size="small" color="#7C3AED" />
+        ) : user ? (
+          <Pressable
+            onPress={() => router.replace('/(tabs)')}
+            style={({ pressed }) => [styles.navButton, styles.navButtonDark, { opacity: pressed ? 0.75 : 1 }]}
+          >
+            <Text style={styles.navButtonDarkText}>Enter desk →</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={() => router.push('/sign-in' as never)}
+            style={({ pressed }) => [styles.navButton, styles.navButtonOutline, { borderColor: colors.border, opacity: pressed ? 0.75 : 1 }]}
+          >
+            <Text style={[styles.navButtonOutlineText, { color: colors.foreground }]}>Sign in</Text>
+          </Pressable>
+        )}
+      </View>
+
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+
+        {/* ── Hero ── */}
+        <View style={styles.heroSection}>
+          <Text style={[styles.eyebrow, { color: colors.mutedForeground }]}>The Wick Betts membership</Text>
+          <Text style={[styles.heroHeadline, { color: colors.foreground }]}>
+            {'A clearer room\nbefore the '}
+            <Text style={styles.italic}>open.</Text>
+          </Text>
+          <Text style={[styles.heroSub, { color: colors.mutedForeground }]}>
+            Daily signals, market context, and an unhurried place to think. Built for people who take stocks, crypto, and options seriously.
+          </Text>
+
+          <View style={styles.heroActions}>
+            <Pressable
+              onPress={() => void handlePlan('signals')}
+              disabled={checkoutLoading !== null || isLoading}
+              style={({ pressed }) => [
+                styles.primaryButton,
+                { backgroundColor: pressed ? '#6127a4' : '#7C3AED' },
+                (checkoutLoading !== null || isLoading) && { opacity: 0.6 },
+              ]}
+            >
+              {checkoutLoading === 'signals'
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Text style={styles.primaryButtonText}>Enter with signals →</Text>}
+            </Pressable>
+
+            <Pressable
+              onPress={() => void handlePlan('mentorship')}
+              disabled={checkoutLoading !== null || isLoading}
+              style={({ pressed }) => [
+                styles.quietButton,
+                { borderColor: colors.border, backgroundColor: pressed ? '#171528' : '#0f0d18' },
+                (checkoutLoading !== null || isLoading) && { opacity: 0.6 },
+              ]}
+            >
+              {checkoutLoading === 'mentorship'
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Text style={[styles.quietButtonText, { color: colors.foreground }]}>Explore mentorship</Text>}
+            </Pressable>
+
+            <Pressable
+              onPress={() => void handlePlan('membership')}
+              disabled={checkoutLoading !== null || isLoading}
+              style={({ pressed }) => [
+                styles.quietButton,
+                { borderColor: colors.border, backgroundColor: pressed ? '#171528' : '#0f0d18' },
+                (checkoutLoading !== null || isLoading) && { opacity: 0.6 },
+              ]}
+            >
+              {checkoutLoading === 'membership'
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Text style={[styles.quietButtonText, { color: colors.foreground }]}>Unlock membership</Text>}
+            </Pressable>
+
+            {checkoutError ? <Text style={styles.errorText}>{checkoutError}</Text> : null}
           </View>
         </View>
 
-        <Text style={[styles.headline, { color: colors.foreground }]}>The briefing room before the open.</Text>
-        <Text style={[styles.subline, { color: colors.mutedForeground }]}>Signals, news, community, mentorship, and account management are now unified under one frontend.</Text>
+        {/* ── Intro ── */}
+        <View style={styles.introSection}>
+          <Text style={[styles.introHeadline, { color: colors.foreground }]}>
+            {'Less noise.\n'}<Text style={styles.italic}>Better questions.</Text>
+          </Text>
+          <Text style={[styles.introCopy, { color: colors.mutedForeground }]}>
+            Wick Betts is a private briefing room for the moments when headlines get loud and the useful signal gets quiet. We publish levels, not predictions; context, not certainty.
+          </Text>
+          <Text style={[styles.eyebrow, { color: colors.mutedForeground, marginTop: 16 }]}>
+            A considered view of the tape
+          </Text>
+        </View>
 
-        <Pressable
-          onPress={goToMainApp}
-          disabled={isLoading}
-          style={({ pressed }) => [
-            styles.primaryButton,
-            { backgroundColor: pressed ? '#6127a4' : '#7C3AED' },
-            isLoading && { opacity: 0.6 },
-          ]}
-        >
-          <Text style={styles.primaryButtonText}>{user ? 'Enter App' : 'Sign in'}</Text>
-        </Pressable>
+        {/* ── Feature pills ── */}
+        <View style={styles.featureRow}>
+          {['Signals', 'Newsroom', 'Community', 'Mentorship'].map((f) => (
+            <View key={f} style={[styles.featurePill, { borderColor: colors.border, backgroundColor: '#0f0d18' }]}>
+              <Text style={[styles.featurePillText, { color: colors.mutedForeground }]}>{f}</Text>
+            </View>
+          ))}
+        </View>
 
-        <Pressable
-          onPress={() => router.push('/auth')}
-          style={({ pressed }) => [
-            styles.secondaryButton,
-            { borderColor: colors.border, backgroundColor: pressed ? '#121021' : '#0b0a12' },
-          ]}
-        >
-          <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>Sign up</Text>
-        </Pressable>
-
-        <Pressable
-          onPress={goToMainApp}
-          style={({ pressed }) => [
-            styles.tertiaryButton,
-            { backgroundColor: pressed ? '#121021' : 'transparent' },
-          ]}
-        >
-          <Text style={[styles.tertiaryButtonText, { color: colors.mutedForeground }]}>Continue to app</Text>
-        </Pressable>
-      </View>
+        <View style={{ height: 48 }} />
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 28,
-    paddingTop: 20,
-  },
-  topRow: {
-    position: 'absolute',
-    top: 20,
-    left: 28,
-    right: 28,
-    alignItems: 'flex-end',
-  },
-  topSignInButton: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  topSignInText: {
-    fontSize: 12,
-    fontFamily: 'Inter_600SemiBold',
-    letterSpacing: 0.2,
-  },
-  brandRow: {
+
+  // nav
+  navbar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
-    marginBottom: 40,
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingTop: 56,
+    paddingBottom: 16,
   },
-  logo: { width: 72, height: 72 },
-  brandName: {
-    fontSize: 16,
-    fontFamily: 'Inter_700Bold',
-    letterSpacing: 2,
-  },
-  brandSub: {
-    fontSize: 9,
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  brandLogo: { width: 32, height: 32 },
+  brandName: { fontSize: 16, fontFamily: 'Inter_700Bold', letterSpacing: 0.3 },
+  navButton: { borderRadius: 999, paddingHorizontal: 16, paddingVertical: 8 },
+  navButtonOutline: { borderWidth: 1 },
+  navButtonOutlineText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  navButtonDark: { backgroundColor: '#1a1730' },
+  navButtonDarkText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#ffffff' },
+
+  // scroll
+  scrollContent: { paddingHorizontal: 24 },
+
+  // hero
+  heroSection: { paddingTop: 32, paddingBottom: 40 },
+  eyebrow: {
+    fontSize: 11,
     fontFamily: 'Inter_600SemiBold',
     letterSpacing: 1.5,
-    marginTop: 3,
+    textTransform: 'uppercase',
+    marginBottom: 20,
   },
-  headline: {
-    fontSize: 34,
-    lineHeight: 40,
+  heroHeadline: {
+    fontSize: 36,
+    lineHeight: 44,
     fontFamily: 'Inter_700Bold',
-    marginBottom: 14,
+    marginBottom: 16,
   },
-  subline: {
-    fontSize: 14,
-    lineHeight: 22,
+  italic: { fontStyle: 'italic' },
+  heroSub: {
+    fontSize: 15,
+    lineHeight: 24,
     fontFamily: 'Inter_400Regular',
-    marginBottom: 28,
+    marginBottom: 32,
   },
+  heroActions: { gap: 12 },
   primaryButton: {
-    borderRadius: 16,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  primaryButtonText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontFamily: 'Inter_700Bold',
-  },
-  secondaryButton: {
-    borderWidth: 1,
-    borderRadius: 16,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  secondaryButtonText: {
-    fontSize: 15,
-    fontFamily: 'Inter_600SemiBold',
-  },
-  tertiaryButton: {
     borderRadius: 14,
-    paddingVertical: 12,
+    paddingVertical: 16,
     alignItems: 'center',
-    marginTop: 6,
+    justifyContent: 'center',
+    minHeight: 52,
   },
-  tertiaryButtonText: {
-    fontSize: 13,
-    fontFamily: 'Inter_500Medium',
+  primaryButtonText: { color: '#ffffff', fontSize: 15, fontFamily: 'Inter_700Bold' },
+  quietButton: {
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    minHeight: 52,
   },
+  quietButtonText: { fontSize: 15, fontFamily: 'Inter_500Medium' },
+  errorText: { color: '#ef4444', fontSize: 13, fontFamily: 'Inter_400Regular', marginTop: 4 },
+
+  // intro
+  introSection: {
+    paddingVertical: 40,
+    borderTopWidth: 1,
+    borderTopColor: '#1f1d2e',
+  },
+  introHeadline: {
+    fontSize: 30,
+    lineHeight: 38,
+    fontFamily: 'Inter_700Bold',
+    marginBottom: 16,
+  },
+  introCopy: { fontSize: 15, lineHeight: 24, fontFamily: 'Inter_400Regular' },
+
+  // pills
+  featureRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingBottom: 24 },
+  featurePill: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, borderWidth: 1 },
+  featurePillText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
 });
