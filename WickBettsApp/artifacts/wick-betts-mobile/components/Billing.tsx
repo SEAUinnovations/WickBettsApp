@@ -92,6 +92,7 @@ export function SubscribePanel() {
   const { loading, error, runCheckout } = useBillingActions();
   return (
     <View style={styles.stack}>
+      <Text style={styles.stripeNote}>Secure checkout opens in Stripe.</Text>
       <ActionButton
         onPress={() => void runCheckout('signals')}
         icon="pulse-outline"
@@ -129,6 +130,7 @@ export function UpgradeMentorshipButton() {
   const { loading, error, runCheckout } = useBillingActions();
   return (
     <View style={styles.stack}>
+      <Text style={styles.stripeNote}>Secure checkout opens in Stripe.</Text>
       <ActionButton
         onPress={() => void runCheckout('mentorship')}
         icon="ribbon-outline"
@@ -148,6 +150,7 @@ export function ManageBillingButton() {
   const { loading, error, runPortal } = useBillingActions();
   return (
     <View style={styles.stack}>
+      <Text style={styles.stripeNote}>Billing management opens through Stripe.</Text>
       <ActionButton
         onPress={() => void runPortal()}
         icon="card-outline"
@@ -180,6 +183,7 @@ export function LapsedRecovery({
   const isPastDue = status === 'past_due';
   return (
     <View style={styles.stack}>
+      <Text style={styles.stripeNote}>Secure checkout opens in Stripe.</Text>
       {isPastDue ? (
         <ActionButton
           onPress={() => void runPortal()}
@@ -221,6 +225,7 @@ export function LapsedRecovery({
 
 const styles = StyleSheet.create({
   stack: { gap: 10 },
+  stripeNote: { fontSize: 11, fontFamily: 'Inter_500Medium', color: '#A78BFA' },
   busyButton: {
     minHeight: 52,
     borderRadius: 15,

@@ -43,6 +43,7 @@ export default function ProfileScreen() {
   const [pushMaster, setPushMaster] = useState(() => (user?.notifySignals ?? true) || (user?.notifyNews ?? false));
 
   const isAdmin = user?.role === 'admin';
+  const timezoneLabel = user?.timezone || 'New York (ET)';
 
   const initials = user?.name
     ? user.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
@@ -119,7 +120,7 @@ export default function ProfileScreen() {
 
   return (
     <Screen contentStyle={styles.content}>
-      <Header eyebrow="Wick Betts / Account" title="Profile" action="Settings" onAction={() => router.push('/profile')} />
+      <Header eyebrow="Wick Betts / Account" title="Profile" action="Settings" onAction={() => router.push('/settings' as never)} />
 
       {/* Profile header */}
       <View style={styles.profileHeader}>
@@ -226,13 +227,13 @@ export default function ProfileScreen() {
       {/* Account */}
       <SectionLabel>Account</SectionLabel>
       <Card style={styles.settingsCard}>
-        <Pressable style={styles.accountRow} accessibilityRole="button">
+        <Pressable onPress={() => router.push('/settings' as never)} style={styles.accountRow} accessibilityRole="button">
           <Ionicons name="time-outline" size={19} color={colors.accent} />
           <Text style={[styles.accountText, { color: colors.foreground }]}>Timezone</Text>
-          <Text style={[styles.accountValue, { color: colors.mutedForeground }]}>New York (ET)</Text>
+          <Text style={[styles.accountValue, { color: colors.mutedForeground }]}>{timezoneLabel}</Text>
           <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
         </Pressable>
-        <Pressable style={styles.accountRow} accessibilityRole="button">
+        <Pressable onPress={() => router.push('/legal' as never)} style={styles.accountRow} accessibilityRole="button">
           <Ionicons name="document-text-outline" size={19} color={colors.accent} />
           <Text style={[styles.accountText, { color: colors.foreground }]}>Legal &amp; disclosures</Text>
           <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />

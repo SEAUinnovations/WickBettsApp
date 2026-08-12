@@ -25,6 +25,7 @@ export interface AuthUser {
   hasStripeCustomer: boolean;
   notifySignals: boolean;
   notifyNews: boolean;
+  timezone?: string | null;
 }
 
 export interface AuthSubscription {
@@ -118,7 +119,9 @@ function getEmailPrefix(email: string | null | undefined): string {
   return email?.split('@')[0]?.trim() ?? '';
 }
 
-function getClerkUsername(clerkUser: typeof useUser extends (...args: any[]) => infer Result ? Result['user'] : never): string {
+type ClerkUser = ReturnType<typeof useUser>['user'];
+
+function getClerkUsername(clerkUser: ClerkUser): string {
   if (!clerkUser) return '';
   const unsafeMetadata = clerkUser.unsafeMetadata as { username?: unknown } | undefined;
   const username = typeof unsafeMetadata?.username === 'string' ? unsafeMetadata.username.trim() : '';

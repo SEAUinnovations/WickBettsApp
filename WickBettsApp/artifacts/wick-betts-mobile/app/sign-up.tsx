@@ -12,14 +12,16 @@ import {
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useSignUp } from '@clerk/expo';
+import { useClerk } from '@clerk/expo';
+import { useSignUp } from '@clerk/expo/legacy';
 import { useRouter } from 'expo-router';
 import { useColors } from '@/hooks/useColors';
 
 const WB_LOGO = require('@/assets/images/wb-logo.png') as number;
 
 export default function SignUpScreen() {
-  const { signUp, setActive, isLoaded } = useSignUp();
+  const { signUp, isLoaded } = useSignUp();
+  const { setActive } = useClerk();
   const router = useRouter();
   const colors = useColors();
 
