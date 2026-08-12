@@ -1,32 +1,50 @@
-# Railway + Cloudflare Deployment (Single Domain)
+# Cloudflare Pages + Railway API Deployment (wickbetts.com)
 
-This setup deploys one Railway service and exposes one public Cloudflare domain.
+This setup hosts the web frontend on Cloudflare Pages and keeps the API on Railway.
 
-- Web app served at `/`
-- API served at `/api/*`
-- Health check at `/healthz`
+- Frontend served by Pages at `/`
+- API proxied through Pages Functions at `/api/*`
+- Health check proxied at `/healthz`
 
-## 1. Railway Project Bootstrap
+## 1. Hosting model
 
-1. Create a new Railway project.
-2. Add one service from this repository.
-3. Ensure Railway reads [railway.json](railway.json).
-4. Provision a Railway Postgres database and attach it to the same project.
+1. Cloudflare Pages hosts `artifacts/wick-betts` output.
+2. Railway runs only the API service.
+3. Cloudflare edge functions forward `/api/*` and `/healthz` to Railway.
+4. Canonical production host is `https://wickbetts.com`.
 
-Build note:
+## 2. GitHub automation (every push)
 
-- The Docker deployment path intentionally uses a Debian `bookworm-slim` Node image, not Alpine.
-- The workspace pnpm overrides strip several `linux-x64-musl` native optional packages, so switching the image back to Alpine will break Vite/Rollup native module resolution during build.
+This repo includes a workflow at `.github/workflows/deploy-cloudflare-pages.yml`.
 
-## 2. Required Railway Variables
+On every push to `main`, it:
 
-Set these service variables before first production start:
+1. Installs workspace dependencies with pnpm.
+2. Builds the web app with `PORT=3000 BASE_PATH=/`.
+3. Deploys `artifacts/wick-betts/dist/public` to Cloudflare Pages.
+4. Deploys Pages Functions from `artifacts/wick-betts/functions`.
+
+Required GitHub repository secrets:
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_PAGES_PROJECT_NAME`
+
+## 3. Cloudflare Pages project settings
+
+1. Connect Pages project to this repo.
+2. Production branch: `main`.
+3. Custom domain: `wickbetts.com`.
+4. Add optional `www.wickbetts.com` and redirect `www -> apex`.
+
+## 4. Railway API settings
+
+Set these service variables:
 
 - `NODE_ENV=production`
-- `PORT=8080` (or let Railway inject `PORT` if configured)
 - `DATABASE_URL=${{ Postgres.DATABASE_PRIVATE_URL }}`
-- `APP_ORIGIN=https://app.yourdomain.com`
-- `CORS_ALLOWED_ORIGINS=https://app.yourdomain.com`
+- `APP_ORIGIN=https://wickbetts.com`
+- `CORS_ALLOWED_ORIGINS=https://wickbetts.com`
 - `CORS_ALLOW_REPLIT_ORIGINS=false`
 - `CLERK_PUBLISHABLE_KEY=<pk_live_or_pk_test>`
 - `CLERK_SECRET_KEY=<sk_live_or_sk_test>`
@@ -36,66 +54,41 @@ Set these service variables before first production start:
 - `STRIPE_PRICE_SIGNALS=<price_id>`
 - `STRIPE_PRICE_MENTORSHIP=<price_id>`
 
-Optional:
+Optional Pages Function variable:
 
-- `OPENAI_API_KEY=<key>`
-- `WEB_DIST_DIR=<custom path>` (only if the default static bundle path is changed)
+- `RAILWAY_API_ORIGIN=https://wickbettsapp-production.up.railway.app`
 
-Database note:
+If `RAILWAY_API_ORIGIN` is not set in Pages, the functions use that same default.
 
-- Use the Railway Postgres private-network reference shown in the Postgres connect dialog.
-- Do not point this app at MySQL; the backend uses `pg` and `drizzle-orm/node-postgres`, so it requires a Postgres connection string.
+## 5. Clerk and Stripe domain alignment
 
-## 3. Clerk and Stripe Console Updates
+Clerk allowed URLs:
 
-1. Clerk allowed origins/redirects:
-- `https://app.yourdomain.com`
-- `https://app.yourdomain.com/sign-in`
-- `https://app.yourdomain.com/sign-up`
+- `https://wickbetts.com`
+- `https://wickbetts.com/sign-in`
+- `https://wickbetts.com/sign-up`
 
-2. Stripe webhook endpoint:
-- `https://app.yourdomain.com/api/stripe/webhook`
+Stripe webhook endpoint:
 
-3. Stripe customer portal/checkouts use `APP_ORIGIN` for return URLs.
+- `https://wickbetts.com/api/stripe/webhook`
 
-## 4. Cloudflare DNS
+## 6. Mobile production URL
 
-1. Create DNS `CNAME`:
-- Name: `app`
-- Target: your Railway service public hostname
-- Proxy status: Proxied
+Set in EAS:
 
-2. Keep SSL/TLS mode at `Full` (or `Full (strict)` when certificate trust is finalized).
+- `EXPO_PUBLIC_API_URL=https://wickbetts.com`
 
-## 5. Cloudflare Caching + Routing Rules
+## 7. Verification checklist
 
-Create a Cache Rule to bypass API responses:
-
-- If: `http.request.uri.path starts_with "/api/"`
-- Then: `Cache eligibility = Bypass`
-
-Optional hardening:
-
-- Disable Browser Integrity/Managed WAF rules only if they block Clerk/Stripe callbacks.
-
-## 6. Mobile Production URL
-
-Set in EAS profiles/environment:
-
-- `EXPO_PUBLIC_API_URL=https://app.yourdomain.com`
-
-## 7. Verification Checklist
-
-1. `GET https://app.yourdomain.com/healthz` returns `200`.
-2. `GET https://app.yourdomain.com/api/healthz` returns `200`.
-3. Web landing page loads at `/`.
-4. Web sign-in/up loads and completes with Clerk.
+1. Push any commit to `main`; confirm workflow deploy succeeds.
+2. `GET https://wickbetts.com/healthz` returns `200`.
+3. `GET https://wickbetts.com/api/healthz` returns `200`.
+4. Web sign-in/sign-up flow works on apex domain.
 5. Authenticated `GET /api/auth/me` succeeds from web and mobile.
-6. Stripe checkout opens and returns to web.
-7. Stripe webhook receives events and updates subscription state.
+6. Stripe checkout and webhook flow still work.
 
 ## 8. Rollback
 
-1. In Cloudflare DNS, switch `app` record target back to prior origin.
-2. Purge Cloudflare cache for the app hostname.
-3. Verify `/healthz` and `/api/healthz` on rolled-back origin.
+1. In Pages, redeploy prior successful build.
+2. If needed, point apex DNS back to prior origin.
+3. Verify `/healthz` and `/api/healthz` after rollback.

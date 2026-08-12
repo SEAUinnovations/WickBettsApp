@@ -1,0 +1,52 @@
+name: Deploy Frontend to Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: pages-prod-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.21.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: WickBettsApp/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: WickBettsApp
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web app
+        working-directory: WickBettsApp
+        run: PORT=3000 BASE_PATH=/ pnpm --filter @workspace/wick-betts build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy WickBettsApp/artifacts/wick-betts/dist/public
+            --project-name=${{ secrets.CLOUDFLARE_PAGES_PROJECT_NAME }}
+            --branch=main
+            --commit-hash=${{ github.sha }}
+            --functions=WickBettsApp/artifacts/wick-betts/functions
