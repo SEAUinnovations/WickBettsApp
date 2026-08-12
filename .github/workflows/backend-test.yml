@@ -30,6 +30,12 @@ jobs:
       CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_PUBLISHABLE_KEY || vars.CLERK_PUBLISHABLE_KEY || 'pk_test_xxxxxxxxxxxxxxxxx' }}
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || vars.CLERK_SECRET_KEY || 'sk_test_xxxxxxxxxxxxxxxxx' }}
       SESSION_SECRET: ${{ secrets.SESSION_SECRET || vars.SESSION_SECRET || 'test-session-secret' }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY || vars.STRIPE_SECRET_KEY }}
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY || vars.STRIPE_PUBLISHABLE_KEY }}
+      STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET || vars.STRIPE_WEBHOOK_SECRET }}
+      STRIPE_PRICE_SIGNALS: ${{ secrets.STRIPE_PRICE_SIGNALS || vars.STRIPE_PRICE_SIGNALS || 'prod_V3mioMmtHqjdt' }}
+      STRIPE_PRICE_MENTORSHIP: ${{ secrets.STRIPE_PRICE_MENTORSHIP || vars.STRIPE_PRICE_MENTORSHIP || 'prod_V3mjRfgXHyelFR' }}
+      STRIPE_PRICE_MEMBERSHIP: ${{ secrets.STRIPE_PRICE_MEMBERSHIP || vars.STRIPE_PRICE_MEMBERSHIP || 'prod_V3mi01VwWX6sA0' }}
 
     steps:
       - name: Checkout

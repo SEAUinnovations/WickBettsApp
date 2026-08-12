@@ -45,6 +45,15 @@ jobs:
         working-directory: WickBettsApp
         run: pnpm install --frozen-lockfile
 
+      - name: Validate Stripe runtime config
+        shell: bash
+        run: |
+          [ -n "${{ secrets.STRIPE_SECRET_KEY || vars.STRIPE_SECRET_KEY || '' }}" ] || { echo "Missing STRIPE_SECRET_KEY"; exit 1; }
+          [ -n "${{ secrets.STRIPE_PUBLISHABLE_KEY || vars.STRIPE_PUBLISHABLE_KEY || '' }}" ] || { echo "Missing STRIPE_PUBLISHABLE_KEY"; exit 1; }
+          [ -n "${{ secrets.STRIPE_WEBHOOK_SECRET || vars.STRIPE_WEBHOOK_SECRET || '' }}" ] || { echo "Missing STRIPE_WEBHOOK_SECRET"; exit 1; }
+          [ -n "${{ secrets.STRIPE_PRICE_SIGNALS || vars.STRIPE_PRICE_SIGNALS || '' }}" ] || { echo "Missing STRIPE_PRICE_SIGNALS"; exit 1; }
+          [ -n "${{ secrets.STRIPE_PRICE_MENTORSHIP || vars.STRIPE_PRICE_MENTORSHIP || '' }}" ] || { echo "Missing STRIPE_PRICE_MENTORSHIP"; exit 1; }
+
       - name: Build mobile web app
         working-directory: WickBettsApp
         env:
@@ -80,6 +89,7 @@ jobs:
           else
             [ -n "$CLOUDFLARE_WORKER_NAME" ] || { echo "Missing deploy target. Set CLOUDFLARE_PAGES_PROJECT_NAME (for Pages) or CLOUDFLARE_WORKER_NAME (for Workers)."; exit 1; }
             echo "Deploy mode: Cloudflare Worker '$CLOUDFLARE_WORKER_NAME' (CLOUDFLARE_DEPLOY_TARGET=${CLOUDFLARE_DEPLOY_TARGET})"
+            printf "%s\n" "_worker.js" > artifacts/wick-betts-mobile/dist/.assetsignore
             pnpm dlx wrangler@4 deploy artifacts/wick-betts-mobile/dist/_worker.js \
               --name="$CLOUDFLARE_WORKER_NAME" \
               --assets=artifacts/wick-betts-mobile/dist \

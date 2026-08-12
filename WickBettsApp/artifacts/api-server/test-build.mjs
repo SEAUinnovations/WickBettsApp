@@ -15,12 +15,13 @@ globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
 const outDir = path.resolve(artifactDir, "dist/test");
-const outFile = path.resolve(outDir, "clerk.test.mjs");
+const testEntries = {
+  "clerk.test": path.resolve(artifactDir, "src/routes/clerk.test.ts"),
+  "stripe.test": path.resolve(artifactDir, "src/routes/stripe.test.ts"),
+};
 
 await esbuild({
-  entryPoints: {
-    "clerk.test": path.resolve(artifactDir, "src/routes/clerk.test.ts"),
-  },
+  entryPoints: testEntries,
   platform: "node",
   bundle: true,
   format: "esm",
@@ -52,7 +53,7 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
 // Run the compiled test suite
 const result = spawnSync(
   process.execPath,
-  ["--test", "--test-force-exit", outFile],
+  ["--test", "--test-force-exit", ...Object.keys(testEntries).map((name) => path.resolve(outDir, `${name}.mjs`))],
   { stdio: "inherit" },
 );
 process.exit(result.status ?? 0);
