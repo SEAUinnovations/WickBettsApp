@@ -1,7 +1,7 @@
 const DEFAULT_RAILWAY_ORIGIN = 'https://wickbettsapp-production.up.railway.app';
-// Clerk's Frontend API — all /api/__clerk/* requests proxy here directly,
-// so Clerk auth works even when Railway is down.
-const CLERK_FAPI_ORIGIN = 'https://frontend-api.clerk.dev';
+// Forward Clerk FAPI calls to the custom domain — Cloudflare routes clerk.wickbetts.com
+// to Clerk's servers via the Proxied CNAME record.
+const CLERK_FAPI_ORIGIN = 'https://clerk.wickbetts.com';
 const CLERK_PROXY_PREFIX = '/api/__clerk';
 
 function resolveRailwayOrigin(env) {
@@ -24,13 +24,9 @@ async function proxyToClerk(request, env) {
 
   const headers = new Headers(request.headers);
   headers.delete('host');
-  // Clerk needs to see its custom domain as the host to identify the instance
-  headers.set('x-forwarded-host', 'clerk.wickbetts.com');
-  headers.set('x-forwarded-proto', 'https');
+  // Tell Clerk this is a proxied request so it generates correct redirect URLs
   headers.set('Clerk-Proxy-Url', `${url.origin}${CLERK_PROXY_PREFIX}`);
-  if (env.CLERK_SECRET_KEY) {
-    headers.set('Clerk-Secret-Key', env.CLERK_SECRET_KEY);
-  }
+  headers.set('x-forwarded-proto', 'https');
 
   const upstream = await fetch(targetUrl, {
     method: request.method,
