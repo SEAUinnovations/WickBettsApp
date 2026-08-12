@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -39,10 +39,9 @@ const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
  */
 const proxyUrl: string | undefined =
   process.env.EXPO_PUBLIC_CLERK_PROXY_URL ||
-  // Proxy only works in production — the API server's Clerk proxy middleware
-  // is a no-op in dev (Clerk proxying is unsupported for dev instances), so
-  // in dev we fall back to direct Clerk FAPI calls with the dev key.
-  (!__DEV__ && AUTH_DOMAIN ? `${AUTH_DOMAIN}/api/__clerk` : undefined);
+  // Proxy only works in production native builds — web can call Clerk FAPI directly.
+  // Without this guard, a Railway outage breaks Clerk init on web too.
+  (Platform.OS !== 'web' && !__DEV__ && AUTH_DOMAIN ? `${AUTH_DOMAIN}/api/__clerk` : undefined);
 
 function isPublicRoute(segments: string[]): boolean {
   const first = segments[0];
