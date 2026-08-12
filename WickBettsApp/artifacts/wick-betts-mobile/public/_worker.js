@@ -26,6 +26,10 @@ async function proxyToClerk(request, env) {
   headers.delete('host');
   // Tell Clerk this is a proxied request so it generates correct redirect URLs
   headers.set('Clerk-Proxy-Url', `${url.origin}${CLERK_PROXY_PREFIX}`);
+  const secretKey = typeof env?.CLERK_SECRET_KEY === 'string' ? env.CLERK_SECRET_KEY.trim() : '';
+  if (secretKey) {
+    headers.set('Clerk-Secret-Key', secretKey);
+  }
   headers.set('x-forwarded-proto', 'https');
 
   const upstream = await fetch(targetUrl, {
