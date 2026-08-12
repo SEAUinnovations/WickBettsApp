@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Card, Header, Screen, SectionLabel, Tag } from '@/components/WickUI';
 import { useColors } from '@/hooks/useColors';
@@ -37,6 +38,7 @@ function formatTime(iso: string): string {
 }
 
 export default function CommunityScreen() {
+  const router = useRouter();
   const colors = useColors();
   const { getToken, user } = useAuth();
   const [thread, setThread] = useState<Thread>('Signals');
@@ -126,7 +128,7 @@ export default function CommunityScreen() {
 
   return (
     <Screen contentStyle={styles.content}>
-      <Header eyebrow="Wick Betts / Members only" title="Community" action="Alerts" onAction={() => {}} />
+      <Header eyebrow="Wick Betts / Members only" title="Community" action="Alerts" onAction={() => router.push('/news')} />
       <Text style={[styles.description, { color: colors.mutedForeground }]}>
         Three rooms. No noise. Keep the conversation useful.
       </Text>

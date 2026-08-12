@@ -27,6 +27,7 @@ export default function HomeScreen() {
   const colors = useColors();
   const { data: market, loading: marketLoading } = useMarketData();
   const { user } = useAuth();
+  const username = user?.name ?? 'Member';
 
   const pushProtected = (href: '/mentorship' | '/(tabs)/signals') => {
     if (!user) {
@@ -51,7 +52,7 @@ export default function HomeScreen() {
         eyebrow={`Wick Betts / ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}`}
         title="Good morning."
         action="Alerts"
-        onAction={() => {}}
+        onAction={() => router.push('/news')}
       />
 
       {/* Status banner */}
@@ -64,6 +65,7 @@ export default function HomeScreen() {
       {/* Hero */}
       <View style={styles.hero}>
         <View style={styles.heroCopy}>
+          <Text style={[styles.heroWelcome, { color: colors.foreground }]}>Welcome back, {username}.</Text>
           <Text style={[styles.heroKicker, { color: colors.primary }]}>THE DAILY BRIEF</Text>
           <Text style={[styles.heroTitle, { color: colors.foreground }]}>Read the market{'\n'}before it moves.</Text>
           <Text style={[styles.heroBody, { color: colors.mutedForeground }]}>
@@ -188,6 +190,7 @@ const styles = StyleSheet.create({
   statusTime: { fontSize: 10, fontFamily: 'Inter_400Regular' },
   hero: { flexDirection: 'row', alignItems: 'center', marginBottom: 28, gap: 14 },
   heroCopy: { flex: 1 },
+  heroWelcome: { fontSize: 14, fontFamily: 'Inter_600SemiBold', marginBottom: 8 },
   heroKicker: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1.5, marginBottom: 8 },
   heroTitle: { fontSize: 26, fontFamily: 'Inter_700Bold', letterSpacing: -0.7, lineHeight: 30, marginBottom: 10 },
   heroBody: { fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 17 },

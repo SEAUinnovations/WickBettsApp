@@ -24,6 +24,7 @@ export default function SignUpScreen() {
   const colors = useColors();
 
   const [step, setStep] = useState<'credentials' | 'verify'>('credentials');
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
@@ -35,7 +36,12 @@ export default function SignUpScreen() {
     setLoading(true);
     setError('');
     try {
-      await signUp.create({ emailAddress: email, password });
+      const desiredUsername = username.trim();
+      await signUp.create({
+        emailAddress: email.trim(),
+        password,
+        unsafeMetadata: desiredUsername ? { username: desiredUsername } : undefined,
+      });
       await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
       setStep('verify');
     } catch (err) {
@@ -98,8 +104,22 @@ export default function SignUpScreen() {
             <>
               <Text style={[styles.heading, { color: colors.foreground }]}>Create your account</Text>
               <Text style={[styles.subheading, { color: colors.mutedForeground }]}>
-                Enter your email and choose a password to get started.
+                Enter your email, choose a password, and optionally add a username.
               </Text>
+
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.mutedForeground }]}>Username <Text style={styles.optionalLabel}>(optional)</Text></Text>
+                <TextInput
+                  style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: '#0f0d18' }]}
+                  value={username}
+                  onChangeText={setUsername}
+                  placeholder="your-handle"
+                  placeholderTextColor={colors.mutedForeground}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  textContentType="nickname"
+                />
+              </View>
 
               <View style={styles.field}>
                 <Text style={[styles.label, { color: colors.mutedForeground }]}>Email</Text>
@@ -219,6 +239,7 @@ const styles = StyleSheet.create({
   subheading: { fontSize: 14, fontFamily: 'Inter_400Regular', lineHeight: 22, marginBottom: 32 },
   field: { marginBottom: 20 },
   label: { fontSize: 12, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' },
+  optionalLabel: { fontFamily: 'Inter_400Regular', textTransform: 'none', letterSpacing: 0, fontSize: 11 },
   input: {
     borderWidth: 1,
     borderRadius: 12,

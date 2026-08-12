@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { Card, Header, Screen, SectionLabel, Tag } from '@/components/WickUI';
 import { LapsedRecovery, SubscribePanel } from '@/components/Billing';
 import { useColors } from '@/hooks/useColors';
@@ -10,6 +11,7 @@ import { useSignals, type Signal } from '@/context/SignalContext';
 type Filter = 'All' | 'Stocks' | 'Crypto' | 'Options' | 'Active' | 'Closed';
 
 export default function SignalsScreen() {
+  const router = useRouter();
   const colors = useColors();
   const { subscription, user } = useAuth();
   const { signals, isLoading, isSubscriptionRequired, error, refresh } = useSignals();
@@ -29,7 +31,7 @@ export default function SignalsScreen() {
 
   return (
     <Screen contentStyle={styles.content}>
-      <Header eyebrow="Wick Betts / Intelligence" title="Signals" action="Alerts" onAction={() => {}} />
+      <Header eyebrow="Wick Betts / Intelligence" title="Signals" action="Alerts" onAction={() => router.push('/news')} />
 
       {/* Subscription required gate */}
       {isSubscriptionRequired ? (

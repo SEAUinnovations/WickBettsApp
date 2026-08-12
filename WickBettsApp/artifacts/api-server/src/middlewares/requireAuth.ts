@@ -19,6 +19,7 @@ async function resolveClerkIdentity(userId: string): Promise<{
   email: string;
   firstName: string;
   lastName: string;
+  username: string;
 } | null> {
   try {
     const clerkUser = await clerkClient.users.getUser(userId);
@@ -26,10 +27,12 @@ async function resolveClerkIdentity(userId: string): Promise<{
       (e) => e.id === clerkUser.primaryEmailAddressId,
     );
     if (!emailObj?.emailAddress) return null;
+    const unsafeMetadata = clerkUser.unsafeMetadata as { username?: unknown } | undefined;
     return {
       email: emailObj.emailAddress,
       firstName: clerkUser.firstName ?? "",
       lastName: clerkUser.lastName ?? "",
+      username: typeof unsafeMetadata?.username === "string" ? unsafeMetadata.username.trim() : "",
     };
   } catch (err) {
     logger.error(err, "resolveClerkIdentity: Clerk API call failed");
@@ -50,8 +53,9 @@ export async function jitProvisionUser(identity: {
   email: string;
   firstName: string;
   lastName: string;
+  username: string;
 }): Promise<import("@workspace/db").User | null> {
-  const { email, firstName, lastName } = identity;
+  const { email, firstName, lastName, username } = identity;
 
   let rows;
   try {
@@ -65,7 +69,7 @@ export async function jitProvisionUser(identity: {
 
   if (!user) {
     const name =
-      [firstName, lastName].filter(Boolean).join(" ") || email.split("@")[0];
+      username || [firstName, lastName].filter(Boolean).join(" ") || email.split("@")[0];
     const role =
       email === SUPER_ADMIN_EMAIL ? ("admin" as const) : ("member" as const);
 

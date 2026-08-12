@@ -74,6 +74,10 @@ const slots: AppointmentSlot[] = [
 ];
 
 const initials = (name: string) => name.split(' ').map((p) => p[0]).join('').slice(0, 2);
+const usernameFromUser = (user: { name?: string | null; email?: string | null } | null | undefined) => {
+  const emailPrefix = user?.email?.split('@')[0]?.trim();
+  return emailPrefix || user?.name?.trim() || 'Member';
+};
 const navItems = [
   { href:'/app/home', label:'Overview', icon:LayoutDashboard },
   { href:'/app/signals', label:'Signals', icon:Radio },
@@ -375,7 +379,7 @@ function MemberShell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { user, subscription, logout } = useAuth();
   const active = (href: string) => location === href;
-  const memberName = user?.name ?? 'Member';
+  const memberName = usernameFromUser(user);
   const plan = subscription?.plan ?? 'signals';
 
   return <div className="member-shell app-noise">
@@ -410,7 +414,9 @@ function MemberShell({ children }: { children: React.ReactNode }) {
         <Link href="/app/home" className="mobile-brand"><Brand /></Link>
         <span className="date">Wick Betts · {new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' })}</span>
         <div className="topbar-actions">
-          <button className="icon-button" title="Help" data-testid="button-help"><CircleHelp size={15} /></button>
+          <Link href="/app/profile" className="icon-button" title="Profile" data-testid="button-help">
+            <CircleHelp size={15} />
+          </Link>
           <Link href="/app/profile" className="icon-button" title="Profile" data-testid="link-top-profile">
             {user?.avatarUrl
               ? <img src={user.avatarUrl} alt="" className="avatar-img avatar-img--sm" referrerPolicy="no-referrer" />
@@ -439,7 +445,7 @@ function PageHeading({ eyebrow, title, description, action }: { eyebrow: string;
 function HomePage() {
   const { user, subscription } = useAuth();
   const plan = subscription?.plan ?? 'signals';
-  const memberName = user?.name ?? 'Member';
+  const memberName = usernameFromUser(user);
 
   return <div className="page">
     <PageHeading eyebrow={new Date().toLocaleDateString('en-US',{weekday:'long', month:'long', day:'numeric'})} title="Your morning brief." description="A short read on what changed, what matters, and where patience is still the better position." />
@@ -959,7 +965,7 @@ function ProfilePage() {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [portalError, setPortalError] = useState('');
 
-  const memberName = user?.name ?? 'Member';
+  const memberName = usernameFromUser(user);
   const plan = subscription?.plan ?? 'signals';
   const subStatus = subscription?.status;
   const billingEnd = subscription?.currentPeriodEnd
@@ -1566,6 +1572,12 @@ function AppRouter() {
   const { isAuthenticated, isLoading } = useAuth();
   const [, setLocation] = useLocation();
 
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && (isSignIn || isSignUp)) {
+      setLocation('/app/home');
+    }
+  }, [isAuthenticated, isLoading, isSignIn, isSignUp, setLocation]);
+
   // Redirect authenticated members away from landing
   useEffect(() => {
     if (!isLoading && isAuthenticated && isLanding) {
@@ -1576,6 +1588,7 @@ function AppRouter() {
     }
   }, [isAuthenticated, isLanding, isLoading, setLocation]);
 
+  if (!isLoading && isAuthenticated && (isSignIn || isSignUp)) return null;
   if (isSignIn) return <SignInPage />;
   if (isSignUp) return <SignUpPage />;
   if (isLanding) return <Landing />;

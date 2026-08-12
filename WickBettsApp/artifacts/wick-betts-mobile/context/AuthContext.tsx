@@ -114,6 +114,17 @@ async function registerPushToken(token: string): Promise<void> {
   }
 }
 
+function getEmailPrefix(email: string | null | undefined): string {
+  return email?.split('@')[0]?.trim() ?? '';
+}
+
+function getClerkUsername(clerkUser: typeof useUser extends (...args: any[]) => infer Result ? Result['user'] : never): string {
+  if (!clerkUser) return '';
+  const unsafeMetadata = clerkUser.unsafeMetadata as { username?: unknown } | undefined;
+  const username = typeof unsafeMetadata?.username === 'string' ? unsafeMetadata.username.trim() : '';
+  return username || clerkUser.fullName || getEmailPrefix(clerkUser.primaryEmailAddress?.emailAddress ?? clerkUser.emailAddresses?.[0]?.emailAddress);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, getToken: clerkGetToken, signOut: clerkSignOut } = useClerkAuth();
   const { user: clerkUser } = useUser();
@@ -224,12 +235,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await refreshSubscription();
   }, [getToken, refreshSubscription]);
 
-  // Merge Clerk identity with local DB data for richer display
+  // Merge Clerk identity with local DB data for richer display.
+  // If the backend profile row is not available yet, keep the signed-in Clerk
+  // user visible so the app can render the dashboard instead of staying in a
+  // loading loop.
   const user = useMemo<AuthUser | null>(() => {
-    if (!dbUser) return null;
+    const clerkEmail = clerkUser?.primaryEmailAddress?.emailAddress
+      ?? clerkUser?.emailAddresses?.[0]?.emailAddress
+      ?? '';
+    const clerkUsername = getClerkUsername(clerkUser);
+
+    if (!dbUser && !clerkUser) return null;
+
+    if (!dbUser) {
+      return {
+        id: clerkUser?.id ?? '',
+        email: clerkEmail,
+        name: clerkUsername || 'Member',
+        avatarUrl: clerkUser?.imageUrl ?? null,
+        role: 'member',
+        hasStripeCustomer: false,
+        notifySignals: true,
+        notifyNews: false,
+      };
+    }
+
     return {
       ...dbUser,
-      name: clerkUser?.fullName ?? dbUser.name,
+      email: dbUser.email || clerkEmail,
+      name: clerkUsername || dbUser.name,
       avatarUrl: clerkUser?.imageUrl ?? dbUser.avatarUrl,
     };
   }, [dbUser, clerkUser]);

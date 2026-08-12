@@ -119,7 +119,7 @@ export default function ProfileScreen() {
 
   return (
     <Screen contentStyle={styles.content}>
-      <Header eyebrow="Wick Betts / Account" title="Profile" action="Settings" onAction={() => {}} />
+      <Header eyebrow="Wick Betts / Account" title="Profile" action="Settings" onAction={() => router.push('/profile')} />
 
       {/* Profile header */}
       <View style={styles.profileHeader}>

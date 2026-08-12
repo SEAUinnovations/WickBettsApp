@@ -92,7 +92,6 @@ function RootLayoutNav() {
       <Stack.Screen name="sign-in" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="sign-up" options={{ headerShown: false, animation: 'slide_from_right' }} />
       <Stack.Screen name="auth" options={{ headerShown: false, animation: 'none' }} />
-      <Stack.Screen name="app" options={{ headerShown: false }} />
       <Stack.Screen name="mentorship" options={{ headerShown: false }} />
       <Stack.Screen name="admin" options={{ headerShown: false }} />
       <Stack.Screen name="admin/users" options={{ headerShown: false }} />
