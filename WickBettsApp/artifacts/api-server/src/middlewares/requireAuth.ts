@@ -126,7 +126,14 @@ export async function jitProvisionUser(identity: {
  * and all other app-specific columns.
  */
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
-  const auth = getAuth(req);
+  let auth;
+  try {
+    auth = getAuth(req);
+  } catch (err) {
+    logger.warn(err, "requireAuth: getAuth failed (missing Clerk context)");
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
 
   if (!auth.userId) {
     res.status(401).json({ error: "Authentication required" });

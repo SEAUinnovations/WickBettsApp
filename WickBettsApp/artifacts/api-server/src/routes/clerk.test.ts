@@ -28,7 +28,7 @@ import type { Request, Response } from "express";
 
 // ─── Application under test ───────────────────────────────────────────────────
 
-import { jitProvisionUser, requireAdmin } from "../middlewares/requireAuth.js";
+import { jitProvisionUser, requireAdmin, requireAuth } from "../middlewares/requireAuth.js";
 import { requireActiveSubscription } from "../routes/signals.js";
 import { db, usersTable, subscriptionsTable } from "../lib/db.js";
 import { eq } from "drizzle-orm";
@@ -126,23 +126,19 @@ after(async () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 test("requireAuth returns 401 when getAuth returns no userId", async () => {
-  // Build a minimal Express app that uses the real requireAuth middleware so we
-  // can verify its 401 path without a Clerk session.  We import express and
-  // supertest here (both bundled) to avoid any top-level ordering issues.
-  const { default: express } = await import("express");
-  const { default: supertest } = await import("supertest");
-  const { requireAuth } = await import("../middlewares/requireAuth.js");
-  const { clerkMiddleware } = await import("@clerk/express");
+  // Keep this test deterministic: inject the auth shape directly on req instead
+  // of relying on Clerk middleware/key parsing in CI.
+  const req = { auth: { userId: null } } as unknown as Request;
+  const res = makeMockRes();
+  let nextCalled = false;
 
-  const testApp = express();
-  // clerkMiddleware initialises Clerk's request context; without a valid JWT
-  // it leaves userId as null, which is exactly the 401 path we want to test.
-  testApp.use(clerkMiddleware());
-  testApp.get("/me", requireAuth, (_req, res) => res.json({ ok: true }));
+  requireAuth(req, res as unknown as Response, () => {
+    nextCalled = true;
+  });
 
-  const res = await supertest(testApp).get("/me");
-  assert.equal(res.status, 401, `expected 401 got ${res.status}: ${JSON.stringify(res.body)}`);
-  assert.ok(res.body.error, "error field must be present in 401 response");
+  assert.equal(nextCalled, false, "next() must not be called");
+  assert.equal(res._status, 401, `expected 401 got ${res._status}`);
+  assert.ok((res._body as { error?: string })?.error, "error field must be present in 401 response");
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
