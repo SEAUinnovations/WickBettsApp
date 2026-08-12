@@ -96,8 +96,30 @@ jobs:
               --assets=artifacts/wick-betts-mobile/dist \
               --compatibility-date="$(date +%F)"
             # Push CLERK_SECRET_KEY as a Worker secret so the Clerk FAPI proxy works
-            if [ -n "$CLERK_SECRET_KEY" ]; then
-              echo "$CLERK_SECRET_KEY" | pnpm dlx wrangler@4 secret put CLERK_SECRET_KEY \
-                --name="$CLOUDFLARE_WORKER_NAME"
+            if [ -z "$CLERK_SECRET_KEY" ]; then
+              echo "WARNING: CLERK_SECRET_KEY is not set — Clerk proxy will return 501. Add it to the GitHub environment secrets."
+            else
+              echo "Setting CLERK_SECRET_KEY Worker secret..."
+              printf '%s' "$CLERK_SECRET_KEY" | pnpm dlx wrangler@4 secret put CLERK_SECRET_KEY \
+                --name="$CLOUDFLARE_WORKER_NAME" && echo "CLERK_SECRET_KEY secret set successfully."
             fi
+
+      - name: Sync Worker secrets
+        if: env.CLOUDFLARE_DEPLOY_TARGET != 'pages'
+        working-directory: WickBettsApp
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || vars.CLOUDFLARE_API_TOKEN || secrets.CF_API_TOKEN || vars.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID || secrets.CF_ACCOUNT_ID || vars.CF_ACCOUNT_ID }}
+          CLOUDFLARE_WORKER_NAME: ${{ env.CLOUDFLARE_WORKER_NAME }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+        run: |
+          WORKER="${CLOUDFLARE_WORKER_NAME:-polished-haze-422}"
+          echo "Syncing secrets to Worker: $WORKER"
+          if [ -n "$CLERK_SECRET_KEY" ]; then
+            printf '%s' "$CLERK_SECRET_KEY" | pnpm dlx wrangler@4 secret put CLERK_SECRET_KEY --name="$WORKER"
+            echo "✓ CLERK_SECRET_KEY synced"
+          else
+            echo "✗ CLERK_SECRET_KEY missing from GitHub secrets — add it to stunning-gratitude/production"
+            exit 1
+          fi
           fi
