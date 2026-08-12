@@ -25,7 +25,7 @@ export interface AuthUser {
 
 export interface Subscription {
   id?: string;
-  plan: 'signals' | 'mentorship';
+  plan: 'signals' | 'mentorship' | 'membership';
   status: 'active' | 'past_due' | 'canceled' | 'trialing' | 'incomplete';
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: string;
@@ -41,7 +41,7 @@ interface AuthState {
   getToken: () => Promise<string | null>;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
-  startCheckout: (plan: 'signals' | 'mentorship') => Promise<void>;
+  startCheckout: (plan: 'signals' | 'mentorship' | 'membership') => Promise<void>;
   openBillingPortal: () => Promise<void>;
 }
 
@@ -126,7 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSubscription(null);
   }, [clerkSignOut]);
 
-  const startCheckout = useCallback(async (plan: 'signals' | 'mentorship') => {
+  const startCheckout = useCallback(async (plan: 'signals' | 'mentorship' | 'membership') => {
     const headers = await authHeaders(getToken, { 'Content-Type': 'application/json' });
     const r = await fetch(apiPath('/stripe/create-checkout'), {
       method: 'POST',

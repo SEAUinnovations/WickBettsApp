@@ -53,33 +53,41 @@ test("Stripe API can create and clean up a customer", { skip: !hasRealStripeConf
   await stripe.customers.del(customer.id);
 });
 
-test("Stripe can create a subscription checkout session for the signals plan", { skip: !hasRealStripeConfig() }, async () => {
+test("Stripe can create checkout sessions for all configured product plans", { skip: !hasRealStripeConfig() }, async () => {
   const stripe = getStripe();
-  const priceId = process.env.STRIPE_PRICE_SIGNALS;
-  assert.ok(priceId, "STRIPE_PRICE_SIGNALS must be set");
+  const planConfigs = [
+    { plan: "signals", env: "STRIPE_PRICE_SIGNALS" },
+    { plan: "mentorship", env: "STRIPE_PRICE_MENTORSHIP" },
+    { plan: "membership", env: "STRIPE_PRICE_MEMBERSHIP" },
+  ] as const;
 
-  const customer = await stripe.customers.create({
-    email: `signals-${Date.now()}@example.com`,
-    name: "Signals Checkout Test",
-    metadata: { source: "workflow-transaction-test" },
-  });
+  for (const { plan, env } of planConfigs) {
+    const priceId = process.env[env];
+    assert.ok(priceId, `${env} must be set`);
 
-  try {
-    const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      customer: customer.id,
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: "https://example.com/?checkout=success",
-      cancel_url: "https://example.com/?checkout=cancelled",
-      metadata: { userId: "ci-user-1", plan: "signals" },
+    const customer = await stripe.customers.create({
+      email: `${plan}-${Date.now()}@example.com`,
+      name: `${plan} Checkout Test`,
+      metadata: { source: "workflow-transaction-test", plan },
     });
 
-    assert.equal(session.mode, "subscription");
-    assert.equal(session.customer, customer.id);
-    assert.match(session.id, /^cs_/);
-    assert.ok(session.url?.startsWith("https://checkout.stripe.com/"));
-  } finally {
-    await stripe.customers.del(customer.id).catch(() => undefined);
+    try {
+      const session = await stripe.checkout.sessions.create({
+        mode: "subscription",
+        customer: customer.id,
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: "https://example.com/?checkout=success",
+        cancel_url: "https://example.com/?checkout=cancelled",
+        metadata: { userId: `ci-user-${plan}`, plan },
+      });
+
+      assert.equal(session.mode, "subscription");
+      assert.equal(session.customer, customer.id);
+      assert.match(session.id, /^cs_/);
+      assert.ok(session.url?.startsWith("https://checkout.stripe.com/"));
+    } finally {
+      await stripe.customers.del(customer.id).catch(() => undefined);
+    }
   }
 });
 

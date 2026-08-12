@@ -10,6 +10,9 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 const PRICE_SIGNALS = process.env.STRIPE_PRICE_SIGNALS;
 const PRICE_MENTORSHIP = process.env.STRIPE_PRICE_MENTORSHIP;
+const PRICE_MEMBERSHIP = process.env.STRIPE_PRICE_MEMBERSHIP;
+
+type ProductPlan = "signals" | "mentorship" | "membership";
 
 function resolveAppOrigin(): string {
   const configured = process.env.APP_ORIGIN?.trim();
@@ -40,8 +43,13 @@ router.post("/create-checkout", requireAuth, async (req: Request, res: Response)
     return;
   }
 
-  const { plan } = req.body as { plan: "signals" | "mentorship" };
-  const priceId = plan === "mentorship" ? PRICE_MENTORSHIP : PRICE_SIGNALS;
+  const { plan } = req.body as { plan: ProductPlan };
+  const priceId =
+    plan === "mentorship"
+      ? PRICE_MENTORSHIP
+      : plan === "membership"
+        ? PRICE_MEMBERSHIP
+        : PRICE_SIGNALS;
   if (!priceId) {
     res.status(503).json({ error: `Stripe price ID for plan "${plan}" is not set.` });
     return;
@@ -70,7 +78,10 @@ router.post("/create-checkout", requireAuth, async (req: Request, res: Response)
       customer: customerId,
       line_items: [{ price: priceId, quantity: 1 }],
       subscription_data: {
-        metadata: { userId: user.id, plan: plan === "mentorship" ? "mentorship" : "signals" },
+        metadata: {
+          userId: user.id,
+          plan: plan === "mentorship" ? "mentorship" : plan === "membership" ? "membership" : "signals",
+        },
       },
       success_url: `${appOrigin}/?checkout=success`,
       cancel_url: `${appOrigin}/?checkout=cancelled`,
@@ -146,7 +157,7 @@ router.post(
         case "customer.subscription.updated": {
           const sub = event.data.object as Stripe.Subscription;
           const userId = sub.metadata?.userId;
-          const plan = (sub.metadata?.plan ?? "signals") as "signals" | "mentorship";
+          const plan = (sub.metadata?.plan ?? "signals") as ProductPlan;
           if (!userId) {
             logger.warn({ eventType: event.type, eventId: event.id, subscriptionId: sub.id }, "Webhook received subscription event with no userId in metadata — subscription state not updated");
             break;
