@@ -46,7 +46,6 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: >-
             pages deploy WickBettsApp/artifacts/wick-betts/dist/public
-            --project-name=${{ secrets.CLOUDFLARE_PAGES_PROJECT_NAME }}
+            --project-name=${{ secrets.CLOUDFLARE_PAGES_PROJECT_NAME || 'polished-haze-422' }}
             --branch=main
             --commit-hash=${{ github.sha }}
-            --functions=WickBettsApp/artifacts/wick-betts/functions

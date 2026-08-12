@@ -10,7 +10,7 @@ This setup hosts the web frontend on Cloudflare Pages and keeps the API on Railw
 
 1. Cloudflare Pages hosts `artifacts/wick-betts` output.
 2. Railway runs only the API service.
-3. Cloudflare edge functions forward `/api/*` and `/healthz` to Railway.
+3. Cloudflare Pages advanced mode worker (`public/_worker.js`) forwards `/api/*` and `/healthz` to Railway.
 4. Canonical production host is `https://wickbetts.com`.
 
 ## 2. GitHub automation (every push)
@@ -22,7 +22,7 @@ On every push to `main`, it:
 1. Installs workspace dependencies with pnpm.
 2. Builds the web app with `PORT=3000 BASE_PATH=/`.
 3. Deploys `artifacts/wick-betts/dist/public` to Cloudflare Pages.
-4. Deploys Pages Functions from `artifacts/wick-betts/functions`.
+4. Deploys a Pages worker from `artifacts/wick-betts/public/_worker.js` (copied into `dist/public/_worker.js` by Vite build).
 
 Required GitHub repository secrets:
 
@@ -54,11 +54,11 @@ Set these service variables:
 - `STRIPE_PRICE_SIGNALS=<price_id>`
 - `STRIPE_PRICE_MENTORSHIP=<price_id>`
 
-Optional Pages Function variable:
+Optional Pages Worker variable:
 
 - `RAILWAY_API_ORIGIN=https://wickbettsapp-production.up.railway.app`
 
-If `RAILWAY_API_ORIGIN` is not set in Pages, the functions use that same default.
+If `RAILWAY_API_ORIGIN` is not set in Pages, the worker uses that same default.
 
 ## 5. Clerk and Stripe domain alignment
 

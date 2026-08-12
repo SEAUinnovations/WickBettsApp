@@ -24,7 +24,7 @@ Phase C: Cloudflare Pages + DNS
 1. Create/attach Pages project to this repository.
 2. Set custom domain `wickbetts.com`.
 3. Optionally add `www.wickbetts.com` and redirect to apex.
-4. Ensure Pages Functions are deployed from `artifacts/wick-betts/functions`.
+4. Ensure Pages worker is deployed from `artifacts/wick-betts/public/_worker.js`.
 5. Verify `https://wickbetts.com/healthz` and `https://wickbetts.com/api/healthz`.
 
 Phase D: External integrations
