@@ -15,6 +15,7 @@ export default function SignalsScreen() {
   const colors = useColors();
   const { subscription, user } = useAuth();
   const { signals, isLoading, isSubscriptionRequired, error, refresh } = useSignals();
+  const isAdmin = user?.role === 'admin';
   const [filter, setFilter] = useState<Filter>('All');
   const [expanded, setExpanded] = useState<string | null>(null);
   const visibleSignals = useMemo(
@@ -80,6 +81,16 @@ export default function SignalsScreen() {
           </Text>
         </View>
       </View>
+      {isAdmin ? (
+        <Card style={styles.adminCard}>
+          <Text style={[styles.introBody, { color: colors.mutedForeground }]}>Admin quick action: jump into the signal studio while reviewing the live feed.</Text>
+          <View style={styles.adminActions}>
+            <Pressable onPress={() => router.push('/admin')} style={[styles.retryButton, { borderColor: colors.border }]}>
+              <Text style={[styles.retryText, { color: colors.primary }]}>Open signal studio</Text>
+            </Pressable>
+          </View>
+        </Card>
+      ) : null}
       <SectionLabel>Signal history</SectionLabel>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
         {(['All', 'Stocks', 'Crypto', 'Options', 'Active', 'Closed'] as Filter[]).map((item) => (
@@ -218,6 +229,8 @@ const styles = StyleSheet.create({
   introIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: '#25133A', alignItems: 'center', justifyContent: 'center' },
   introTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', marginBottom: 4 },
   introBody: { fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 },
+  adminCard: { marginBottom: 16 },
+  adminActions: { marginTop: 10 },
   filters: { gap: 8, paddingBottom: 14 },
   filter: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9 },
   filterText: { fontSize: 11, fontFamily: 'Inter_700Bold' },

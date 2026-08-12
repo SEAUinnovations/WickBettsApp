@@ -41,6 +41,7 @@ export default function CommunityScreen() {
   const router = useRouter();
   const colors = useColors();
   const { getToken, user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [thread, setThread] = useState<Thread>('Signals');
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -132,6 +133,20 @@ export default function CommunityScreen() {
       <Text style={[styles.description, { color: colors.mutedForeground }]}>
         Three rooms. No noise. Keep the conversation useful.
       </Text>
+
+      {isAdmin ? (
+        <Card style={styles.adminCard}>
+          <Text style={[styles.description, { color: colors.mutedForeground }]}>Admin quick action: jump into the studio or user management while moderating the live rooms.</Text>
+          <View style={styles.adminActions}>
+            <Pressable onPress={() => router.push('/admin')} style={styles.adminLink} accessibilityRole="button">
+              <Text style={[styles.adminLinkText, { color: colors.primary }]}>Open signal studio</Text>
+            </Pressable>
+            <Pressable onPress={() => router.push('/admin/users')} style={styles.adminLink} accessibilityRole="button">
+              <Text style={[styles.adminLinkText, { color: colors.primary }]}>Manage users</Text>
+            </Pressable>
+          </View>
+        </Card>
+      ) : null}
 
       {/* Thread tabs */}
       <View style={[styles.threadBar, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -266,6 +281,10 @@ export default function CommunityScreen() {
 const styles = StyleSheet.create({
   content: { paddingBottom: 120, flex: 1 },
   description: { fontSize: 13, lineHeight: 19, fontFamily: 'Inter_400Regular', marginBottom: 18 },
+  adminCard: { marginBottom: 18 },
+  adminActions: { flexDirection: 'row', gap: 12 },
+  adminLink: { paddingVertical: 6, paddingHorizontal: 4 },
+  adminLinkText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
   threadBar: { borderWidth: 1, borderRadius: 15, padding: 4, flexDirection: 'row', marginBottom: 24, overflow: 'hidden' },
   threadTab: { flex: 1, minHeight: 39, borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
   threadText: { fontSize: 10, fontFamily: 'Inter_700Bold', textAlign: 'center' },

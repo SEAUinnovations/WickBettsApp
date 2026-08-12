@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -32,7 +32,9 @@ export default function HomeScreen() {
   const [symbolInput, setSymbolInput] = React.useState('');
   const [noteInput, setNoteInput] = React.useState('');
   const [targetInput, setTargetInput] = React.useState('');
+  const [heatFocus, setHeatFocus] = React.useState<'sectors' | 'crypto' | 'megacap' | 'watchlist'>('sectors');
   const username = user?.name ?? 'Member';
+  const isAdmin = user?.role === 'admin';
 
   const pushProtected = (href: '/mentorship' | '/(tabs)/signals') => {
     if (!user) {
@@ -135,7 +137,47 @@ export default function HomeScreen() {
 
       {/* Market Block Grid */}
       <SectionLabel>Sector heat</SectionLabel>
-      <MarketHeatGrid quotes={market?.quotes ?? []} loading={marketLoading} />
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
+        {([
+          ['sectors', 'Sectors'],
+          ['crypto', 'Crypto'],
+          ['megacap', 'Megacap'],
+          ['watchlist', 'My list'],
+        ] as const).map(([value, label]) => (
+          <Pressable
+            key={value}
+            onPress={() => setHeatFocus(value)}
+            style={[
+              styles.filter,
+              {
+                backgroundColor: heatFocus === value ? colors.primary : colors.card,
+                borderColor: heatFocus === value ? colors.primary : colors.border,
+              },
+            ]}
+          >
+            <Text style={[styles.filterText, { color: heatFocus === value ? colors.primaryForeground : colors.mutedForeground }]}>{label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      <MarketHeatGrid
+        quotes={market?.quotes ?? []}
+        loading={marketLoading}
+        focus={heatFocus}
+        watchlistSymbols={watchlistItems.map((item) => item.symbol)}
+      />
+
+      {isAdmin ? (
+        <>
+          <SectionLabel>Admin quick actions</SectionLabel>
+          <Card style={styles.adminCard}>
+            <Text style={[styles.watchlistIntro, { color: colors.mutedForeground }]}>Jump into the signal studio or user management without leaving the live member experience.</Text>
+            <View style={styles.adminActions}>
+              <PrimaryButton onPress={() => router.push('/admin')} icon="create-outline">Open signal studio</PrimaryButton>
+              <PrimaryButton onPress={() => router.push('/admin/users')} icon="people-outline">Manage users</PrimaryButton>
+            </View>
+          </Card>
+        </>
+      ) : null}
 
       <SectionLabel>Watchlist</SectionLabel>
       <Card style={styles.watchlistCard}>
@@ -236,11 +278,22 @@ export default function HomeScreen() {
   );
 }
 
-function MarketHeatGrid({ quotes, loading }: { quotes: ReturnType<typeof useMarketData>['data'] extends null ? [] : NonNullable<ReturnType<typeof useMarketData>['data']>['quotes']; loading: boolean }) {
+function MarketHeatGrid({
+  quotes,
+  loading,
+  focus,
+  watchlistSymbols,
+}: {
+  quotes: ReturnType<typeof useMarketData>['data'] extends null ? [] : NonNullable<ReturnType<typeof useMarketData>['data']>['quotes'];
+  loading: boolean;
+  focus: 'sectors' | 'crypto' | 'megacap' | 'watchlist';
+  watchlistSymbols: string[];
+}) {
   const colors = useColors();
-  const sectors = quotes.filter((q) => q.group === 'sectors');
-  const crypto = quotes.filter((q) => q.group === 'crypto');
-  const shown = [...sectors, ...crypto].slice(0, 14);
+  const shown = quotes.filter((q) => {
+    if (focus === 'watchlist') return watchlistSymbols.includes(q.symbol);
+    return q.group === focus;
+  }).slice(0, 14);
 
   if (loading && shown.length === 0) {
     return (
@@ -252,6 +305,11 @@ function MarketHeatGrid({ quotes, loading }: { quotes: ReturnType<typeof useMark
 
   return (
     <View style={styles.heatGrid}>
+      {!loading && shown.length === 0 ? (
+        <View style={[styles.heatPlaceholder, { borderColor: colors.border, backgroundColor: colors.card }]}>
+          <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>No symbols available for this focus yet.</Text>
+        </View>
+      ) : null}
       {shown.map((q) => {
         const pct = q.changePercent;
         const bg = pct >= 2 ? '#0d3322' : pct >= 0.5 ? '#13281c' : pct >= -0.5 ? '#1a1a2e' : pct >= -2 ? '#2d0f0f' : '#3d0808';
@@ -291,12 +349,17 @@ const styles = StyleSheet.create({
   metricRow: { flexDirection: 'row', justifyContent: 'space-between' },
   microLine: { height: 1, marginTop: 14, marginBottom: 10 },
   microText: { fontSize: 9, fontFamily: 'Inter_400Regular', marginTop: 10, textAlign: 'center', letterSpacing: 0.5 },
+  filters: { gap: 8, paddingBottom: 14 },
+  filter: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9 },
+  filterText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
   heatGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 22 },
   heatCell: { width: '22%', flexGrow: 1, borderRadius: 12, borderWidth: 1, padding: 10, alignItems: 'center', minHeight: 60, justifyContent: 'center' },
   heatTicker: { fontSize: 10, fontFamily: 'Inter_700Bold', marginBottom: 4 },
   heatPct: { fontSize: 12, fontFamily: 'Inter_700Bold' },
   heatPlaceholder: { height: 80, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
   watchlistCard: { marginBottom: 22 },
+  adminCard: { marginBottom: 22 },
+  adminActions: { gap: 10 },
   watchlistIntro: { fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16, marginBottom: 14 },
   watchlistForm: { gap: 10, marginBottom: 14 },
   watchlistInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, fontFamily: 'Inter_400Regular' },

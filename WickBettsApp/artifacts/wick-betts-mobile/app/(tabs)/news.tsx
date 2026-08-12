@@ -10,8 +10,10 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { Card, Header, SectionLabel, Tag } from '@/components/WickUI';
 import { useColors } from '@/hooks/useColors';
+import { useAuth } from '@/context/AuthContext';
 import { useNewsFeed, type NewsArticle } from '@/hooks/useNewsFeed';
 
 type ToneType = 'purple' | 'orange' | 'muted' | 'green';
@@ -99,10 +101,13 @@ function NewsCard({ article, isSaved, onToggleSave }: {
 }
 
 export default function NewsScreen() {
+  const router = useRouter();
+  const { user } = useAuth();
   const colors = useColors();
   const { articles, loading, error, refresh } = useNewsFeed();
   const [saved, setSaved] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const isAdmin = user?.role === 'admin';
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -123,9 +128,18 @@ export default function NewsScreen() {
       <View style={styles.masthead}>
         <Text style={[styles.mastheadTitle, { color: colors.foreground }]}>Live from{'\n'}the market.</Text>
         <Text style={[styles.mastheadBody, { color: colors.mutedForeground }]}>
-          Real headlines scraped from Yahoo Finance, CNBC, and WSJ — updated every 5 minutes.
+          Real headlines scraped from Yahoo Finance, CNBC, and WSJ — refreshed every 15 minutes during market hours.
         </Text>
       </View>
+
+      {isAdmin ? (
+        <Card style={styles.adminCard}>
+          <Text style={[styles.mastheadBody, { color: colors.mutedForeground }]}>Admin quick action: jump to the signal studio while reviewing the live feed.</Text>
+          <Pressable onPress={() => router.push('/admin')} style={styles.retryButton} accessibilityRole="button">
+            <Text style={[styles.retryText, { color: colors.primary }]}>Open signal studio</Text>
+          </Pressable>
+        </Card>
+      ) : null}
 
       {loading && !refreshing && articles.length === 0 ? (
         <View style={styles.loadingWrap}>
@@ -176,6 +190,7 @@ const styles = StyleSheet.create({
   masthead: { paddingVertical: 10, marginBottom: 25 },
   mastheadTitle: { fontSize: 32, lineHeight: 36, fontFamily: 'Inter_700Bold', letterSpacing: -1 },
   mastheadBody: { fontSize: 12, lineHeight: 18, fontFamily: 'Inter_400Regular', marginTop: 10, maxWidth: 290 },
+  adminCard: { marginBottom: 16 },
   loadingWrap: { alignItems: 'center', paddingVertical: 40, gap: 14 },
   loadingText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
   errorCard: { borderWidth: 1, borderRadius: 16, padding: 20, alignItems: 'center', gap: 10, marginBottom: 20 },
