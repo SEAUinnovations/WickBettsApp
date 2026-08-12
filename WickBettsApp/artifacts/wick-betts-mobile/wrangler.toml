@@ -1,0 +1,7 @@
+name = "polished-haze-422"
+compatibility_date = "2026-08-11"
+main = "dist/_worker.js"
+
+[assets]
+directory = "dist"
+binding = "ASSETS"

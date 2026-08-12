@@ -44,6 +44,15 @@ export default {
     if (shouldProxy(url.pathname)) {
       return proxyRequest(request, env);
     }
-    return env.ASSETS.fetch(request);
+    // Serve the asset if it exists; fall back to root (index.html) for SPA routing.
+    try {
+      const res = await env.ASSETS.fetch(request);
+      if (res.status === 404) {
+        return env.ASSETS.fetch(new Request(url.origin + '/'));
+      }
+      return res;
+    } catch (_) {
+      return env.ASSETS.fetch(new Request(url.origin + '/'));
+    }
   },
 };
