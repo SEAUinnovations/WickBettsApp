@@ -29,6 +29,16 @@ function useWarmUpBrowser() {
   }, []);
 }
 
+/** Returns the correct OAuth redirect URI for the current platform */
+function getRedirectUrl(): string {
+  if (Platform.OS === 'web') {
+    // On web, Clerk needs to redirect back to this page after OAuth
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://wickbetts.com';
+    return `${origin}/sign-in`;
+  }
+  return AuthSession.makeRedirectUri();
+}
+
 export default function LoginScreen() {
   useWarmUpBrowser();
   const { startSSOFlow } = useSSO();
@@ -41,9 +51,10 @@ export default function LoginScreen() {
     setLoading(true);
     setError('');
     try {
+      const redirectUrl = getRedirectUrl();
       const { createdSessionId, setActive } = await startSSOFlow({
         strategy: 'oauth_google',
-        redirectUrl: AuthSession.makeRedirectUri(),
+        redirectUrl,
       });
 
       if (createdSessionId && setActive) {
@@ -51,12 +62,20 @@ export default function LoginScreen() {
         // AuthGate in _layout.tsx detects the active session and navigates to /(tabs)
       }
     } catch (err) {
-      setError('Sign in failed. Please try again.');
+      const msg = err instanceof Error ? err.message : String(err);
+      // Surface actionable errors; hide raw Clerk internals
+      if (msg.includes('popup') || msg.includes('blocked')) {
+        setError('Popup blocked. Allow popups for wickbetts.com and try again.');
+      } else if (msg.includes('network') || msg.includes('fetch')) {
+        setError('Network error. Check your connection and try again.');
+      } else {
+        setError('Sign in failed. Please try again.');
+      }
       console.error('SSO error:', err);
     } finally {
       setLoading(false);
     }
-  }, [startSSOFlow, router]);
+  }, [startSSOFlow]);
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
@@ -117,7 +136,7 @@ export default function LoginScreen() {
         ) : null}
 
         <Text style={[styles.disclaimer, { color: colors.mutedForeground }]}>
-          Members only. Sign in with the Google account linked to your subscription.
+          Sign in or create an account to access signals, news, and market intelligence.
         </Text>
       </View>
 
