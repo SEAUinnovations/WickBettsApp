@@ -67,6 +67,7 @@ jobs:
           CLOUDFLARE_DEPLOY_TARGET: ${{ env.CLOUDFLARE_DEPLOY_TARGET }}
           CLOUDFLARE_PAGES_PROJECT_NAME: ${{ env.CLOUDFLARE_PAGES_PROJECT_NAME }}
           CLOUDFLARE_WORKER_NAME: ${{ env.CLOUDFLARE_WORKER_NAME }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
         run: |
           [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "Missing Cloudflare token. Set one of: CLOUDFLARE_API_TOKEN or CF_API_TOKEN (secret or variable)."; exit 1; }
           [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || { echo "Missing Cloudflare account id. Set one of: CLOUDFLARE_ACCOUNT_ID or CF_ACCOUNT_ID (secret or variable)."; exit 1; }
@@ -94,4 +95,9 @@ jobs:
               --name="$CLOUDFLARE_WORKER_NAME" \
               --assets=artifacts/wick-betts-mobile/dist \
               --compatibility-date="$(date +%F)"
+            # Push CLERK_SECRET_KEY as a Worker secret so the Clerk FAPI proxy works
+            if [ -n "$CLERK_SECRET_KEY" ]; then
+              echo "$CLERK_SECRET_KEY" | pnpm dlx wrangler@4 secret put CLERK_SECRET_KEY \
+                --name="$CLOUDFLARE_WORKER_NAME"
+            fi
           fi

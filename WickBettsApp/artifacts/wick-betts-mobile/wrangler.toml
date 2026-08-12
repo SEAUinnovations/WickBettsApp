@@ -5,3 +5,7 @@ main = "dist/_worker.js"
 [assets]
 directory = "dist"
 binding = "ASSETS"
+
+# CLERK_SECRET_KEY must be set as a secret in the Cloudflare Worker:
+#   wrangler secret put CLERK_SECRET_KEY --name polished-haze-422
+# The Worker uses it to authenticate Clerk FAPI proxy requests.
