@@ -33,4 +33,9 @@ export {
   insertCommunityPostSchema,
   type InsertCommunityPost,
   type CommunityPost,
+  // Watchlists
+  watchlistsTable,
+  insertWatchlistSchema,
+  type InsertWatchlist,
+  type Watchlist,
 } from "@workspace/db";

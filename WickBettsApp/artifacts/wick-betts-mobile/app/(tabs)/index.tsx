@@ -1,11 +1,12 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { useMarketData } from '@/hooks/useMarketData';
 import { useAuth } from '@/context/AuthContext';
+import { useWatchlist } from '@/hooks/useWatchlist';
 import { Card, Header, Metric, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
 
 const HIGHLIGHT_SYMBOLS = ['SPY', 'QQQ', '^VIX', 'BTC-USD'];
@@ -27,6 +28,10 @@ export default function HomeScreen() {
   const colors = useColors();
   const { data: market, loading: marketLoading } = useMarketData();
   const { user } = useAuth();
+  const { items: watchlistItems, loading: watchlistLoading, saving: watchlistSaving, error: watchlistError, addItem, removeItem } = useWatchlist();
+  const [symbolInput, setSymbolInput] = React.useState('');
+  const [noteInput, setNoteInput] = React.useState('');
+  const [targetInput, setTargetInput] = React.useState('');
   const username = user?.name ?? 'Member';
 
   const pushProtected = (href: '/mentorship' | '/(tabs)/signals') => {
@@ -45,6 +50,20 @@ export default function HomeScreen() {
   const highlights = HIGHLIGHT_SYMBOLS.map((sym) =>
     market?.quotes.find((q) => q.symbol === sym)
   ).filter(Boolean);
+
+  const watchlistQuotes = watchlistItems.map((item) => ({
+    item,
+    quote: market?.quotes.find((quote) => quote.symbol === item.symbol) ?? null,
+  }));
+
+  const handleAddWatchlistItem = async () => {
+    const symbol = symbolInput.trim().toUpperCase();
+    if (!symbol) return;
+    await addItem({ symbol, note: noteInput.trim(), targetPrice: targetInput.trim() });
+    setSymbolInput('');
+    setNoteInput('');
+    setTargetInput('');
+  };
 
   return (
     <Screen contentStyle={styles.content}>
@@ -117,6 +136,75 @@ export default function HomeScreen() {
       {/* Market Block Grid */}
       <SectionLabel>Sector heat</SectionLabel>
       <MarketHeatGrid quotes={market?.quotes ?? []} loading={marketLoading} />
+
+      <SectionLabel>Watchlist</SectionLabel>
+      <Card style={styles.watchlistCard}>
+        <Text style={[styles.watchlistIntro, { color: colors.mutedForeground }]}>Track supported symbols from the live market universe and keep quick notes or targets beside them.</Text>
+        <View style={styles.watchlistForm}>
+          <TextInput
+            style={[styles.watchlistInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card }]}
+            value={symbolInput}
+            onChangeText={setSymbolInput}
+            placeholder="Ticker"
+            placeholderTextColor={colors.mutedForeground}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={15}
+          />
+          <TextInput
+            style={[styles.watchlistInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card }]}
+            value={noteInput}
+            onChangeText={setNoteInput}
+            placeholder="Note (optional)"
+            placeholderTextColor={colors.mutedForeground}
+          />
+          <TextInput
+            style={[styles.watchlistInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card }]}
+            value={targetInput}
+            onChangeText={setTargetInput}
+            placeholder="Target (optional)"
+            placeholderTextColor={colors.mutedForeground}
+          />
+          <PrimaryButton onPress={() => void handleAddWatchlistItem()} icon="add-outline">
+            {watchlistSaving ? 'Saving…' : 'Add to watchlist'}
+          </PrimaryButton>
+        </View>
+        {watchlistError ? <Text style={styles.watchlistError}>{watchlistError}</Text> : null}
+        {watchlistLoading ? (
+          <View style={styles.loadingRow}>
+            <ActivityIndicator color={colors.primary} size="small" />
+            <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading watchlist…</Text>
+          </View>
+        ) : watchlistQuotes.length === 0 ? (
+          <Text style={[styles.watchlistEmpty, { color: colors.mutedForeground }]}>No symbols saved yet.</Text>
+        ) : (
+          <View style={styles.watchlistList}>
+            {watchlistQuotes.map(({ item, quote }) => (
+              <View key={item.id} style={[styles.watchlistRow, { borderColor: colors.border }]}> 
+                <View style={{ flex: 1 }}>
+                  <View style={styles.watchlistTopRow}>
+                    <Text style={[styles.watchlistSymbol, { color: colors.foreground }]}>{item.symbol}</Text>
+                    {quote ? (
+                      <Text style={[styles.watchlistChange, { color: changeColor(quote.changePercent, '#7AE2AA', '#E27A7A', colors.mutedForeground) }]}>
+                        {quote.changePercent >= 0 ? '+' : ''}{quote.changePercent.toFixed(2)}%
+                      </Text>
+                    ) : (
+                      <Tag tone="muted">No quote yet</Tag>
+                    )}
+                  </View>
+                  <Text style={[styles.watchlistMeta, { color: colors.mutedForeground }]}>
+                    {quote ? `${formatPrice(quote.price, quote.symbol)}${item.targetPrice ? ` · Target ${item.targetPrice}` : ''}` : `${item.targetPrice ? `Target ${item.targetPrice}` : 'Waiting for market quote'}`}
+                  </Text>
+                  {item.note ? <Text style={[styles.watchlistNote, { color: colors.mutedForeground }]}>{item.note}</Text> : null}
+                </View>
+                <Pressable onPress={() => void removeItem(item.id)} style={styles.watchlistDelete} accessibilityRole="button">
+                  <Ionicons name="trash-outline" size={18} color={colors.destructive} />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        )}
+      </Card>
 
       {/* Active signal teaser */}
       <SectionLabel>Active signals</SectionLabel>
@@ -208,6 +296,20 @@ const styles = StyleSheet.create({
   heatTicker: { fontSize: 10, fontFamily: 'Inter_700Bold', marginBottom: 4 },
   heatPct: { fontSize: 12, fontFamily: 'Inter_700Bold' },
   heatPlaceholder: { height: 80, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
+  watchlistCard: { marginBottom: 22 },
+  watchlistIntro: { fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16, marginBottom: 14 },
+  watchlistForm: { gap: 10, marginBottom: 14 },
+  watchlistInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, fontFamily: 'Inter_400Regular' },
+  watchlistList: { gap: 10 },
+  watchlistRow: { borderWidth: 1, borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  watchlistTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  watchlistSymbol: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  watchlistChange: { fontSize: 12, fontFamily: 'Inter_700Bold' },
+  watchlistMeta: { fontSize: 11, fontFamily: 'Inter_500Medium', marginTop: 4 },
+  watchlistNote: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 6, lineHeight: 16 },
+  watchlistDelete: { padding: 6 },
+  watchlistEmpty: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  watchlistError: { color: '#ef4444', fontSize: 12, fontFamily: 'Inter_600SemiBold', marginBottom: 10 },
   signalTeaser: { marginBottom: 14 },
   signalTeaserRow: { flexDirection: 'row', alignItems: 'center' },
   signalBadge: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },

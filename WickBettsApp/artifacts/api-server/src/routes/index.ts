@@ -7,6 +7,7 @@ import newsRouter from "./news.js";
 import marketRouter from "./market.js";
 import adminRouter from "./admin.js";
 import communityRouter from "./community.js";
+import watchlistRouter from "./watchlist.js";
 
 const router = Router();
 
@@ -18,5 +19,6 @@ router.use("/news", newsRouter);
 router.use("/market", marketRouter);
 router.use("/admin", adminRouter);
 router.use("/community", communityRouter);
+router.use("/watchlist", watchlistRouter);
 
 export default router;

@@ -75,7 +75,12 @@ interface ApiSignal {
   openInterest?: string;
 }
 
-const STORAGE_KEY = '@wick-betts/signals-v2';
+const STORAGE_KEY_PREFIX = '@wick-betts/signals-v2';
+
+function getStorageKey(userId: string | null | undefined): string | null {
+  if (!userId) return null;
+  return `${STORAGE_KEY_PREFIX}:${userId}`;
+}
 
 function formatPostedAt(isoString: string): string {
   try {
@@ -154,16 +159,27 @@ interface SignalContextValue {
 const SignalContext = createContext<SignalContextValue | null>(null);
 
 export function SignalProvider({ children }: { children: ReactNode }) {
-  const { getToken } = useAuth();
+  const { getToken, isSignedIn, user } = useAuth();
   const [signals, setSignals] = useState<Signal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubscriptionRequired, setIsSubscriptionRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const storageKey = getStorageKey(user?.id);
 
   const fetchSignals = useCallback(async () => {
+    if (!isSignedIn || !storageKey) {
+      setSignals([]);
+      setError(null);
+      setIsSubscriptionRequired(false);
+      setIsLoading(false);
+      return;
+    }
+
     const token = await getToken();
     if (!token) {
       setSignals([]);
+      setError(null);
+      setIsSubscriptionRequired(false);
       setIsLoading(false);
       return;
     }
@@ -189,12 +205,12 @@ export function SignalProvider({ children }: { children: ReactNode }) {
       const mapped = json.signals.map(mapApiSignal);
       setSignals(mapped);
       // Cache for offline fallback
-      void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(mapped));
+      void AsyncStorage.setItem(storageKey, JSON.stringify(mapped));
     } catch (e) {
       setError('Signals unavailable. Pull to refresh.');
       // Load from cache on error
       try {
-        const cached = await AsyncStorage.getItem(STORAGE_KEY);
+        const cached = await AsyncStorage.getItem(storageKey);
         if (cached) {
           const parsed = JSON.parse(cached) as Signal[];
           if (Array.isArray(parsed)) setSignals(parsed);
@@ -205,12 +221,13 @@ export function SignalProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [getToken]);
+  }, [getToken, isSignedIn, storageKey]);
 
-  // Fetch whenever getToken identity changes (i.e. on sign-in / sign-out)
+  // Refresh when the authenticated user changes so cached member data never
+  // leaks between sessions.
   useEffect(() => {
     void fetchSignals();
-  }, [fetchSignals]);
+  }, [fetchSignals, user?.id]);
 
   const addSignal = useCallback(async (signal: Omit<Signal, 'id' | 'postedAt'>) => {
     const token = await getToken();

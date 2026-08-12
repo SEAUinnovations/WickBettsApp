@@ -154,6 +154,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [getToken]);
 
   useEffect(() => {
+    if (!isSignedIn) {
+      setDbUser(null);
+      setSubscription(null);
+      return;
+    }
+
+    // Clear hydrated backend state when Clerk switches users so stale data from
+    // the previous session cannot render while the new profile reloads.
+    setDbUser(null);
+    setSubscription(null);
+  }, [isSignedIn, clerkUser?.id]);
+
+  useEffect(() => {
     if (!isLoaded) return;
 
     if (!isSignedIn) {

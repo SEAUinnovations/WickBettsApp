@@ -24,6 +24,7 @@ import type { Request, RequestHandler, Response } from 'express';
 
 const CLERK_FAPI = 'https://frontend-api.clerk.dev';
 export const CLERK_PROXY_PATH = '/api/__clerk';
+type ProxyRequestBody = NonNullable<RequestInit['body']>;
 
 function rewriteProxyPath(originalPath: string): string {
   const rewritten = originalPath.replace(new RegExp(`^${CLERK_PROXY_PATH}`), '');
@@ -77,7 +78,7 @@ async function forwardToClerk(req: Request, res: Response, secretKey: string): P
   const upstream = await fetch(targetUrl, {
     method: req.method,
     headers,
-    body: needsBody ? (req as unknown as BodyInit) : undefined,
+    body: needsBody ? (req as unknown as ProxyRequestBody) : undefined,
     // Required by Node when sending a stream request body.
     ...(needsBody ? ({ duplex: 'half' } as const) : {}),
   });

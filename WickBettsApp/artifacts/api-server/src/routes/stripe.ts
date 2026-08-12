@@ -199,7 +199,7 @@ router.post(
               status,
               currentPeriodEnd: periodEnd,
               cancelAtPeriodEnd: sub.cancel_at_period_end ? "true" : "false",
-            });
+            } as any);
           }
           break;
         }

@@ -17,6 +17,7 @@ export function useNewsFeed() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastFetch, setLastFetch] = useState<number | null>(null);
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState(15 * 60_000);
 
   const fetch_ = useCallback(async () => {
     setLoading(true);
@@ -24,9 +25,14 @@ export function useNewsFeed() {
     try {
       const res = await fetch(`${API_BASE}/news/feed`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = (await res.json()) as { articles: NewsArticle[]; cachedAt: number };
+      const json = (await res.json()) as {
+        articles: NewsArticle[];
+        cachedAt: number;
+        refreshIntervalMs?: number;
+      };
       setArticles(json.articles);
       setLastFetch(json.cachedAt);
+      setRefreshIntervalMs(json.refreshIntervalMs ?? 15 * 60_000);
     } catch (e) {
       setError('News feed unavailable');
     } finally {
@@ -36,9 +42,9 @@ export function useNewsFeed() {
 
   useEffect(() => {
     void fetch_();
-    const interval = setInterval(() => void fetch_(), 5 * 60_000);
+    const interval = setInterval(() => void fetch_(), refreshIntervalMs);
     return () => clearInterval(interval);
-  }, [fetch_]);
+  }, [fetch_, refreshIntervalMs]);
 
-  return { articles, loading, error, lastFetch, refresh: fetch_ };
+  return { articles, loading, error, lastFetch, refreshIntervalMs, refresh: fetch_ };
 }

@@ -78,7 +78,7 @@ async function seedSubscription(
     stripeSubscriptionId: `sub_smoke_${id}`,
     stripeCustomerId: `cus_smoke_${id}`,
     currentPeriodEnd: currentPeriodEnd ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-  });
+  } as any);
   insertedSubIds.push(id);
   return { id, userId, status };
 }
@@ -152,7 +152,7 @@ test("jitProvisionUser creates a new users row on first call", async () => {
   // Ensure no leftover row from a previous run
   await db.delete(usersTable).where(eq(usersTable.email, email)).catch(() => {});
 
-  const user = await jitProvisionUser({ email, firstName: "Jit", lastName: "Provision" });
+  const user = await jitProvisionUser({ email, firstName: "Jit", lastName: "Provision", username: "" });
 
   assert.ok(user, "jitProvisionUser must return a user object");
   assert.equal(user!.email, email);
@@ -169,7 +169,7 @@ test("jitProvisionUser returns the existing row on subsequent calls (no duplicat
   const email = `existing${TEST_DOMAIN}`;
   const seeded = await seedUser({ email, name: "Already There" });
 
-  const user = await jitProvisionUser({ email, firstName: "Already", lastName: "There" });
+  const user = await jitProvisionUser({ email, firstName: "Already", lastName: "There", username: "" });
 
   assert.ok(user, "must return a user");
   assert.equal(user!.id, seeded.id, "must return the pre-existing row id");

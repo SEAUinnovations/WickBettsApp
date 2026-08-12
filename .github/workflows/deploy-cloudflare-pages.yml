@@ -45,6 +45,10 @@ jobs:
         working-directory: WickBettsApp
         run: pnpm install --frozen-lockfile
 
+      - name: Clear previous mobile web bundle
+        working-directory: WickBettsApp
+        run: rm -rf artifacts/wick-betts-mobile/dist
+
       - name: Build mobile web app
         working-directory: WickBettsApp
         env:

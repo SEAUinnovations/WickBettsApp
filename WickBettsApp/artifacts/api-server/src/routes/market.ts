@@ -58,6 +58,10 @@ const CRYPTO_TICKERS: Record<string, { id: string; shortName: string }> = {
   "ETH-USD": { id: "ethereum", shortName: "Ethereum" },
 };
 
+export function isTrackedSymbol(symbol: string): boolean {
+  return Boolean(EQUITY_TICKERS[symbol] || CRYPTO_TICKERS[symbol]);
+}
+
 export interface QuoteItem {
   symbol: string; shortName: string; price: number; change: number;
   changePercent: number; volume: number; group: string; currency: string;

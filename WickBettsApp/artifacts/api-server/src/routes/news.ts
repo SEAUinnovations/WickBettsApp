@@ -15,9 +15,22 @@ interface NewsArticle {
   summary: string;
 }
 
-// In-memory cache — refreshes every 5 minutes
-let cache: { articles: NewsArticle[]; fetchedAt: number } | null = null;
-const CACHE_MS = 5 * 60 * 1000;
+interface NewsCache {
+  articles: NewsArticle[];
+  fetchedAt: number;
+}
+
+// In-memory cache — refreshed by a server-owned scheduler during market hours.
+let cache: NewsCache | null = null;
+const SCHEDULE_MS = 15 * 60 * 1000;
+const CLIENT_POLL_MS = 15 * 60 * 1000;
+const MARKET_TIMEZONE = "America/Chicago";
+const MARKET_OPEN_MINUTES = 7 * 60;
+const MARKET_CLOSE_MINUTES = 16 * 60;
+
+let refreshPromise: Promise<NewsCache> | null = null;
+let schedulerStarted = false;
+let lastScheduledSlot: string | null = null;
 
 const RSS_SOURCES = [
   {
@@ -116,23 +129,108 @@ async function refreshCache(): Promise<NewsArticle[]> {
   return deduped.slice(0, 40);
 }
 
+function getChicagoClockParts(now = new Date()): {
+  year: string;
+  month: string;
+  day: string;
+  hour: number;
+  minute: number;
+} {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: MARKET_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    year: map.year ?? "0000",
+    month: map.month ?? "00",
+    day: map.day ?? "00",
+    hour: Number(map.hour ?? "0"),
+    minute: Number(map.minute ?? "0"),
+  };
+}
+
+function getScheduleSlotKey(now = new Date()): string | null {
+  const clock = getChicagoClockParts(now);
+  const totalMinutes = clock.hour * 60 + clock.minute;
+  const onQuarterHour = clock.minute % 15 === 0;
+  const inWindow = totalMinutes >= MARKET_OPEN_MINUTES && totalMinutes <= MARKET_CLOSE_MINUTES;
+  if (!onQuarterHour || !inWindow) return null;
+  return `${clock.year}-${clock.month}-${clock.day}-${String(clock.hour).padStart(2, "0")}:${String(clock.minute).padStart(2, "0")}`;
+}
+
+async function ensureCache(reason: "startup" | "request-miss" | "scheduled"): Promise<NewsCache> {
+  if (!refreshPromise) {
+    refreshPromise = refreshCache()
+      .then((articles) => {
+        const nextCache: NewsCache = { articles, fetchedAt: Date.now() };
+        cache = nextCache;
+        logger.info({ count: articles.length, reason }, "News feed cache refreshed");
+        return nextCache;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return await refreshPromise;
+}
+
+function startScheduler(): void {
+  if (schedulerStarted) return;
+  schedulerStarted = true;
+
+  const tick = () => {
+    const slotKey = getScheduleSlotKey();
+    if (!slotKey || slotKey === lastScheduledSlot) return;
+    lastScheduledSlot = slotKey;
+    void ensureCache("scheduled").catch((err) => {
+      logger.warn({ err, slotKey }, "Scheduled news refresh failed");
+    });
+  };
+
+  // Prime once on server boot so the first request does not always pay the fetch cost.
+  void ensureCache("startup").catch((err) => {
+    logger.warn({ err }, "Initial news cache warmup failed");
+  });
+
+  tick();
+  setInterval(tick, 60 * 1000);
+}
+
+startScheduler();
+
 // GET /api/news/feed
 router.get("/feed", async (_req, res) => {
-  if (cache && Date.now() - cache.fetchedAt < CACHE_MS) {
-    res.json({ articles: cache.articles, cachedAt: cache.fetchedAt, fresh: false });
+  if (cache) {
+    const ageMs = Date.now() - cache.fetchedAt;
+    res.json({
+      articles: cache.articles,
+      cachedAt: cache.fetchedAt,
+      fresh: ageMs <= SCHEDULE_MS,
+      stale: ageMs > CLIENT_POLL_MS,
+      refreshIntervalMs: CLIENT_POLL_MS,
+    });
     return;
   }
+
   try {
-    const articles = await refreshCache();
-    cache = { articles, fetchedAt: Date.now() };
-    res.json({ articles, cachedAt: cache.fetchedAt, fresh: true });
+    const nextCache = await ensureCache("request-miss");
+    res.json({
+      articles: nextCache.articles,
+      cachedAt: nextCache.fetchedAt,
+      fresh: true,
+      stale: false,
+      refreshIntervalMs: CLIENT_POLL_MS,
+    });
   } catch (err) {
     logger.error(err, "News feed refresh failed");
-    if (cache) {
-      res.json({ articles: cache.articles, cachedAt: cache.fetchedAt, fresh: false, stale: true });
-    } else {
-      res.status(502).json({ error: "Unable to fetch news feed. Try again shortly." });
-    }
+    res.status(502).json({ error: "Unable to fetch news feed. Try again shortly." });
   }
 });
 

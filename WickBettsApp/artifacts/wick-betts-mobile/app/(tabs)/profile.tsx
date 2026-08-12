@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -41,6 +41,14 @@ export default function ProfileScreen() {
   const [notifyNews, setNotifyNews] = useState(() => user?.notifyNews ?? false);
   // Master push toggle: on when either signal or news pref is on
   const [pushMaster, setPushMaster] = useState(() => (user?.notifySignals ?? true) || (user?.notifyNews ?? false));
+
+  useEffect(() => {
+    const nextSignals = user?.notifySignals ?? true;
+    const nextNews = user?.notifyNews ?? false;
+    setNotifySignals(nextSignals);
+    setNotifyNews(nextNews);
+    setPushMaster(nextSignals || nextNews);
+  }, [user?.id, user?.notifySignals, user?.notifyNews]);
 
   const isAdmin = user?.role === 'admin';
   const timezoneLabel = user?.timezone || 'New York (ET)';
