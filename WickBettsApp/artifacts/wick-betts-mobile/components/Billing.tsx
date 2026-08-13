@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { PrimaryButton } from '@/components/WickUI';
 import { useColors } from '@/hooks/useColors';
@@ -11,10 +11,10 @@ import { useAuth, type Plan } from '@/context/AuthContext';
  * lapsed-recovery behaviour (see wick-betts/src/App.tsx).
  */
 
-type BillingAction = 'signals' | 'mentorship' | 'membership' | 'portal';
+type BillingAction = 'signals' | 'mentorship' | 'membership' | 'portal' | 'cancel' | 'resume';
 
 function useBillingActions() {
-  const { startCheckout, openBillingPortal } = useAuth();
+  const { startCheckout, openBillingPortal, cancelSubscription, resumeSubscription } = useAuth();
   const [loading, setLoading] = useState<BillingAction | null>(null);
   const [error, setError] = useState('');
 
@@ -42,7 +42,31 @@ function useBillingActions() {
     }
   };
 
-  return { loading, error, runCheckout, runPortal };
+  const runCancel = async () => {
+    setError('');
+    setLoading('cancel');
+    try {
+      await cancelSubscription();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not cancel your subscription. Please try again.');
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const runResume = async () => {
+    setError('');
+    setLoading('resume');
+    try {
+      await resumeSubscription();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not resume your subscription. Please try again.');
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  return { loading, error, runCheckout, runPortal, runCancel, runResume };
 }
 
 /** Loading spinner wrapper so buttons show progress inline. */
@@ -166,6 +190,70 @@ export function ManageBillingButton() {
 }
 
 /**
+ * Explicit in-app "Cancel subscription" action. Cancels at the end of the
+ * current billing period (member keeps access until then) rather than
+ * immediately, and asks for confirmation first since this is destructive.
+ * Deliberately a plain text button, not a filled PrimaryButton — cancelling
+ * shouldn't visually compete with the other billing actions.
+ */
+export function CancelSubscriptionButton({ renewalDate }: { renewalDate?: string | null }) {
+  const colors = useColors();
+  const { loading, error, runCancel } = useBillingActions();
+  const busy = loading === 'cancel';
+
+  const confirmCancel = () => {
+    Alert.alert(
+      'Cancel subscription?',
+      renewalDate
+        ? `You'll keep access until ${renewalDate}, then your subscription will end. You can undo this anytime before then.`
+        : "You'll keep access until the end of your current billing period, then your subscription will end.",
+      [
+        { text: 'Keep subscription', style: 'cancel' },
+        { text: 'Cancel subscription', style: 'destructive', onPress: () => void runCancel() },
+      ],
+    );
+  };
+
+  return (
+    <View style={styles.stack}>
+      <Pressable
+        onPress={confirmCancel}
+        disabled={busy}
+        style={({ pressed }) => [styles.cancelButton, { opacity: busy ? 0.5 : pressed ? 0.7 : 1 }]}
+        accessibilityRole="button"
+        testID="cancel-subscription"
+      >
+        {busy ? (
+          <ActivityIndicator size="small" color={colors.destructive} />
+        ) : (
+          <Text style={[styles.cancelText, { color: colors.destructive }]}>Cancel subscription</Text>
+        )}
+      </Pressable>
+      <ErrorLine message={error} />
+    </View>
+  );
+}
+
+/** Undo a pending cancel-at-period-end. */
+export function ResumeSubscriptionButton() {
+  const { loading, error, runResume } = useBillingActions();
+  return (
+    <View style={styles.stack}>
+      <ActionButton
+        onPress={() => void runResume()}
+        icon="refresh-outline"
+        busy={loading === 'resume'}
+        disabled={loading !== null}
+        testID="resume-subscription"
+      >
+        Keep my subscription
+      </ActionButton>
+      <ErrorLine message={error} />
+    </View>
+  );
+}
+
+/**
  * Recovery actions for a lapsed subscription. Mirrors the web lapsed screen:
  *  - past_due  → portal to update the payment method
  *  - canceled  → re-subscribe checkout, plus portal if a Stripe customer exists
@@ -234,4 +322,6 @@ const styles = StyleSheet.create({
   },
   disabled: { opacity: 0.5 },
   error: { fontSize: 12, fontFamily: 'Inter_600SemiBold', lineHeight: 17, marginTop: 2 },
+  cancelButton: { minHeight: 40, alignItems: 'center', justifyContent: 'center' },
+  cancelText: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
 });

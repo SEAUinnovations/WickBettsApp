@@ -43,4 +43,10 @@ export {
   insertNewsOverrideSchema,
   type InsertNewsOverride,
   type NewsOverride,
+  // Mentorship bookings
+  mentorshipBookingsTable,
+  mentorshipBookingStatusEnum,
+  insertMentorshipBookingSchema,
+  type InsertMentorshipBooking,
+  type MentorshipBooking,
 } from "@workspace/db";

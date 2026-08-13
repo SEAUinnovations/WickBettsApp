@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Card, Header, PrimaryButton, Screen, SectionLabel } from '@/components/WickUI';
-import { useAuth } from '@/context/AuthContext';
+import { Card, Header, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
+import { CancelSubscriptionButton, LapsedRecovery, ManageBillingButton, ResumeSubscriptionButton, SubscribePanel } from '@/components/Billing';
+import { useAuth, type Plan } from '@/context/AuthContext';
 import { useColors } from '@/hooks/useColors';
 import { API_BASE } from '@/lib/apiUrl';
 
@@ -13,12 +14,40 @@ const TIMEZONES = [
   { label: 'Los Angeles (PT)', value: 'America/Los_Angeles' },
 ];
 
+const PLAN_LABELS: Record<string, string> = {
+  signals: 'Wick Betts Signals',
+  mentorship: 'Wick Betts Mentorship',
+  membership: 'Wick Betts Membership',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  active: 'Active',
+  trialing: 'Trial',
+  past_due: 'Past due',
+  canceled: 'Cancelled',
+  incomplete: 'Incomplete',
+};
+
+const ACTIVE_STATUSES = ['active', 'trialing'];
+
+function formatRenewalDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return iso;
+  }
+}
+
 export default function SettingsScreen() {
   const router = useRouter();
   const colors = useColors();
-  const { user, getToken, refreshSubscription } = useAuth();
+  const { user, getToken, subscription, refreshSubscription } = useAuth();
   const [savingTimezone, setSavingTimezone] = useState<string | null>(null);
   const [error, setError] = useState('');
+
+  const hasStripeCustomer = user?.hasStripeCustomer ?? false;
+  const isActive = subscription ? ACTIVE_STATUSES.includes(subscription.status) : false;
+  const isLapsed = subscription ? !isActive : false;
 
   const currentTimezone = user?.timezone || 'America/New_York';
 
@@ -88,7 +117,47 @@ export default function SettingsScreen() {
 
       <SectionLabel>Billing</SectionLabel>
       <Card style={styles.card}>
-        <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>Purchases open Stripe Checkout in your browser for secure payment handling.</Text>
+        {subscription ? (
+          <>
+            <View style={styles.billingHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.planName, { color: colors.foreground }]}>
+                  {PLAN_LABELS[subscription.plan] ?? subscription.plan}
+                </Text>
+                <Text style={[styles.subtitle, styles.noMargin, { color: colors.mutedForeground }]}>
+                  {subscription.currentPeriodEnd
+                    ? `${subscription.cancelAtPeriodEnd ? 'Cancels' : 'Renews'} ${formatRenewalDate(subscription.currentPeriodEnd)}`
+                    : 'Status: ' + (STATUS_LABELS[subscription.status] ?? subscription.status)}
+                </Text>
+              </View>
+              <Tag tone={isActive ? 'green' : 'orange'}>{STATUS_LABELS[subscription.status] ?? subscription.status}</Tag>
+            </View>
+            {isLapsed ? (
+              <View style={styles.billingActions}>
+                <LapsedRecovery status={subscription.status} plan={subscription.plan as Plan} hasStripeCustomer={hasStripeCustomer} />
+              </View>
+            ) : subscription.cancelAtPeriodEnd ? (
+              <View style={styles.billingActions}>
+                <ResumeSubscriptionButton />
+                <ManageBillingButton />
+              </View>
+            ) : (
+              <View style={styles.billingActions}>
+                <ManageBillingButton />
+                <CancelSubscriptionButton
+                  renewalDate={subscription.currentPeriodEnd ? formatRenewalDate(subscription.currentPeriodEnd) : null}
+                />
+              </View>
+            )}
+          </>
+        ) : (
+          <>
+            <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
+              No active subscription. Purchases open Stripe Checkout in your browser for secure payment handling.
+            </Text>
+            <SubscribePanel />
+          </>
+        )}
         <PrimaryButton onPress={() => router.push('/legal' as never)} icon="document-text-outline">Read legal disclosures</PrimaryButton>
       </Card>
     </Screen>
@@ -99,6 +168,10 @@ const styles = StyleSheet.create({
   content: { paddingBottom: 108 },
   card: { marginBottom: 8 },
   subtitle: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 18, marginBottom: 14 },
+  noMargin: { marginBottom: 0, marginTop: 3 },
+  billingHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14, gap: 10 },
+  planName: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  billingActions: { marginBottom: 14 },
   timezoneList: { gap: 10 },
   timezoneRow: {
     borderWidth: 1,

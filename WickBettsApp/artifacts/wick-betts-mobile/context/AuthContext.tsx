@@ -32,6 +32,8 @@ export interface AuthSubscription {
   plan: string;
   status: string;
   stripeSubscriptionId: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
 }
 
 interface AuthContextValue {
@@ -56,6 +58,10 @@ interface AuthContextValue {
    * subscription once the browser closes.
    */
   openBillingPortal: () => Promise<void>;
+  /** Cancel the active subscription at period end (member keeps access until then). */
+  cancelSubscription: () => Promise<void>;
+  /** Undo a pending cancel-at-period-end. */
+  resumeSubscription: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -259,6 +265,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await refreshSubscription();
   }, [getToken, refreshSubscription]);
 
+  const cancelSubscription = useCallback(async () => {
+    const token = await getToken();
+    if (!token) throw new Error('Not authenticated');
+    const res = await fetch(`${API_BASE}/stripe/cancel-subscription`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(err.error ?? 'Could not cancel your subscription. Please try again.');
+    }
+    await refreshSubscription();
+  }, [getToken, refreshSubscription]);
+
+  const resumeSubscription = useCallback(async () => {
+    const token = await getToken();
+    if (!token) throw new Error('Not authenticated');
+    const res = await fetch(`${API_BASE}/stripe/resume-subscription`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(err.error ?? 'Could not resume your subscription. Please try again.');
+    }
+    await refreshSubscription();
+  }, [getToken, refreshSubscription]);
+
   // Merge Clerk identity with local DB data for richer display.
   // If the backend profile row is not available yet, keep the signed-in Clerk
   // user visible so the app can render the dashboard instead of staying in a
@@ -306,6 +340,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshSubscription,
       startCheckout,
       openBillingPortal,
+      cancelSubscription,
+      resumeSubscription,
     }),
     [
       user,
@@ -318,6 +354,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshSubscription,
       startCheckout,
       openBillingPortal,
+      cancelSubscription,
+      resumeSubscription,
     ],
   );
 

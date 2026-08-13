@@ -8,6 +8,7 @@ import { useMarketData } from '@/hooks/useMarketData';
 import { useAuth } from '@/context/AuthContext';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { Card, Header, Metric, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
+import { TickerAutocomplete } from '@/components/TickerAutocomplete';
 
 function changeColor(pct: number, positive: string, negative: string, neutral: string): string {
   if (pct > 0) return positive;
@@ -163,15 +164,11 @@ export default function HomeScreen() {
       <Card style={styles.watchlistCard}>
         <Text style={[styles.watchlistIntro, { color: colors.mutedForeground }]}>Track supported symbols from the live market universe and keep quick notes or targets beside them.</Text>
         <View style={styles.watchlistForm}>
-          <TextInput
-            style={[styles.watchlistInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card }]}
+          <TickerAutocomplete
             value={symbolInput}
             onChangeText={setSymbolInput}
             placeholder="Ticker"
-            placeholderTextColor={colors.mutedForeground}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            maxLength={15}
+            testID="watchlist-ticker-input"
           />
           <TextInput
             style={[styles.watchlistInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card }]}

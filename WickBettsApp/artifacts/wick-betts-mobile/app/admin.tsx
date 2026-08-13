@@ -16,6 +16,7 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { Card, PrimaryButton, Tag } from '@/components/WickUI';
+import { TickerAutocomplete } from '@/components/TickerAutocomplete';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
 import { useSignals, type OptionType, type Signal, type SignalDirection, type SignalInput, type SignalMarket, type SignalStatus } from '@/context/SignalContext';
@@ -324,7 +325,15 @@ export default function AdminScreen() {
 
         {/* Core setup */}
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Core setup</Text>
-        <Field label="Underlying / ticker" value={form.asset} onChangeText={(v) => update('asset', v)} placeholder="e.g. NVDA" />
+        <View style={styles.field}>
+          <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Underlying / ticker</Text>
+          <TickerAutocomplete
+            value={form.asset}
+            onChangeText={(v) => update('asset', v)}
+            placeholder="e.g. NVDA"
+            testID="admin-asset-input"
+          />
+        </View>
         <View style={styles.twoCol}>
           <SelectField label="Market" value={form.market} options={['Stocks','Crypto']} onChange={(v) => update('market', v as SignalMarket)} />
           <SelectField label="Direction" value={form.direction} options={['Long','Short']} onChange={(v) => update('direction', v as SignalDirection)} />

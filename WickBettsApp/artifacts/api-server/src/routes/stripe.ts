@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
+import { pickPrimarySubscription } from "../lib/subscriptionUtils.js";
 
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
@@ -13,6 +14,42 @@ const PRICE_MENTORSHIP = process.env.STRIPE_PRICE_MENTORSHIP;
 const PRICE_MEMBERSHIP = process.env.STRIPE_PRICE_MEMBERSHIP;
 
 type ProductPlan = "signals" | "mentorship" | "membership";
+const ALLOWED_PLANS: ProductPlan[] = ["signals", "mentorship", "membership"];
+
+/**
+ * Resolves a configured STRIPE_PRICE_* env value to an actual Stripe Price ID.
+ *
+ * These env vars have historically been set to Stripe *Product* IDs
+ * (`prod_...`) rather than *Price* IDs (`price_...`) — see .env.example. A
+ * Checkout Session line item requires a Price ID, so passing a Product ID
+ * straight through makes `stripe.checkout.sessions.create` fail for every
+ * plan with "No such price". This resolves either shape so checkout works
+ * regardless of which one ops configured, and tolerates fixing the env vars
+ * later without another code change.
+ */
+const resolvedPriceIdCache = new Map<string, string>();
+
+async function resolvePriceId(stripe: Stripe, idOrProductId: string): Promise<string> {
+  if (idOrProductId.startsWith("price_")) return idOrProductId;
+
+  const cached = resolvedPriceIdCache.get(idOrProductId);
+  if (cached) return cached;
+
+  if (idOrProductId.startsWith("prod_")) {
+    const prices = await stripe.prices.list({ product: idOrProductId, active: true, limit: 1 });
+    const price = prices.data[0];
+    if (!price) {
+      throw new Error(
+        `No active Stripe price found for product "${idOrProductId}". Create a price for this product in the Stripe dashboard.`
+      );
+    }
+    resolvedPriceIdCache.set(idOrProductId, price.id);
+    return price.id;
+  }
+
+  // Unrecognized ID shape — let Stripe's own error surface rather than guessing.
+  return idOrProductId;
+}
 
 function resolveAppOrigin(): string {
   const configured = process.env.APP_ORIGIN?.trim();
@@ -43,14 +80,19 @@ router.post("/create-checkout", requireAuth, async (req: Request, res: Response)
     return;
   }
 
-  const { plan } = req.body as { plan: ProductPlan };
-  const priceId =
+  const { plan } = req.body as { plan?: string };
+  if (!plan || !ALLOWED_PLANS.includes(plan as ProductPlan)) {
+    res.status(400).json({ error: `Invalid plan. Must be one of: ${ALLOWED_PLANS.join(", ")}` });
+    return;
+  }
+
+  const configuredId =
     plan === "mentorship"
       ? PRICE_MENTORSHIP
       : plan === "membership"
         ? PRICE_MEMBERSHIP
         : PRICE_SIGNALS;
-  if (!priceId) {
+  if (!configuredId) {
     res.status(503).json({ error: `Stripe price ID for plan "${plan}" is not set.` });
     return;
   }
@@ -59,6 +101,8 @@ router.post("/create-checkout", requireAuth, async (req: Request, res: Response)
   const appOrigin = resolveAppOrigin();
 
   try {
+    const priceId = await resolvePriceId(stripe, configuredId);
+
     let customerId = user.stripeCustomerId;
     if (!customerId) {
       const customer = await stripe.customers.create({
@@ -93,7 +137,11 @@ router.post("/create-checkout", requireAuth, async (req: Request, res: Response)
     res.json({ url: session.url });
   } catch (err) {
     logger.error(err, "Stripe checkout creation failed");
-    res.status(500).json({ error: "Failed to create checkout session" });
+    const message = err instanceof Error ? err.message : "Failed to create checkout session";
+    // Surface price-misconfiguration errors distinctly so they're actionable
+    // from the client instead of a generic "something went wrong".
+    const isConfigError = message.includes("No active Stripe price found") || message.includes("No such price");
+    res.status(isConfigError ? 503 : 500).json({ error: isConfigError ? message : "Failed to create checkout session" });
   }
 });
 
@@ -122,6 +170,82 @@ router.post(
   } catch (err) {
     logger.error(err, "Stripe portal creation failed");
     res.status(500).json({ error: "Failed to create billing portal" });
+  }
+});
+
+// ── POST /api/stripe/cancel-subscription ───────────────────────────────────────
+// Cancels the member's current subscription at the end of the paid period —
+// they keep access until then, matching standard SaaS cancellation UX and
+// avoiding an accidental-tap refund conversation. Explicit in-app action
+// (rather than relying solely on the Stripe portal) so cancellation always
+// works regardless of how the portal is configured in the Stripe dashboard.
+router.post("/cancel-subscription", requireAuth, async (req: Request, res: Response) => {
+  const stripe = getStripe();
+  if (!stripe) {
+    res.status(503).json({ error: "Stripe is not configured." });
+    return;
+  }
+  const user = req.dbUser!;
+  try {
+    const subs = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.userId, user.id));
+    const current = pickPrimarySubscription(subs);
+    if (!current || (current.status !== "active" && current.status !== "trialing" && current.status !== "past_due")) {
+      res.status(400).json({ error: "No active subscription to cancel." });
+      return;
+    }
+
+    const updated = await stripe.subscriptions.update(current.stripeSubscriptionId, {
+      cancel_at_period_end: true,
+    });
+
+    // Update immediately rather than waiting on the webhook round-trip so
+    // the UI reflects the cancellation right away; the webhook will confirm
+    // the same state moments later and is the source of truth going forward.
+    const periodEnd = updated.items.data[0]?.current_period_end
+      ? new Date((updated.items.data[0].current_period_end as unknown as number) * 1000)
+      : current.currentPeriodEnd;
+    await db
+      .update(subscriptionsTable)
+      .set({ cancelAtPeriodEnd: "true", currentPeriodEnd: periodEnd, updatedAt: new Date() } as object)
+      .where(eq(subscriptionsTable.id, current.id));
+
+    logger.info({ userId: user.id, subscriptionId: current.stripeSubscriptionId }, "Subscription cancelled at period end");
+    res.json({ ok: true, cancelAtPeriodEnd: true, currentPeriodEnd: periodEnd });
+  } catch (err) {
+    logger.error(err, "Stripe subscription cancellation failed");
+    res.status(500).json({ error: "Failed to cancel subscription. Please try again." });
+  }
+});
+
+// ── POST /api/stripe/resume-subscription ───────────────────────────────────────
+// Undoes a pending cancel_at_period_end — lets a member who changes their
+// mind keep their subscription without having to re-subscribe from scratch.
+router.post("/resume-subscription", requireAuth, async (req: Request, res: Response) => {
+  const stripe = getStripe();
+  if (!stripe) {
+    res.status(503).json({ error: "Stripe is not configured." });
+    return;
+  }
+  const user = req.dbUser!;
+  try {
+    const subs = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.userId, user.id));
+    const current = pickPrimarySubscription(subs);
+    if (!current || current.cancelAtPeriodEnd !== "true") {
+      res.status(400).json({ error: "No pending cancellation to undo." });
+      return;
+    }
+
+    await stripe.subscriptions.update(current.stripeSubscriptionId, { cancel_at_period_end: false });
+    await db
+      .update(subscriptionsTable)
+      .set({ cancelAtPeriodEnd: "false", updatedAt: new Date() } as object)
+      .where(eq(subscriptionsTable.id, current.id));
+
+    logger.info({ userId: user.id, subscriptionId: current.stripeSubscriptionId }, "Subscription cancellation reversed");
+    res.json({ ok: true, cancelAtPeriodEnd: false });
+  } catch (err) {
+    logger.error(err, "Stripe subscription resume failed");
+    res.status(500).json({ error: "Failed to resume subscription. Please try again." });
   }
 });
 
@@ -187,7 +311,17 @@ router.post(
           if (existing.length > 0) {
             await db
               .update(subscriptionsTable)
-              .set({ status, plan, currentPeriodEnd: periodEnd, updatedAt: new Date() } as object)
+              .set({
+                status,
+                plan,
+                currentPeriodEnd: periodEnd,
+                // Was previously only written on insert — a member who
+                // cancelled (or undid a cancellation) via the portal or the
+                // in-app cancel button would never see that reflected here
+                // on subsequent renewal/status webhooks.
+                cancelAtPeriodEnd: sub.cancel_at_period_end ? "true" : "false",
+                updatedAt: new Date(),
+              } as object)
               .where(eq(subscriptionsTable.stripeSubscriptionId, sub.id));
           } else {
             await db.insert(subscriptionsTable).values({
@@ -223,19 +357,17 @@ router.post(
 );
 
 // ── GET /api/stripe/subscription ──────────────────────────────────────────────
+// Note: the mobile client actually calls GET /api/auth/subscription (same
+// logic, kept in sync via pickPrimarySubscription). This route is kept for
+// any other consumer that hits /api/stripe/subscription directly.
 router.get("/subscription", requireAuth, async (req: Request, res: Response) => {
   const user = req.dbUser!;
   const subs = await db
     .select()
     .from(subscriptionsTable)
-    .where(eq(subscriptionsTable.userId, user.id))
-    .limit(1);
+    .where(eq(subscriptionsTable.userId, user.id));
 
-  if (subs.length === 0) {
-    res.json({ subscription: null });
-    return;
-  }
-  res.json({ subscription: subs[0] });
+  res.json({ subscription: pickPrimarySubscription(subs) });
 });
 
 export default router;

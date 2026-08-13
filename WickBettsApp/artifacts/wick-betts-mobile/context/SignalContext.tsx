@@ -195,7 +195,11 @@ export function SignalProvider({ children }: { children: ReactNode }) {
         if (json.code === 'SUBSCRIPTION_REQUIRED') {
           setIsSubscriptionRequired(true);
           setSignals([]);
-          // Cache locally so the UI can show something if we had old data
+          // Purge any signals cached from a previous, entitled session. Without
+          // this, a lapsed subscriber who later hits a transient network error
+          // (not another 403) would fall into the offline-cache branch below
+          // and see stale paid content despite no longer being entitled to it.
+          void AsyncStorage.removeItem(storageKey);
           return;
         }
         throw new Error('Access denied');

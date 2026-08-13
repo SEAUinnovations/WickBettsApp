@@ -10,6 +10,13 @@ import { API_BASE } from '@/lib/apiUrl';
 
 const PRIMARY_ADMIN_EMAIL = 'bettstahlik@gmail.com';
 
+interface AdminSubscription {
+  plan: string;
+  status: string;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+}
+
 interface AdminUser {
   id: string;
   email: string;
@@ -17,7 +24,25 @@ interface AdminUser {
   avatarUrl: string | null;
   role: string;
   createdAt: string;
+  hasStripeCustomer: boolean;
+  subscription: AdminSubscription | null;
 }
+
+const PLAN_LABELS: Record<string, string> = {
+  signals: 'Signals',
+  mentorship: 'Mentorship',
+  membership: 'Membership',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  active: 'Active',
+  trialing: 'Trial',
+  past_due: 'Past due',
+  canceled: 'Cancelled',
+  incomplete: 'Incomplete',
+};
+
+const ACTIVE_STATUSES = ['active', 'trialing'];
 
 export default function AdminUsersScreen() {
   const router = useRouter();
@@ -149,6 +174,35 @@ export default function AdminUsersScreen() {
                     <Text style={[styles.userJoined, { color: colors.mutedForeground }]}>Joined {formatJoined(u.createdAt)}</Text>
                   </View>
                 </View>
+
+                {/* Billing — the whole reason admins land here without an
+                    external Stripe dashboard open */}
+                <View style={[styles.billingRow, { borderTopColor: colors.border }]}>
+                  {u.subscription ? (
+                    <>
+                      <Tag tone={ACTIVE_STATUSES.includes(u.subscription.status) ? 'green' : 'orange'}>
+                        {PLAN_LABELS[u.subscription.plan] ?? u.subscription.plan}
+                      </Tag>
+                      <Text style={[styles.billingText, { color: colors.mutedForeground }]}>
+                        {u.subscription.status === 'past_due'
+                          ? 'Payment past due'
+                          : u.subscription.status === 'canceled'
+                          ? 'Cancelled'
+                          : u.subscription.currentPeriodEnd
+                          ? `Renews ${formatJoined(u.subscription.currentPeriodEnd)}${u.subscription.cancelAtPeriodEnd ? ' (cancelling)' : ''}`
+                          : STATUS_LABELS[u.subscription.status] ?? u.subscription.status}
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <Tag tone="muted">No plan</Tag>
+                      <Text style={[styles.billingText, { color: colors.mutedForeground }]}>
+                        {u.hasStripeCustomer ? 'Has billing history, no active subscription' : 'Never subscribed'}
+                      </Text>
+                    </>
+                  )}
+                </View>
+
                 <View style={styles.userAction}>
                   {isPrimary ? (
                     <Text style={[styles.primaryAdmin, { color: colors.mutedForeground }]}>Primary admin</Text>
@@ -198,6 +252,8 @@ const styles = StyleSheet.create({
   userName: { flexShrink: 1, fontSize: 14, fontFamily: 'Inter_700Bold' },
   userEmail: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 3 },
   userJoined: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 3 },
+  billingRow: { flexDirection: 'row', alignItems: 'center', gap: 9, borderTopWidth: 1, marginTop: 12, paddingTop: 12 },
+  billingText: { flex: 1, fontSize: 11, fontFamily: 'Inter_400Regular' },
   userAction: { marginTop: 14, alignItems: 'flex-start' },
   primaryAdmin: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
   roleButton: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 11, paddingHorizontal: 13, paddingVertical: 9 },

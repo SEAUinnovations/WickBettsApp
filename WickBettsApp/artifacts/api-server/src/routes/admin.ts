@@ -1,9 +1,10 @@
 import { Router, type Request, type Response } from "express";
-import { db, usersTable } from "../lib/db.js";
+import { db, usersTable, subscriptionsTable } from "../lib/db.js";
 import { eq } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import OpenAI from "openai";
 import { requireAuth, requireAdmin } from "../middlewares/requireAuth.js";
+import { pickPrimarySubscription } from "../lib/subscriptionUtils.js";
 
 const router = Router();
 
@@ -13,7 +14,9 @@ function getOpenAI(): OpenAI {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
-// GET /api/admin/users
+// GET /api/admin/users — member roster, each row enriched with billing info
+// so admins can see who's paying, what plan, and whether payment has lapsed
+// without leaving the app or opening the Stripe dashboard.
 router.get("/users", requireAuth, requireAdmin, async (_req, res) => {
   const users = await db
     .select({
@@ -22,11 +25,37 @@ router.get("/users", requireAuth, requireAdmin, async (_req, res) => {
       name: usersTable.name,
       avatarUrl: usersTable.avatarUrl,
       role: usersTable.role,
+      stripeCustomerId: usersTable.stripeCustomerId,
       createdAt: usersTable.createdAt,
     })
     .from(usersTable)
     .orderBy(usersTable.createdAt);
-  res.json({ users });
+
+  const allSubs = await db.select().from(subscriptionsTable);
+  const subsByUser = new Map<string, typeof allSubs>();
+  for (const sub of allSubs) {
+    const list = subsByUser.get(sub.userId) ?? [];
+    list.push(sub);
+    subsByUser.set(sub.userId, list);
+  }
+
+  const enriched = users.map((u) => {
+    const primary = pickPrimarySubscription(subsByUser.get(u.id) ?? []);
+    return {
+      ...u,
+      hasStripeCustomer: !!u.stripeCustomerId,
+      subscription: primary
+        ? {
+            plan: primary.plan,
+            status: primary.status,
+            currentPeriodEnd: primary.currentPeriodEnd,
+            cancelAtPeriodEnd: primary.cancelAtPeriodEnd === "true",
+          }
+        : null,
+    };
+  });
+
+  res.json({ users: enriched });
 });
 
 // PATCH /api/admin/users/:id/role — grant or revoke admin

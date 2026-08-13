@@ -1,7 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Card, Header, Screen, SectionLabel, Tag } from '@/components/WickUI';
 import { LapsedRecovery, SubscribePanel } from '@/components/Billing';
 import { useColors } from '@/hooks/useColors';
@@ -16,6 +16,15 @@ export default function SignalsScreen() {
   const { subscription, user } = useAuth();
   const { signals, isLoading, isSubscriptionRequired, error, refresh } = useSignals();
   const isAdmin = user?.role === 'admin';
+
+  // Re-fetch whenever this tab gains focus so a signal an admin just
+  // published (from the Signal studio, or another device) shows up as soon
+  // as a member switches to this tab, instead of only on app cold-start.
+  useFocusEffect(
+    useCallback(() => {
+      void refresh();
+    }, [refresh]),
+  );
   const [filter, setFilter] = useState<Filter>('All');
   const [expanded, setExpanded] = useState<string | null>(null);
   const visibleSignals = useMemo(

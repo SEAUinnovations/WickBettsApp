@@ -4,3 +4,4 @@ export * from "./signals";
 export * from "./communityPosts";
 export * from "./watchlists";
 export * from "./newsOverrides";
+export * from "./mentorshipBookings";

@@ -4,6 +4,7 @@ import { db, usersTable, subscriptionsTable } from "../lib/db.js";
 import { eq } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
+import { pickPrimarySubscription } from "../lib/subscriptionUtils.js";
 
 const router = Router();
 
@@ -127,15 +128,16 @@ router.get("/subscription", requireAuth, async (req: Request, res: Response) => 
     const subs = await db
       .select()
       .from(subscriptionsTable)
-      .where(eq(subscriptionsTable.userId, user.id))
-      .limit(1);
-    const sub = subs[0] ?? null;
+      .where(eq(subscriptionsTable.userId, user.id));
+    const sub = pickPrimarySubscription(subs);
     res.json({
       subscription: sub
         ? {
             plan: sub.plan,
             status: sub.status,
             stripeSubscriptionId: sub.stripeSubscriptionId,
+            currentPeriodEnd: sub.currentPeriodEnd,
+            cancelAtPeriodEnd: sub.cancelAtPeriodEnd === "true",
           }
         : null,
     });

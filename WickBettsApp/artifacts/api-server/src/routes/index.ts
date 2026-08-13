@@ -8,6 +8,7 @@ import marketRouter from "./market.js";
 import adminRouter from "./admin.js";
 import communityRouter from "./community.js";
 import watchlistRouter from "./watchlist.js";
+import mentorshipRouter from "./mentorship.js";
 
 const router = Router();
 
@@ -20,5 +21,6 @@ router.use("/market", marketRouter);
 router.use("/admin", adminRouter);
 router.use("/community", communityRouter);
 router.use("/watchlist", watchlistRouter);
+router.use("/mentorship", mentorshipRouter);
 
 export default router;

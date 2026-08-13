@@ -4,8 +4,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Card, Header, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
 import {
+  CancelSubscriptionButton,
   LapsedRecovery,
   ManageBillingButton,
+  ResumeSubscriptionButton,
   SubscribePanel,
   UpgradeMentorshipButton,
 } from '@/components/Billing';
@@ -63,6 +65,9 @@ export default function ProfileScreen() {
   const isLapsed = subscription ? !isActive : false;
   const isMentorship = subscription?.plan === 'mentorship';
   const hasStripeCustomer = user?.hasStripeCustomer ?? false;
+  const renewalDateLabel = subscription?.currentPeriodEnd
+    ? new Date(subscription.currentPeriodEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : null;
 
   /** Persist a preference change to the API and update context. */
   const savePrefs = useCallback(async (prefs: { notifySignals?: boolean; notifyNews?: boolean }) => {
@@ -161,6 +166,7 @@ export default function ProfileScreen() {
               <Text style={[styles.planName, { color: colors.foreground }]}>{planLabel}</Text>
               <Text style={[styles.planMeta, { color: colors.mutedForeground }]}>
                 Status: {statusLabel}
+                {renewalDateLabel ? `  ·  ${subscription.cancelAtPeriodEnd ? 'Ends' : 'Renews'} ${renewalDateLabel}` : ''}
               </Text>
             </View>
           </View>
@@ -181,6 +187,19 @@ export default function ProfileScreen() {
                 hasStripeCustomer={hasStripeCustomer}
               />
             </>
+          ) : subscription.cancelAtPeriodEnd ? (
+            <>
+              <View style={[styles.noSubRow, { backgroundColor: colors.muted }]}>
+                <Ionicons name="information-circle-outline" size={18} color={colors.mutedForeground} />
+                <Text style={[styles.noSubText, { color: colors.mutedForeground }]}>
+                  Your subscription is set to cancel{renewalDateLabel ? ` on ${renewalDateLabel}` : ''}. You keep access until then.
+                </Text>
+              </View>
+              <View style={styles.membershipActions}>
+                <ResumeSubscriptionButton />
+                <ManageBillingButton />
+              </View>
+            </>
           ) : (
             <View style={styles.membershipActions}>
               {isMentorship ? (
@@ -191,6 +210,7 @@ export default function ProfileScreen() {
                 <UpgradeMentorshipButton />
               )}
               <ManageBillingButton />
+              <CancelSubscriptionButton renewalDate={renewalDateLabel} />
             </View>
           )}
         </Card>
