@@ -49,7 +49,17 @@ const webDistDir = process.env.WEB_DIST_DIR
   ? path.resolve(process.env.WEB_DIST_DIR)
   : path.resolve(__dirname, "../../wick-betts/dist/public");
 
-const allowedOriginPatterns: RegExp[] = [/localhost/];
+// wickbetts.com resolves at both the apex domain and `www.` — those are two
+// different browser origins, so both must be allow-listed or every fetch
+// from whichever variant isn't in APP_ORIGIN/CORS_ALLOWED_ORIGINS gets
+// blocked with "No 'Access-Control-Allow-Origin' header is present" even
+// though the API itself is healthy. Match the apex plus any subdomain
+// (anchored, so it can't be spoofed by e.g. "wickbetts.com.evil.com" or
+// "evilwickbetts.com").
+const allowedOriginPatterns: RegExp[] = [
+  /localhost/,
+  /^https:\/\/([a-z0-9-]+\.)*wickbetts\.com$/i,
+];
 if (process.env.CORS_ALLOW_REPLIT_ORIGINS !== "false") {
   allowedOriginPatterns.push(/\.replit\.dev$/, /\.repl\.co$/);
 }
