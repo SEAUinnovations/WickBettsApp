@@ -46,20 +46,34 @@ let refreshPromise: Promise<NewsCache> | null = null;
 let schedulerStarted = false;
 let lastScheduledSlot: string | null = null;
 
+// Yahoo Finance and CNBC's public RSS endpoints were retired (they now
+// return empty bodies) — verified by direct fetch before swapping. These
+// Dow Jones-family feeds are current and don't require an API key. Five
+// sources gives real redundancy: RSS scraping only needs one to succeed.
 const RSS_SOURCES = [
-  {
-    url: "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC,^IXIC,^DJI&region=US&lang=en-US",
-    name: "Yahoo Finance",
-    defaultCategory: "Markets",
-  },
-  {
-    url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135",
-    name: "CNBC Markets",
-    defaultCategory: "Markets",
-  },
   {
     url: "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
     name: "WSJ Markets",
+    defaultCategory: "Markets",
+  },
+  {
+    url: "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
+    name: "WSJ World News",
+    defaultCategory: "Markets",
+  },
+  {
+    url: "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+    name: "MarketWatch",
+    defaultCategory: "Markets",
+  },
+  {
+    url: "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines",
+    name: "MarketWatch",
+    defaultCategory: "Markets",
+  },
+  {
+    url: "https://feeds.content.dowjones.io/public/rss/mw_marketpulse",
+    name: "MarketWatch",
     defaultCategory: "Markets",
   },
 ];

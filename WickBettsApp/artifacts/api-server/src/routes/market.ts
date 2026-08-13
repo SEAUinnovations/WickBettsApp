@@ -258,9 +258,32 @@ router.get("/quotes", async (_req, res) => {
   }
 });
 
-// GET /api/market/tickers
+// GET /api/market/tickers — a JSON dictionary of the top tickers in each
+// sector, with live price info merged in from the quote cache. Purpose-built
+// for ticker-picker UIs (e.g. the watchlist/signal-studio autocomplete):
+// { sections: { indices: { SPY: { shortName, price, changePercent } }, ... } }
 router.get("/tickers", (_req, res) => {
-  res.json({ equity: Object.keys(EQUITY_TICKERS), crypto: Object.keys(CRYPTO_TICKERS) });
+  const quoteBySymbol = new Map((cache?.quotes ?? []).map((q) => [q.symbol, q]));
+  const sections: Record<string, Record<string, { shortName: string; price: number | null; changePercent: number | null }>> = {};
+
+  const addEntry = (symbol: string, group: string, shortName: string) => {
+    const quote = quoteBySymbol.get(symbol);
+    if (!sections[group]) sections[group] = {};
+    sections[group][symbol] = {
+      shortName,
+      price: quote?.price ?? null,
+      changePercent: quote?.changePercent ?? null,
+    };
+  };
+
+  for (const [symbol, meta] of Object.entries(EQUITY_TICKERS)) {
+    addEntry(symbol, meta.group, meta.shortName);
+  }
+  for (const [symbol, meta] of Object.entries(CRYPTO_TICKERS)) {
+    addEntry(symbol, "crypto", meta.shortName);
+  }
+
+  res.json({ sections, fetchedAt: cache?.fetchedAt ?? null });
 });
 
 export default router;
