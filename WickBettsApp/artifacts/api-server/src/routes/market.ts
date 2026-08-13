@@ -69,7 +69,14 @@ export interface QuoteItem {
 
 interface CacheEntry { quotes: QuoteItem[]; fetchedAt: number }
 let cache: CacheEntry | null = null;
-const CACHE_MS = 60 * 1000;
+const SCHEDULE_MS = 15 * 60 * 1000;
+const CLIENT_POLL_MS = 15 * 60 * 1000;
+const MARKET_TIMEZONE = "America/Chicago";
+const MARKET_OPEN_MINUTES = 7 * 60;
+const MARKET_CLOSE_MINUTES = 16 * 60;
+let refreshPromise: Promise<CacheEntry> | null = null;
+let schedulerStarted = false;
+let lastScheduledSlot: string | null = null;
 
 const HEADERS = {
   "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -146,25 +153,108 @@ async function refreshAllQuotes(): Promise<QuoteItem[]> {
   return quotes;
 }
 
+function getChicagoClockParts(now = new Date()): {
+  year: string;
+  month: string;
+  day: string;
+  hour: number;
+  minute: number;
+} {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: MARKET_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    year: map.year ?? "0000",
+    month: map.month ?? "00",
+    day: map.day ?? "00",
+    hour: Number(map.hour ?? "0"),
+    minute: Number(map.minute ?? "0"),
+  };
+}
+
+function getScheduleSlotKey(now = new Date()): string | null {
+  const clock = getChicagoClockParts(now);
+  const totalMinutes = clock.hour * 60 + clock.minute;
+  const onQuarterHour = clock.minute % 15 === 0;
+  const inWindow = totalMinutes >= MARKET_OPEN_MINUTES && totalMinutes <= MARKET_CLOSE_MINUTES;
+  if (!onQuarterHour || !inWindow) return null;
+  return `${clock.year}-${clock.month}-${clock.day}-${String(clock.hour).padStart(2, "0")}:${String(clock.minute).padStart(2, "0")}`;
+}
+
+async function ensureCache(reason: "startup" | "request-miss" | "scheduled"): Promise<CacheEntry> {
+  if (!refreshPromise) {
+    refreshPromise = refreshAllQuotes()
+      .then((quotes) => {
+        const nextCache = { quotes, fetchedAt: Date.now() };
+        cache = nextCache;
+        logger.info({ count: quotes.length, reason }, "Market quotes cache refreshed");
+        return nextCache;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return await refreshPromise;
+}
+
+function startScheduler(): void {
+  if (schedulerStarted) return;
+  schedulerStarted = true;
+
+  const tick = () => {
+    const slotKey = getScheduleSlotKey();
+    if (!slotKey || slotKey === lastScheduledSlot) return;
+    lastScheduledSlot = slotKey;
+    void ensureCache("scheduled").catch((err) => {
+      logger.warn({ err, slotKey }, "Scheduled market refresh failed");
+    });
+  };
+
+  void ensureCache("startup").catch((err) => {
+    logger.warn({ err }, "Initial market cache warmup failed");
+  });
+
+  tick();
+  setInterval(tick, 60 * 1000);
+}
+
+startScheduler();
+
 // GET /api/market/quotes
 router.get("/quotes", async (_req, res) => {
-  if (cache && Date.now() - cache.fetchedAt < CACHE_MS) {
-    res.json({ quotes: cache.quotes, fetchedAt: cache.fetchedAt, delayedMinutes: 15 });
+  if (cache) {
+    const ageMs = Date.now() - cache.fetchedAt;
+    res.json({
+      quotes: cache.quotes,
+      fetchedAt: cache.fetchedAt,
+      delayedMinutes: 15,
+      fresh: ageMs <= SCHEDULE_MS,
+      stale: ageMs > CLIENT_POLL_MS,
+      refreshIntervalMs: CLIENT_POLL_MS,
+    });
     return;
   }
   try {
-    const quotes = await refreshAllQuotes();
-    if (quotes.length > 0) {
-      cache = { quotes, fetchedAt: Date.now() };
-    }
-    res.json({ quotes: cache?.quotes ?? [], fetchedAt: cache?.fetchedAt ?? Date.now(), delayedMinutes: 15 });
+    const nextCache = await ensureCache("request-miss");
+    res.json({
+      quotes: nextCache.quotes,
+      fetchedAt: nextCache.fetchedAt,
+      delayedMinutes: 15,
+      fresh: true,
+      stale: false,
+      refreshIntervalMs: CLIENT_POLL_MS,
+    });
   } catch (err) {
     logger.error(err, "Market quotes fetch failed");
-    if (cache) {
-      res.json({ quotes: cache.quotes, fetchedAt: cache.fetchedAt, delayedMinutes: 15, stale: true });
-    } else {
-      res.status(502).json({ error: "Unable to fetch market data. Try again shortly." });
-    }
+    res.status(502).json({ error: "Unable to fetch market data. Try again shortly." });
   }
 });
 

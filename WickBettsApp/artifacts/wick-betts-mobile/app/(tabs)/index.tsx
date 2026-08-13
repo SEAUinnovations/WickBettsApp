@@ -9,8 +9,6 @@ import { useAuth } from '@/context/AuthContext';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { Card, Header, Metric, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
 
-const DEFAULT_TRACKED_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'DIA', 'AAPL', 'NVDA'];
-
 function changeColor(pct: number, positive: string, negative: string, neutral: string): string {
   if (pct > 0) return positive;
   if (pct < 0) return negative;
@@ -32,7 +30,6 @@ export default function HomeScreen() {
   const [symbolInput, setSymbolInput] = React.useState('');
   const [noteInput, setNoteInput] = React.useState('');
   const [targetInput, setTargetInput] = React.useState('');
-  const [heatFocus, setHeatFocus] = React.useState<'sectors' | 'crypto' | 'megacap' | 'watchlist'>('sectors');
   const username = user?.name ?? 'Member';
   const isAdmin = user?.role === 'admin';
 
@@ -49,7 +46,12 @@ export default function HomeScreen() {
     pushProtected('/mentorship');
   };
 
-  const trackedSymbols = [...new Set([...DEFAULT_TRACKED_SYMBOLS, ...watchlistItems.map((item) => item.symbol)])];
+  const trackedSymbols = [
+    ...new Set([
+      ...(market?.quotes.filter((q) => q.group === 'indices').map((q) => q.symbol) ?? []),
+      ...watchlistItems.map((item) => item.symbol),
+    ]),
+  ];
 
   const highlights = trackedSymbols
     .map((sym) => market?.quotes.find((q) => q.symbol === sym))
@@ -134,42 +136,15 @@ export default function HomeScreen() {
         <View style={[styles.microLine, { backgroundColor: colors.border }]}>
           <Text style={[styles.microText, { color: colors.mutedForeground }]}>
             {market?.fetchedAt
-              ? `Updated ${new Date(market.fetchedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} · SPY, QQQ, IWM, DIA, AAPL, NVDA and your watchlist`
-              : 'Main ETF and leader board via delayed market data'}
+              ? `Updated ${new Date(market.fetchedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} · index ETFs plus your saved symbols`
+              : 'Index ETFs plus your saved symbols via delayed market data'}
           </Text>
         </View>
       </Card>
 
       {/* Market Block Grid */}
       <SectionLabel>Sector heat</SectionLabel>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
-        {([
-          ['sectors', 'Sectors'],
-          ['crypto', 'Crypto'],
-          ['megacap', 'Megacap'],
-          ['watchlist', 'My list'],
-        ] as const).map(([value, label]) => (
-          <Pressable
-            key={value}
-            onPress={() => setHeatFocus(value)}
-            style={[
-              styles.filter,
-              {
-                backgroundColor: heatFocus === value ? colors.primary : colors.card,
-                borderColor: heatFocus === value ? colors.primary : colors.border,
-              },
-            ]}
-          >
-            <Text style={[styles.filterText, { color: heatFocus === value ? colors.primaryForeground : colors.mutedForeground }]}>{label}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-      <MarketHeatGrid
-        quotes={market?.quotes ?? []}
-        loading={marketLoading}
-        focus={heatFocus}
-        watchlistSymbols={watchlistItems.map((item) => item.symbol)}
-      />
+      <MarketHeatGrid quotes={market?.quotes ?? []} loading={marketLoading} />
 
       {isAdmin ? (
         <>
@@ -286,19 +261,12 @@ export default function HomeScreen() {
 function MarketHeatGrid({
   quotes,
   loading,
-  focus,
-  watchlistSymbols,
 }: {
   quotes: ReturnType<typeof useMarketData>['data'] extends null ? [] : NonNullable<ReturnType<typeof useMarketData>['data']>['quotes'];
   loading: boolean;
-  focus: 'sectors' | 'crypto' | 'megacap' | 'watchlist';
-  watchlistSymbols: string[];
 }) {
   const colors = useColors();
-  const shown = quotes.filter((q) => {
-    if (focus === 'watchlist') return watchlistSymbols.includes(q.symbol);
-    return q.group === focus;
-  }).slice(0, 14);
+  const shown = quotes.filter((q) => q.group === 'sectors').slice(0, 14);
 
   if (loading && shown.length === 0) {
     return (
@@ -355,9 +323,6 @@ const styles = StyleSheet.create({
   metricCardWrap: { minWidth: 110 },
   microLine: { height: 1, marginTop: 14, marginBottom: 10 },
   microText: { fontSize: 9, fontFamily: 'Inter_400Regular', marginTop: 10, textAlign: 'center', letterSpacing: 0.5 },
-  filters: { gap: 8, paddingBottom: 14 },
-  filter: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9 },
-  filterText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
   heatGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 22 },
   heatCell: { width: '22%', flexGrow: 1, borderRadius: 12, borderWidth: 1, padding: 10, alignItems: 'center', minHeight: 60, justifyContent: 'center' },
   heatTicker: { fontSize: 10, fontFamily: 'Inter_700Bold', marginBottom: 4 },

@@ -33,7 +33,7 @@ try {
   logger.info("Database migrations applied");
 } catch (err) {
   logger.error({ err }, "Failed to run database migrations");
-  process.exit(1);
+  logger.warn("Continuing startup without applying migrations; some database-backed routes may be degraded");
 }
 
 app.listen(port, (err) => {

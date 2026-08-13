@@ -16,12 +16,14 @@ interface MarketData {
   quotes: QuoteItem[];
   fetchedAt: number;
   stale?: boolean;
+  refreshIntervalMs?: number;
 }
 
 export function useMarketData() {
   const [data, setData] = useState<MarketData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState(15 * 60_000);
 
   const fetch_ = useCallback(async () => {
     setLoading(true);
@@ -31,6 +33,7 @@ export function useMarketData() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = (await res.json()) as MarketData;
       setData(json);
+      setRefreshIntervalMs(json.refreshIntervalMs ?? 15 * 60_000);
     } catch (e) {
       setError('Market data unavailable');
     } finally {
@@ -40,9 +43,9 @@ export function useMarketData() {
 
   useEffect(() => {
     void fetch_();
-    const interval = setInterval(() => void fetch_(), 60_000);
+    const interval = setInterval(() => void fetch_(), refreshIntervalMs);
     return () => clearInterval(interval);
-  }, [fetch_]);
+  }, [fetch_, refreshIntervalMs]);
 
   return { data, loading, error, refresh: fetch_ };
 }

@@ -37,9 +37,10 @@ const clerkSecretKey = firstNonEmpty(
   process.env.CLERK_API_KEY,
 );
 
-if (!clerkSecretKey) {
-  throw new Error(
-    "Missing Clerk Secret Key. Set CLERK_SECRET_KEY (preferred) or CLERK_SECRET in runtime environment.",
+const clerkAuthEnabled = Boolean(clerkSecretKey);
+if (!clerkAuthEnabled) {
+  logger.warn(
+    "Missing Clerk Secret Key. Authenticated routes will return 401 until CLERK_SECRET_KEY is configured.",
   );
 }
 
@@ -114,15 +115,17 @@ app.use(express.urlencoded({ extended: true }));
 // Resolves the publishable key from the request host so the same server can
 // serve multiple Clerk custom domains. Falls back to CLERK_PUBLISHABLE_KEY
 // when the host doesn't map to a custom domain.
-app.use(
-  clerkMiddleware((req) => ({
-    publishableKey: publishableKeyFromHost(
-      getClerkProxyHost(req) ?? "",
-      clerkPublishableKey,
-    ),
-    secretKey: clerkSecretKey,
-  }))
-);
+if (clerkAuthEnabled) {
+  app.use(
+    clerkMiddleware((req) => ({
+      publishableKey: publishableKeyFromHost(
+        getClerkProxyHost(req) ?? "",
+        clerkPublishableKey,
+      ),
+      secretKey: clerkSecretKey,
+    }))
+  );
+}
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use("/api", router);
