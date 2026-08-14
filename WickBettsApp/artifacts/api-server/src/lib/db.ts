@@ -49,4 +49,11 @@ export {
   insertMentorshipBookingSchema,
   type InsertMentorshipBooking,
   type MentorshipBooking,
+  // Trade reviews ("Review My Trade")
+  tradeReviewsTable,
+  tradeBiasEnum,
+  tradeReviewVerdictEnum,
+  insertTradeReviewSchema,
+  type InsertTradeReview,
+  type TradeReview,
 } from "@workspace/db";

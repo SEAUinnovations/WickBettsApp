@@ -29,6 +29,34 @@
       "when": 1786554780000,
       "tag": "0003_membership_plan",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786600000000,
+      "tag": "0004_watchlists",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786600100000,
+      "tag": "0005_news_overrides",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786686900000,
+      "tag": "0006_signals_auto_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786687200000,
+      "tag": "0007_trade_reviews",
+      "breakpoints": true
     }
   ]
 }

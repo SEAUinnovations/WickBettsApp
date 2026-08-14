@@ -5,3 +5,4 @@ export * from "./communityPosts";
 export * from "./watchlists";
 export * from "./newsOverrides";
 export * from "./mentorshipBookings";
+export * from "./tradeReviews";
