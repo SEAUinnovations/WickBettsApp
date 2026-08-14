@@ -1,11 +1,44 @@
 import { Router, type Request, type Response } from "express";
 import { db, communityPostsTable, usersTable, subscriptionsTable } from "../lib/db.js";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, gte, lt } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
 
 const GRACE_PERIOD_DAYS = 5;
+
+// Community chat is a rolling 30-day window — older posts are filtered out
+// of reads and periodically purged from the DB so the table doesn't grow
+// unbounded and old chatter doesn't linger indefinitely.
+const RETENTION_DAYS = 30;
+const RETENTION_MS = RETENTION_DAYS * 24 * 60 * 60 * 1000;
+function retentionCutoff(): Date {
+  return new Date(Date.now() - RETENTION_MS);
+}
+
+let cleanupStarted = false;
+function startRetentionCleanup(): void {
+  if (cleanupStarted) return;
+  cleanupStarted = true;
+
+  const runCleanup = () => {
+    void db
+      .delete(communityPostsTable)
+      .where(lt(communityPostsTable.createdAt, retentionCutoff()))
+      .then(() => {
+        logger.info({ retentionDays: RETENTION_DAYS }, "Community post retention cleanup ran");
+      })
+      .catch((err) => {
+        logger.warn({ err }, "Community post retention cleanup failed");
+      });
+  };
+
+  // Run once shortly after boot, then once every hour.
+  setTimeout(runCleanup, 30_000);
+  setInterval(runCleanup, 60 * 60 * 1000);
+}
+
+startRetentionCleanup();
 
 async function requireActiveSubscription(req: Request, res: Response, next: () => void) {
   const user = req.dbUser!;
@@ -43,7 +76,9 @@ async function requireActiveSubscription(req: Request, res: Response, next: () =
 
 const router = Router();
 
-// GET /api/community — fetch posts with author name (all threads), newest first
+// GET /api/community — fetch posts with author name (all threads), newest first.
+// Only returns posts within the last RETENTION_DAYS days; older posts are
+// periodically purged from the DB entirely (see startRetentionCleanup above).
 router.get("/", requireAuth, requireActiveSubscription, async (_req, res) => {
   try {
     const rows = await db
@@ -54,9 +89,11 @@ router.get("/", requireAuth, requireActiveSubscription, async (_req, res) => {
         createdAt: communityPostsTable.createdAt,
         authorId: communityPostsTable.authorId,
         authorName: usersTable.name,
+        avatarUrl: usersTable.avatarUrl,
       })
       .from(communityPostsTable)
       .leftJoin(usersTable, eq(communityPostsTable.authorId, usersTable.id))
+      .where(gte(communityPostsTable.createdAt, retentionCutoff()))
       .orderBy(desc(communityPostsTable.createdAt))
       .limit(200);
 
@@ -98,6 +135,7 @@ router.post("/", requireAuth, requireActiveSubscription, async (req: Request, re
         ...post,
         createdAt: new Date(),
         authorName: user.name,
+        avatarUrl: user.avatarUrl,
       },
     });
   } catch (err) {

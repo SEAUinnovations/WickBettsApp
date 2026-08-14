@@ -62,6 +62,13 @@ interface AuthContextValue {
   cancelSubscription: () => Promise<void>;
   /** Undo a pending cancel-at-period-end. */
   resumeSubscription: () => Promise<void>;
+  /**
+   * Upload a new profile picture. `fileDataUri` is a base64 data URI
+   * (e.g. from expo-image-picker with base64:true). Uploads to Clerk first
+   * (which becomes the canonical image host), then mirrors the resulting
+   * URL onto the local user row so other members can see it too.
+   */
+  uploadProfileImage: (fileDataUri: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -279,6 +286,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await refreshSubscription();
   }, [getToken, refreshSubscription]);
 
+  const uploadProfileImage = useCallback(async (fileDataUri: string) => {
+    if (!clerkUser) throw new Error('Not signed in');
+    try {
+      await clerkUser.setProfileImage({ file: fileDataUri });
+      // setProfileImage mutates the Clerk user resource, but reload() guarantees
+      // clerkUser.imageUrl reflects the new CDN URL before we read it below.
+      await clerkUser.reload();
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : 'Could not upload image');
+    }
+
+    const newUrl = clerkUser.imageUrl;
+    if (newUrl) {
+      setDbUser((prev) => (prev ? { ...prev, avatarUrl: newUrl } : prev));
+      const token = await getToken();
+      if (token) {
+        try {
+          await fetch(`${API_BASE}/auth/profile`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ avatarUrl: newUrl }),
+          });
+        } catch {
+          // Non-critical — the user's own view already updated via Clerk;
+          // other members will just see the old avatar until the next sync.
+        }
+      }
+    }
+  }, [clerkUser, getToken]);
+
   const resumeSubscription = useCallback(async () => {
     const token = await getToken();
     if (!token) throw new Error('Not authenticated');
@@ -342,6 +379,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       openBillingPortal,
       cancelSubscription,
       resumeSubscription,
+      uploadProfileImage,
     }),
     [
       user,
@@ -356,6 +394,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       openBillingPortal,
       cancelSubscription,
       resumeSubscription,
+      uploadProfileImage,
     ],
   );
 

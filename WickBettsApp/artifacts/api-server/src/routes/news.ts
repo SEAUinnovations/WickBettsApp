@@ -89,6 +89,29 @@ function guessCategory(title: string): string {
   return "Markets";
 }
 
+/**
+ * Safely coerce an XML node's parsed value into plain text.
+ *
+ * fast-xml-parser (with ignoreAttributes:false) turns tags that carry
+ * attributes but no text content — e.g. Atom's `<link href="...">` or an
+ * RSS `<guid isPermaLink="true">url</guid>` — into an object like
+ * `{ href: "..." }` or `{ "#text": "...", isPermaLink: "true" }` rather
+ * than a string. Naively calling String() on that object previously
+ * produced the literal text "[object Object]", silently corrupting the
+ * article's link/id. This normalizes any of those shapes back to a string.
+ */
+function xmlText(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj["#text"] === "string") return obj["#text"];
+    if (typeof obj["href"] === "string") return obj["href"];
+    if (typeof obj["url"] === "string") return obj["url"];
+  }
+  return "";
+}
+
 async function fetchRss(source: typeof RSS_SOURCES[0]): Promise<NewsArticle[]> {
   const res = await fetch(source.url, {
     headers: {
@@ -114,24 +137,33 @@ async function fetchRss(source: typeof RSS_SOURCES[0]): Promise<NewsArticle[]> {
     ? [channel["entry"]]
     : [];
 
-  return rawItems.slice(0, 20).map((item) => {
-    const it = item as Record<string, unknown>;
-    const title = String(it["title"] ?? "");
-    const link = String(it["link"] ?? it["guid"] ?? "");
-    const pubDate = String(it["pubDate"] ?? it["published"] ?? it["updated"] ?? "");
-    const desc = String(it["description"] ?? it["summary"] ?? it["content"] ?? "");
-    // Strip HTML tags from description
-    const summary = desc.replace(/<[^>]*>/g, "").slice(0, 200).trim();
-    return {
-      id: link || title,
-      headline: title,
-      source: source.name,
-      url: link,
-      publishedAt: pubDate,
-      category: guessCategory(title),
-      summary: summary || title,
-    };
-  });
+  return rawItems
+    .slice(0, 20)
+    .map((item) => {
+      const it = item as Record<string, unknown>;
+      const title = xmlText(it["title"]);
+      const link = xmlText(it["link"]) || xmlText(it["guid"]);
+      const pubDate = xmlText(it["pubDate"] ?? it["published"] ?? it["updated"]);
+      const desc = xmlText(it["description"] ?? it["summary"] ?? it["content"]);
+      // Strip HTML tags/entities from description
+      const summary = desc
+        .replace(/<!\[CDATA\[|\]\]>/g, "")
+        .replace(/<[^>]*>/g, "")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .slice(0, 200)
+        .trim();
+      return {
+        id: link || title,
+        headline: title,
+        source: source.name,
+        url: link,
+        publishedAt: pubDate,
+        category: guessCategory(title),
+        summary: summary || title,
+      };
+    })
+    .filter((article) => article.headline.trim().length > 0);
 }
 
 async function refreshCache(): Promise<NewsArticle[]> {

@@ -7,6 +7,26 @@ import { logger } from "../lib/logger.js";
 
 const SUPER_ADMIN_EMAIL = "bettstahlik@gmail.com";
 
+/**
+ * Bootstrap admin emails — accounts that are always granted the "admin" role
+ * on login/JIT-provision, regardless of what's in the DB. This exists so a
+ * dev/test account (or a new team member) can get admin access without
+ * anyone needing direct DB access to flip their role.
+ *
+ * The primary super-admin email is always included. Add more via the
+ * BOOTSTRAP_ADMIN_EMAILS env var (comma-separated), e.g.:
+ *   BOOTSTRAP_ADMIN_EMAILS=dev@wickbetts.local,teammate@example.com
+ */
+const bootstrapAdminEmails = new Set(
+  [SUPER_ADMIN_EMAIL, ...(process.env.BOOTSTRAP_ADMIN_EMAILS ?? "").split(",")]
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+export function isBootstrapAdmin(email: string): boolean {
+  return bootstrapAdminEmails.has(email.trim().toLowerCase());
+}
+
 function getDevAuthMode(): string {
   return (process.env.DEV_AUTH_MODE ?? process.env.AUTH_BYPASS_MODE ?? "").trim().toLowerCase();
 }
@@ -28,7 +48,7 @@ async function provisionDevUser(req: Request): Promise<import("@workspace/db").U
   const firstName = process.env.DEV_AUTH_FIRST_NAME?.trim() || "Dev";
   const lastName = process.env.DEV_AUTH_LAST_NAME?.trim() || "User";
   const username = process.env.DEV_AUTH_USERNAME?.trim() || "";
-  const role = process.env.DEV_AUTH_ROLE?.trim() === "admin" ? "admin" : "member";
+  const role = (process.env.DEV_AUTH_ROLE?.trim() === "admin" || isBootstrapAdmin(email)) ? "admin" : "member";
 
   const user = await jitProvisionUser({ email, firstName, lastName, username });
   if (!user) return null;
@@ -118,7 +138,7 @@ export async function jitProvisionUser(identity: {
     const name =
       username || [firstName, lastName].filter(Boolean).join(" ") || email.split("@")[0];
     const role =
-      email === SUPER_ADMIN_EMAIL ? ("admin" as const) : ("member" as const);
+      isBootstrapAdmin(email) ? ("admin" as const) : ("member" as const);
 
     try {
       await db
@@ -145,8 +165,8 @@ export async function jitProvisionUser(identity: {
     logger.info({ userId: user.id, email }, "New user JIT-provisioned via Clerk");
   }
 
-  // Always enforce super-admin role regardless of what the DB row says
-  if (email === SUPER_ADMIN_EMAIL && user.role !== "admin") {
+  // Always enforce bootstrap-admin role regardless of what the DB row says
+  if (isBootstrapAdmin(email) && user.role !== "admin") {
     try {
       await db
         .update(usersTable)
@@ -154,7 +174,7 @@ export async function jitProvisionUser(identity: {
         .where(eq(usersTable.id, user.id));
       user = { ...user, role: "admin" as const };
     } catch (err) {
-      logger.warn(err, "jitProvisionUser: could not enforce super-admin role");
+      logger.warn(err, "jitProvisionUser: could not enforce bootstrap-admin role");
     }
   }
 

@@ -62,7 +62,16 @@ router.get("/me", requireAuth, (req: Request, res: Response) => {
     });
 });
 
-/** PATCH /api/auth/profile — update user profile metadata stored in Clerk */
+/**
+ * PATCH /api/auth/profile — update user profile metadata.
+ *
+ * `timezone` is stored in Clerk's unsafeMetadata (as before). `avatarUrl` is
+ * stored on the local `users` row — the client uploads the image to Clerk
+ * directly (clerkUser.setProfileImage), then calls this endpoint with the
+ * resulting Clerk-hosted URL so it's mirrored into our DB. That mirror is
+ * what lets *other* users see this member's avatar (community chat, admin
+ * roster) without us calling out to Clerk on every read.
+ */
 router.patch("/profile", requireAuth, async (req: Request, res: Response) => {
   const auth = getAuth(req);
   if (!auth.userId) {
@@ -70,21 +79,40 @@ router.patch("/profile", requireAuth, async (req: Request, res: Response) => {
     return;
   }
 
-  const { timezone } = req.body as { timezone?: string };
-  if (typeof timezone !== "string" || !timezone.trim()) {
+  const { timezone, avatarUrl } = req.body as { timezone?: string; avatarUrl?: string };
+  if (timezone === undefined && avatarUrl === undefined) {
+    res.status(400).json({ error: "Provide at least one field to update (timezone, avatarUrl)" });
+    return;
+  }
+  if (timezone !== undefined && (typeof timezone !== "string" || !timezone.trim())) {
     res.status(400).json({ error: "timezone must be a non-empty string" });
+    return;
+  }
+  if (avatarUrl !== undefined && (typeof avatarUrl !== "string" || !/^https:\/\/.+/.test(avatarUrl))) {
+    res.status(400).json({ error: "avatarUrl must be a valid https URL" });
     return;
   }
 
   try {
-    const clerkUser = await clerkClient.users.getUser(auth.userId);
-    const currentMetadata = (clerkUser.unsafeMetadata as Record<string, unknown> | undefined) ?? {};
-    await clerkClient.users.updateUser(auth.userId, {
-      unsafeMetadata: {
-        ...currentMetadata,
-        timezone: timezone.trim(),
-      },
-    });
+    if (timezone !== undefined) {
+      const clerkUser = await clerkClient.users.getUser(auth.userId);
+      const currentMetadata = (clerkUser.unsafeMetadata as Record<string, unknown> | undefined) ?? {};
+      await clerkClient.users.updateUser(auth.userId, {
+        unsafeMetadata: {
+          ...currentMetadata,
+          timezone: timezone.trim(),
+        },
+      });
+    }
+
+    if (avatarUrl !== undefined) {
+      const user = req.dbUser!;
+      await db
+        .update(usersTable)
+        .set({ avatarUrl: avatarUrl.trim(), updatedAt: new Date() })
+        .where(eq(usersTable.id, user.id));
+    }
+
     res.json({ ok: true });
   } catch (err) {
     logger.error(err, "Failed to update profile metadata");

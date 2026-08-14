@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -17,6 +17,7 @@ interface CommunityPost {
   createdAt: string;
   authorId: string;
   authorName: string | null;
+  avatarUrl?: string | null;
 }
 
 function initials(name: string | null | undefined): string {
@@ -93,6 +94,7 @@ export default function CommunityScreen() {
       createdAt: new Date().toISOString(),
       authorId: user?.id ?? '',
       authorName: user?.name ?? 'You',
+      avatarUrl: user?.avatarUrl ?? null,
     };
     setPosts((prev) => [...prev, optimisticPost]);
     setThread('Community Chat');
@@ -199,29 +201,37 @@ export default function CommunityScreen() {
           currentPosts.map((post) => (
             <Card key={post.id} style={styles.messageCard}>
               <View style={styles.messageTop}>
-                <View
-                  style={[
-                    styles.avatar,
-                    {
-                      backgroundColor:
-                        post.authorName === 'Wick Betts' ? colors.primary : colors.secondary,
-                    },
-                  ]}
-                >
-                  <Text
+                {post.avatarUrl ? (
+                  <Image
+                    source={{ uri: post.avatarUrl }}
+                    style={styles.avatar}
+                    accessibilityLabel={post.authorName ?? 'Member avatar'}
+                  />
+                ) : (
+                  <View
                     style={[
-                      styles.avatarText,
+                      styles.avatar,
                       {
-                        color:
-                          post.authorName === 'Wick Betts'
-                            ? colors.primaryForeground
-                            : colors.accent,
+                        backgroundColor:
+                          post.authorName === 'Wick Betts' ? colors.primary : colors.secondary,
                       },
                     ]}
                   >
-                    {initials(post.authorName)}
-                  </Text>
-                </View>
+                    <Text
+                      style={[
+                        styles.avatarText,
+                        {
+                          color:
+                            post.authorName === 'Wick Betts'
+                              ? colors.primaryForeground
+                              : colors.accent,
+                        },
+                      ]}
+                    >
+                      {initials(post.authorName)}
+                    </Text>
+                  </View>
+                )}
                 <View style={{ flex: 1, marginLeft: 10 }}>
                   <Text style={[styles.author, { color: colors.foreground }]}>
                     {post.authorName ?? 'Member'}

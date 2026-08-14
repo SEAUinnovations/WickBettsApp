@@ -1,0 +1,61 @@
+name: Deploy Web (Cloudflare Worker)
+
+# The Railway backend (api-server) auto-deploys on push via Railway's own
+# GitHub integration — that part already works. This workflow covers the
+# other half: the wick-betts-mobile web export (wickbetts.com's actual
+# frontend, served from a Cloudflare Worker — see artifacts/wick-betts-mobile
+# /wrangler.toml and public/_worker.js). That bundle was previously only
+# built and deployed by someone running `wrangler deploy` locally, so local
+# changes could sit committed on main indefinitely without ever reaching the
+# live site. This makes every push to main rebuild and redeploy it.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build + deploy web bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: artifacts/wick-betts-mobile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        working-directory: .
+        run: pnpm install --frozen-lockfile
+
+      # Uses .env.production (committed, no secrets) for
+      # EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY + a deliberately-empty
+      # EXPO_PUBLIC_API_URL so the built bundle calls the API via
+      # same-origin `/api/...`, which the Worker proxies to Railway.
+      - name: Build web export
+        run: pnpm run build:web
+
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: artifacts/wick-betts-mobile
+          command: deploy

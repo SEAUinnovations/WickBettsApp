@@ -168,7 +168,7 @@ export default function NewsScreen() {
       <View style={styles.masthead}>
         <Text style={[styles.mastheadTitle, { color: colors.foreground }]}>Live from{'\n'}the market.</Text>
         <Text style={[styles.mastheadBody, { color: colors.mutedForeground }]}>
-          Real headlines scraped from Yahoo Finance, CNBC, and WSJ — refreshed every 15 minutes during market hours.
+          Real headlines from WSJ and MarketWatch — refreshed every 15 minutes during market hours.
         </Text>
       </View>
 

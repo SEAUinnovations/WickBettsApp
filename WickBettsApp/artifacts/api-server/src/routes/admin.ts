@@ -3,7 +3,7 @@ import { db, usersTable, subscriptionsTable } from "../lib/db.js";
 import { eq } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import OpenAI from "openai";
-import { requireAuth, requireAdmin } from "../middlewares/requireAuth.js";
+import { requireAuth, requireAdmin, isBootstrapAdmin } from "../middlewares/requireAuth.js";
 import { pickPrimarySubscription } from "../lib/subscriptionUtils.js";
 
 const router = Router();
@@ -72,8 +72,8 @@ router.patch("/users/:id/role", requireAuth, requireAdmin, async (req: Request, 
     res.status(404).json({ error: "User not found" });
     return;
   }
-  if (target[0].email === "bettstahlik@gmail.com" && role !== "admin") {
-    res.status(400).json({ error: "Cannot remove admin role from the primary admin account." });
+  if (isBootstrapAdmin(target[0].email) && role !== "admin") {
+    res.status(400).json({ error: "Cannot remove admin role from a bootstrap admin account. Remove it from BOOTSTRAP_ADMIN_EMAILS first." });
     return;
   }
   await db.update(usersTable).set({ role, updatedAt: new Date() }).where(eq(usersTable.id, id));

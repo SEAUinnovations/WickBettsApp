@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Card, Header, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
@@ -35,8 +36,9 @@ const STATUS_LABELS: Record<string, string> = {
 export default function ProfileScreen() {
   const router = useRouter();
   const colors = useColors();
-  const { user, getToken, subscription, isLoading, signOut, updateNotificationPrefs } = useAuth();
+  const { user, getToken, subscription, isLoading, signOut, updateNotificationPrefs, uploadProfileImage } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   // Notification preferences — initialised from user object so they survive re-renders
   const [notifySignals, setNotifySignals] = useState(() => user?.notifySignals ?? true);
@@ -108,6 +110,35 @@ export default function ProfileScreen() {
     await savePrefs({ notifyNews: value });
   }, [savePrefs]);
 
+  const handlePickAvatar = useCallback(async () => {
+    if (uploadingAvatar) return;
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Permission needed', 'Allow photo library access to set a profile picture.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+        base64: true,
+      });
+      if (result.canceled || !result.assets?.[0]?.base64) return;
+
+      setUploadingAvatar(true);
+      const asset = result.assets[0];
+      const mime = asset.mimeType ?? 'image/jpeg';
+      const dataUri = `data:${mime};base64,${asset.base64}`;
+      await uploadProfileImage(dataUri);
+    } catch (err) {
+      Alert.alert('Upload failed', err instanceof Error ? err.message : 'Could not update your profile picture. Try again.');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }, [uploadingAvatar, uploadProfileImage]);
+
   const handleSignOut = () => {
     Alert.alert('Sign out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
@@ -137,9 +168,28 @@ export default function ProfileScreen() {
 
       {/* Profile header */}
       <View style={styles.profileHeader}>
-        <View style={[styles.largeAvatar, { backgroundColor: colors.primary }]}>
-          <Text style={[styles.largeAvatarText, { color: colors.primaryForeground }]}>{initials}</Text>
-        </View>
+        <Pressable
+          onPress={handlePickAvatar}
+          disabled={uploadingAvatar}
+          accessibilityRole="button"
+          accessibilityLabel="Change profile picture"
+          style={({ pressed }) => [pressed && { opacity: 0.8 }]}
+        >
+          {user?.avatarUrl ? (
+            <Image source={{ uri: user.avatarUrl }} style={styles.largeAvatar} />
+          ) : (
+            <View style={[styles.largeAvatar, { backgroundColor: colors.primary }]}>
+              <Text style={[styles.largeAvatarText, { color: colors.primaryForeground }]}>{initials}</Text>
+            </View>
+          )}
+          <View style={[styles.avatarEditBadge, { backgroundColor: colors.primary, borderColor: colors.background }]}>
+            {uploadingAvatar ? (
+              <ActivityIndicator size="small" color={colors.primaryForeground} />
+            ) : (
+              <Ionicons name="camera" size={12} color={colors.primaryForeground} />
+            )}
+          </View>
+        </Pressable>
         <View style={{ flex: 1, marginLeft: 14 }}>
           <Text style={[styles.name, { color: colors.foreground }]}>{user?.name ?? 'Member'}</Text>
           <Text style={[styles.email, { color: colors.mutedForeground }]}>{user?.email ?? ''}</Text>
@@ -345,6 +395,17 @@ const styles = StyleSheet.create({
   profileHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 24 },
   largeAvatar: { width: 52, height: 52, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   largeAvatarText: { fontSize: 18, fontFamily: 'Inter_700Bold' },
+  avatarEditBadge: {
+    position: 'absolute',
+    bottom: -3,
+    right: -3,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   name: { fontSize: 17, fontFamily: 'Inter_700Bold' },
   email: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 3 },
   membership: { marginBottom: 8 },
