@@ -17,12 +17,24 @@ function toISODate(d: Date): string {
  * successfully in production, so it's a trusted-reachable domain — the
  * historical sub-endpoint's exact response shape is parsed defensively
  * since it hasn't been exercised in this codebase before).
+ *
+ * `assetclass` defaults to "stocks" (every existing caller is a stock
+ * candidate from the scanner universe) — pass "etf" for ETF tickers like
+ * GLD/TLT/VIXY/UUP (see macroConfluence.ts). The live quote endpoint
+ * (routes/market.ts) already requires the correct assetclass per ticker
+ * type; this endpoint's exact behavior with a mismatched assetclass for
+ * ETFs hadn't been exercised before macroConfluence.ts, hence making it
+ * explicit rather than assuming "stocks" works for everything.
  */
-export async function fetchStockDailyBars(symbol: string, days = 90): Promise<DailyBar[]> {
+export async function fetchStockDailyBars(
+  symbol: string,
+  days = 90,
+  assetclass: "stocks" | "etf" = "stocks",
+): Promise<DailyBar[]> {
   try {
     const to = new Date();
     const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
-    const url = `https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/historical?assetclass=stocks&fromdate=${toISODate(from)}&todate=${toISODate(to)}&limit=${days}`;
+    const url = `https://api.nasdaq.com/api/quote/${encodeURIComponent(symbol)}/historical?assetclass=${assetclass}&fromdate=${toISODate(from)}&todate=${toISODate(to)}&limit=${days}`;
     const res = await fetch(url, { headers: NASDAQ_HEADERS, signal: AbortSignal.timeout(10_000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = (await res.json()) as {

@@ -6,7 +6,7 @@ shape the response; the actual work happens here.
 
 ## Automated signal scanner
 
-A pipeline of five modules, called in this order by `signalScanner.ts`,
+A pipeline of six modules, called in this order by `signalScanner.ts`,
 which self-starts a 2-day interval scheduler on import (see
 `routes/index.ts`'s side-effect import):
 
@@ -24,7 +24,12 @@ which self-starts a 2-day interval scheduler on import (see
    explicitly modeled, not quoted, and every signal built from it says so).
 5. **`economicCalendar.ts`** — flags whether a signal's holding window
    crosses FOMC/CPI/jobs-report dates or the symbol's own earnings date
-   (the "keep in mind" star).
+   (the "keep in mind" star), and exports a synchronous `fomcWithinRange()`
+   used as a ranking factor (see next item).
+6. **`macroConfluence.ts`** — cross-asset VIX/Dollar/Gold/Bonds regime read
+   (Risk-On/Risk-Off/Mixed), used alongside FOMC-window proximity as a
+   secondary "decision factor" that nudges candidate ranking on top of the
+   pure technical score — see `docs/adr/0008-macro-confluence-decision-factor.md`.
 
 `signalScanner.ts` ties these together, screens both stocks and crypto,
 picks the 1-2 best-fitting setups, and inserts them as `status: "Watching"`

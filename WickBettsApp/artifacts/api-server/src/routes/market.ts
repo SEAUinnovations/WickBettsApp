@@ -15,11 +15,16 @@ const EQUITY_TICKERS: Record<string, TickerMeta> = {
   QQQ:  { assetclass: "etf",    group: "indices", shortName: "Nasdaq 100 ETF" },
   IWM:  { assetclass: "etf",    group: "indices", shortName: "Russell 2000 ETF" },
   DIA:  { assetclass: "etf",    group: "indices", shortName: "Dow Jones ETF" },
-  // Macro / bonds
+  // Macro / bonds — VIXY and UUP are also the confluence inputs the auto
+  // signal scanner reads for its cross-asset "decision factor" (see
+  // services/macroConfluence.ts); tracked here too so members can see the
+  // same instruments referenced in a signal's "Wick's Read".
   GLD:  { assetclass: "etf",    group: "macro",   shortName: "Gold" },
   TLT:  { assetclass: "etf",    group: "macro",   shortName: "20Y Treasury" },
   SLV:  { assetclass: "etf",    group: "macro",   shortName: "Silver" },
   USO:  { assetclass: "etf",    group: "macro",   shortName: "Oil" },
+  VIXY: { assetclass: "etf",    group: "macro",   shortName: "VIX (volatility)" },
+  UUP:  { assetclass: "etf",    group: "macro",   shortName: "US Dollar" },
   // Sectors
   XLK:  { assetclass: "etf",    group: "sectors", shortName: "Tech" },
   XLF:  { assetclass: "etf",    group: "sectors", shortName: "Financials" },

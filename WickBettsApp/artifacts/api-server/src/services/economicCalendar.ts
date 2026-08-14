@@ -67,6 +67,17 @@ function fomcDatesForRange(start: Date, end: Date): Date[] {
   return FOMC_2026.map((iso) => new Date(`${iso}T00:00:00Z`)).filter((d) => d >= start && d <= end);
 }
 
+/**
+ * Synchronous (no network) check for whether a Fed rate decision falls
+ * inside [start, end]. Exported so the scanner can use it as a ranking
+ * factor — not just the "keep in mind" star — for every candidate during
+ * selection without an extra async round trip per symbol (FOMC dates are
+ * the same for every symbol, unlike earnings).
+ */
+export function fomcWithinRange(start: Date, end: Date): boolean {
+  return fomcDatesForRange(start, end).length > 0;
+}
+
 interface EarningsLookupResult {
   date: Date | null;
 }

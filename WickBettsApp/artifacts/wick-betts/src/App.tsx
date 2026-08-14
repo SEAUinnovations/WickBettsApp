@@ -4,7 +4,7 @@ import {
   ArrowRight, Award, Bell, BookMarked, BookOpen, CalendarDays, CandlestickChart, Camera, Check,
   ChevronLeft, ChevronRight, CircleHelp, Clock3, CreditCard, Crown, ExternalLink, Filter, Flame,
   Gamepad2, GraduationCap, Heart, Layers, LayoutDashboard, LoaderCircle, LockKeyhole,
-  LogOut, MessageCircle, Newspaper, PanelLeft, Pencil, Percent, Plus, Radio, Rocket, RotateCcw,
+  LogOut, MessageCircle, Newspaper, PanelLeft, Pencil, Percent, PlayCircle, Plus, Radio, Rocket, RotateCcw,
   Settings, ShieldCheck, SlidersHorizontal, Sparkles, Star, Swords, Target, TrendingUp, Trophy,
   UserRound, WalletCards, X, Chrome, Zap,
 } from 'lucide-react';
@@ -222,7 +222,7 @@ function Landing() {
               <span className="eyebrow">The daily desk</span><h3>Signals</h3>
               <div className="price">$250 <small>/ month</small></div>
               <p className="plan-detail">A focused stream of stock, crypto, and options setups with the reasoning — and Greeks — that make a level useful.</p>
-              <ul className="plan-list"><li>Daily long and short signals</li><li>Options contracts with full Greeks</li><li>Signal history and status changes</li><li>Market news with Wick commentary</li><li>Private community threads</li></ul>
+              <ul className="plan-list"><li>Daily long and short signals</li><li>Options contracts with full Greeks</li><li>Signal history and status changes</li><li>Market news with Wick commentary</li><li>Community access — private threads with the desk</li><li>Full Learning tab — beginner-to-expert lessons and arcade games</li></ul>
               <button className="button button-dark" data-testid="button-plan-signals" onClick={() => void handlePlan('signals')} disabled={checkoutLoading !== null}>
                 {checkoutLoading === 'signals' ? 'Redirecting…' : 'Join the daily desk'} <ArrowRight size={14} />
               </button>
@@ -231,7 +231,7 @@ function Landing() {
               <span className="plan-tag">Limited access</span><span className="eyebrow light">The closer room</span><h3>Mentorship</h3>
               <div className="price">$500 <small>/ month</small></div>
               <p className="plan-detail">Everything in Signals, plus one calm hour each week to pressure-test your process with a Wick mentor.</p>
-              <ul className="plan-list"><li>All daily signals with full Greeks</li><li>Options contract analysis</li><li>Weekly one-hour private call</li><li>Live calendar booking</li><li>Process review and trade journaling</li></ul>
+              <ul className="plan-list"><li>Everything in Signals — community access and the full Learning tab included</li><li>Options contract analysis</li><li>Weekly one-hour private call</li><li>Live calendar booking</li><li>Trade reviews — bring real setups and get them looked at directly</li></ul>
               <button className="button button-primary" data-testid="button-plan-mentorship" onClick={() => void handlePlan('mentorship')} disabled={checkoutLoading !== null}>
                 {checkoutLoading === 'mentorship' ? 'Redirecting…' : 'Enter the closer room'} <ArrowRight size={14} />
               </button>
@@ -240,7 +240,7 @@ function Landing() {
               <span className="eyebrow">The full membership</span><h3>Membership</h3>
               <div className="price">Premium <small>/ month</small></div>
               <p className="plan-detail">A complete member path for desks that want broad platform access in one subscription.</p>
-              <ul className="plan-list"><li>Unified member subscription</li><li>Checkout and billing portal access</li><li>Subscription status syncing via webhooks</li><li>Protected desk access after activation</li><li>Same secure Stripe checkout flow</li></ul>
+              <ul className="plan-list"><li>Community access — private threads with the desk and other members</li><li>Full Learning tab — beginner-to-expert lessons and arcade games</li><li>Trade reviews with the desk</li><li>Daily signals and market news</li><li>Manage or upgrade anytime from your billing portal</li></ul>
               <button className="button button-dark" data-testid="button-plan-membership" onClick={() => void handlePlan('membership')} disabled={checkoutLoading !== null}>
                 {checkoutLoading === 'membership' ? 'Redirecting…' : 'Join membership'} <ArrowRight size={14} />
               </button>
@@ -1039,10 +1039,13 @@ interface LearningModule {
   xp: number;
   icon: LucideIcon;
   body?: () => React.ReactNode;
+  /** At most 2 short (under 10 min), duration-verified YouTube videos related to this lesson. */
+  videos?: { title: string; url: string; duration: string }[];
 }
 
 interface LearningProgress {
   completedModules: string[];
+  completedTracks: LearningLevel[];
   xp: number;
   streakDays: number;
   lastVisit: string | null;
@@ -1055,6 +1058,7 @@ const LEARNING_STORAGE_PREFIX = 'wb-learning-progress';
 function blankLearningProgress(): LearningProgress {
   return {
     completedModules: [],
+    completedTracks: [],
     xp: 0,
     streakDays: 0,
     lastVisit: null,
@@ -1091,6 +1095,7 @@ function saveLearningProgress(userId: string | undefined, progress: LearningProg
 }
 
 const XP_PER_LEVEL = 200;
+const TRACK_BONUS_XP = 100;
 function levelFromXp(xp: number): { level: number; intoLevel: number; forNext: number } {
   const level = 1 + Math.floor(xp / XP_PER_LEVEL);
   const intoLevel = xp % XP_PER_LEVEL;
@@ -1381,17 +1386,41 @@ function bodyTrailblazers(): React.ReactNode {
 
 // ── Learning: module registry ──────────────────────────────────────────────────────
 const LEARNING_MODULES: LearningModule[] = [
-  { id: 'welcome', level: 'Beginner', kind: 'lesson', title: 'Welcome to WickBetts', tagline: 'What this academy is, and the one trait that matters more than any indicator.', minutes: 4, xp: 40, icon: GraduationCap, body: bodyWelcome },
-  { id: 'markets-101', level: 'Beginner', kind: 'lesson', title: 'The Four Markets', tagline: 'Indices, futures, stocks, and crypto — what each one actually is.', minutes: 7, xp: 50, icon: Layers, body: bodyMarkets101 },
-  { id: 'demo-to-live', level: 'Beginner', kind: 'lesson', title: 'From Demo to Live', tagline: "Where to practice, how much to risk first, and the checkpoint that tells you you're ready.", minutes: 5, xp: 40, icon: Rocket, body: bodyDemoToLive },
-  { id: 'reading-the-chart', level: 'Intermediate', kind: 'lesson', title: 'Reading the Chart', tagline: 'Trend, volume, timeframes, support & resistance — before every trade.', minutes: 8, xp: 60, icon: TrendingUp, body: bodyReadingTheChart },
-  { id: 'candlestick-encyclopedia', level: 'Intermediate', kind: 'lesson', title: 'The Candlestick Encyclopedia', tagline: 'Every candle tells a story — learn to read all of them.', minutes: 12, xp: 80, icon: CandlestickChart, body: bodyCandlestickEncyclopedia },
+  { id: 'welcome', level: 'Beginner', kind: 'lesson', title: 'Welcome to WickBetts', tagline: 'What this academy is, and the one trait that matters more than any indicator.', minutes: 4, xp: 40, icon: GraduationCap, body: bodyWelcome, videos: [
+    { title: 'Stock Market Explained in 4 Minutes | The Simplest Explanation', url: 'https://www.youtube.com/watch?v=effipLTUUl4', duration: '4:08' },
+  ] },
+  { id: 'markets-101', level: 'Beginner', kind: 'lesson', title: 'The Four Markets', tagline: 'Indices, futures, stocks, and crypto — what each one actually is.', minutes: 7, xp: 50, icon: Layers, body: bodyMarkets101, videos: [
+    { title: 'Crypto Explained in Just 5 Minutes!', url: 'https://www.youtube.com/watch?v=hTYwTPmROrM', duration: '4:32' },
+    { title: 'Futures Trading Explained For Beginners in 5 Minutes', url: 'https://www.youtube.com/watch?v=Dh5KFZqEHqU', duration: '5:59' },
+  ] },
+  { id: 'demo-to-live', level: 'Beginner', kind: 'lesson', title: 'From Demo to Live', tagline: "Where to practice, how much to risk first, and the checkpoint that tells you you're ready.", minutes: 5, xp: 40, icon: Rocket, body: bodyDemoToLive, videos: [
+    { title: 'How to Paper Trade / Simulate Trades in TradingView (2026 Guide)', url: 'https://www.youtube.com/watch?v=1EnfqWoxuAY', duration: '3:35' },
+  ] },
+  { id: 'reading-the-chart', level: 'Intermediate', kind: 'lesson', title: 'Reading the Chart', tagline: 'Trend, volume, timeframes, support & resistance — before every trade.', minutes: 8, xp: 60, icon: TrendingUp, body: bodyReadingTheChart, videos: [
+    { title: 'Support/Resistance Explained in 60 Seconds', url: 'https://www.youtube.com/watch?v=YbWHkFX58L4', duration: '1:01' },
+    { title: 'What is Support and Resistance in Trading?', url: 'https://www.youtube.com/watch?v=Wwxb3DROwrc', duration: '3:04' },
+  ] },
+  { id: 'candlestick-encyclopedia', level: 'Intermediate', kind: 'lesson', title: 'The Candlestick Encyclopedia', tagline: 'Every candle tells a story — learn to read all of them.', minutes: 12, xp: 80, icon: CandlestickChart, body: bodyCandlestickEncyclopedia, videos: [
+    { title: 'Candlestick Patterns Explained: Top 5 Patterns For Beginners', url: 'https://www.youtube.com/watch?v=qunnM_aQWQk', duration: '9:21' },
+  ] },
   { id: 'candle-arcade', level: 'Intermediate', kind: 'game', title: 'Candle ID Arcade', tagline: 'Speed-round: name the pattern before the streak breaks.', minutes: 5, xp: 0, icon: Gamepad2 },
-  { id: 'indicators-toolkit', level: 'Advanced', kind: 'lesson', title: 'Indicators 101: SMA & Friends', tagline: 'The Simple Moving Average — the math, the meaning, and the crossover signals.', minutes: 9, xp: 70, icon: Percent, body: bodyIndicatorsToolkit },
-  { id: 'risk-and-psychology', level: 'Advanced', kind: 'lesson', title: "Risk & the Trader's Mindset", tagline: 'Position sizing, stops, and the patience that keeps an edge alive.', minutes: 8, xp: 60, icon: ShieldCheck, body: bodyRiskAndPsychology },
-  { id: 'liquidity-and-structure', level: 'Advanced', kind: 'lesson', title: 'Liquidity & Market Structure', tagline: 'Why price hunts obvious stops, and how to read structure like the desk does.', minutes: 7, xp: 60, icon: Target, body: bodyLiquidityAndStructure },
-  { id: 'trading-through-history', level: 'Expert', kind: 'lesson', title: 'A Short History of Trading', tagline: 'From Amsterdam warehouses to algorithms — how markets got here.', minutes: 8, xp: 70, icon: BookMarked, body: bodyTradingThroughHistory },
-  { id: 'trailblazers', level: 'Expert', kind: 'lesson', title: 'Trailblazers: Great Black Traders & Investors', tagline: "The people who broke into rooms that weren't built for them.", minutes: 10, xp: 80, icon: Crown, body: bodyTrailblazers },
+  { id: 'indicators-toolkit', level: 'Advanced', kind: 'lesson', title: 'Indicators 101: SMA & Friends', tagline: 'The Simple Moving Average — the math, the meaning, and the crossover signals.', minutes: 9, xp: 70, icon: Percent, body: bodyIndicatorsToolkit, videos: [
+    { title: 'What Is The Simple Moving Average? (SMA) & How To Use It!', url: 'https://www.youtube.com/watch?v=TRy9InVeFc8', duration: '4:03' },
+    { title: 'How to Use the Relative Strength Index (RSI)', url: 'https://www.youtube.com/watch?v=hbcCykbX14U', duration: '4:22' },
+  ] },
+  { id: 'risk-and-psychology', level: 'Advanced', kind: 'lesson', title: "Risk & the Trader's Mindset", tagline: 'Position sizing, stops, and the patience that keeps an edge alive.', minutes: 8, xp: 60, icon: ShieldCheck, body: bodyRiskAndPsychology, videos: [
+    { title: 'The Risk to Reward Ratio Explained in One Minute', url: 'https://www.youtube.com/watch?v=aKZsireNBIM', duration: '1:36' },
+  ] },
+  { id: 'liquidity-and-structure', level: 'Advanced', kind: 'lesson', title: 'Liquidity & Market Structure', tagline: 'Why price hunts obvious stops, and how to read structure like the desk does.', minutes: 7, xp: 60, icon: Target, body: bodyLiquidityAndStructure, videos: [
+    { title: 'Liquidity Zones SIMPLIFIED', url: 'https://www.youtube.com/watch?v=0BOMeGq-J0I', duration: '8:38' },
+    { title: 'High and Low Liquidity Zones in Trading Explained (Supply & Demand Basics)', url: 'https://www.youtube.com/watch?v=kAmPmTPJpg8', duration: '6:46' },
+  ] },
+  { id: 'trading-through-history', level: 'Expert', kind: 'lesson', title: 'A Short History of Trading', tagline: 'From Amsterdam warehouses to algorithms — how markets got here.', minutes: 8, xp: 70, icon: BookMarked, body: bodyTradingThroughHistory, videos: [
+    { title: 'The Hidden History Behind the New York Stock Exchange', url: 'https://www.youtube.com/shorts/2_KM19rvW94', duration: '1:35' },
+  ] },
+  { id: 'trailblazers', level: 'Expert', kind: 'lesson', title: 'Trailblazers: Great Black Traders & Investors', tagline: "The people who broke into rooms that weren't built for them.", minutes: 10, xp: 80, icon: Crown, body: bodyTrailblazers, videos: [
+    { title: 'The Story Behind The Pursuit of Happyness: 20 Years Later with Chris Gardner', url: 'https://www.youtube.com/watch?v=oRvZjh8QK2g', duration: '7:00' },
+  ] },
   { id: 'trivia-arena', level: 'Expert', kind: 'game', title: 'Trivia Arena', tagline: 'Mixed rapid-fire questions across every module.', minutes: 6, xp: 0, icon: Swords },
 ];
 
@@ -1403,9 +1432,27 @@ function LearningPage() {
   const [activeLevel, setActiveLevel] = useState<LearningLevel>('Beginner');
   const [view, setView] = useState<'overview' | 'module'>('overview');
   const [activeModuleId, setActiveModuleId] = useState<string | null>(null);
+  const [celebration, setCelebration] = useState<LearningLevel | null>(null);
 
   useEffect(() => { setProgress(loadLearningProgress(userId)); }, [userId]);
   useEffect(() => { saveLearningProgress(userId, progress); }, [userId, progress]);
+
+  // Reward system — congratulate the member the moment every module in a track
+  // (lessons AND arcade games both count) is complete, and pay out a one-time bonus.
+  useEffect(() => {
+    const newlyDone = LEARNING_LEVELS.filter((lvl) => {
+      if (progress.completedTracks.includes(lvl)) return false;
+      const inLevel = LEARNING_MODULES.filter((m) => m.level === lvl);
+      return inLevel.length > 0 && inLevel.every((m) => progress.completedModules.includes(m.id));
+    });
+    if (newlyDone.length === 0) return;
+    setProgress((prev) => ({
+      ...prev,
+      completedTracks: [...prev.completedTracks, ...newlyDone],
+      xp: prev.xp + newlyDone.length * TRACK_BONUS_XP,
+    }));
+    setCelebration(newlyDone[newlyDone.length - 1]);
+  }, [progress.completedModules, progress.completedTracks]);
 
   // Daily streak — bump once per calendar day, reset if a day was skipped.
   useEffect(() => {
@@ -1469,11 +1516,23 @@ function LearningPage() {
         </div>
       </div>
 
+      {celebration && (
+        <div className="surface-dark track-celebration animate-in" data-testid="banner-track-celebration">
+          <Trophy size={20} />
+          <div>
+            <h3>{celebration} track complete!</h3>
+            <p>Nice work — you cleared every module in the {celebration} path, lessons and arcade games alike. +{TRACK_BONUS_XP} bonus XP.</p>
+          </div>
+          <button className="icon-button" onClick={() => setCelebration(null)} data-testid="button-dismiss-celebration"><X size={14} /></button>
+        </div>
+      )}
+
       {view === 'overview' ? (
         <>
           <div className="filter-bar" style={{ marginTop: 28 }}>
             {LEARNING_LEVELS.map((lvl) => {
               const { done, total } = levelCompletion(lvl);
+              const trackDone = done === total && total > 0;
               return (
                 <button
                   key={lvl}
@@ -1481,7 +1540,7 @@ function LearningPage() {
                   onClick={() => setActiveLevel(lvl)}
                   data-testid={`filter-learning-level-${lvl.toLowerCase()}`}
                 >
-                  {lvl} <span className="tiny" style={{ opacity: 0.7 }}>· {done}/{total}</span>
+                  {trackDone && <Trophy size={10} />} {lvl} <span className="tiny" style={{ opacity: 0.7 }}>· {done}/{total}</span>
                 </button>
               );
             })}
@@ -1559,6 +1618,20 @@ function LessonView({ module, completed, onComplete, onBack, onNext }: { module:
         </div>
       </div>
       <div className="lesson-body">{module.body?.()}</div>
+      {module.videos && module.videos.length > 0 && (
+        <div className="video-suggestions">
+          <span className="eyebrow">Watch instead (optional, under 10 min)</span>
+          <div className="video-suggestions-row">
+            {module.videos.map((v) => (
+              <a key={v.url} href={v.url} target="_blank" rel="noopener noreferrer" className="video-chip" data-testid={`link-video-${v.url.split('v=').pop() ?? v.url}`}>
+                <PlayCircle size={13} />
+                <span>{v.title}</span>
+                <span className="video-chip-duration">{v.duration}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="lesson-actions">
         {completed
           ? <span className="status-pill status-active"><Check size={11} /> Completed</span>
@@ -1612,6 +1685,7 @@ function CandleArcadeGame({ progress, setProgress }: { progress: LearningProgres
     setProgress((prev) => ({
       ...prev,
       xp: prev.xp + xpEarned,
+      completedModules: prev.completedModules.includes('candle-arcade') ? prev.completedModules : [...prev.completedModules, 'candle-arcade'],
       candleGame: {
         bestScore: Math.max(prev.candleGame.bestScore, finalScore),
         bestStreak: Math.max(prev.candleGame.bestStreak, finalBestStreak),
@@ -1715,6 +1789,7 @@ function TriviaArenaGame({ progress, setProgress }: { progress: LearningProgress
     setProgress((prev) => ({
       ...prev,
       xp: prev.xp + xpEarned,
+      completedModules: prev.completedModules.includes('trivia-arena') ? prev.completedModules : [...prev.completedModules, 'trivia-arena'],
       triviaGame: { bestScore: Math.max(prev.triviaGame.bestScore, finalScore), plays: prev.triviaGame.plays + 1 },
     }));
   };
@@ -2525,6 +2600,11 @@ function AppRouter() {
         <Route path="/app/news">
           <RequireSubscription title="The newsroom is for members." description="Subscribe to unlock live market headlines curated for the desk.">
             <NewsPage />
+          </RequireSubscription>
+        </Route>
+        <Route path="/app/learning">
+          <RequireSubscription title="The academy is for members." description="Subscribe to unlock the full Learning tab — interactive lessons, candlestick mastery, indicators, trading history, and two gamified arcade modes.">
+            <LearningPage />
           </RequireSubscription>
         </Route>
         <Route path="/app/community"><CommunityPage /></Route>

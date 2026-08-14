@@ -6,7 +6,8 @@ import { buildStockCandidateList } from "./stockUniverse.js";
 import { fetchStockDailyBars, fetchCryptoDailyBars } from "./marketHistory.js";
 import { screenSymbol, type ScreenResult } from "./technicalAnalysis.js";
 import { blackScholes, pickExpiration, pickStrike, formatExpirationLabel, formatExpirationCode } from "./optionsModel.js";
-import { getNewsAlert } from "./economicCalendar.js";
+import { getNewsAlert, fomcWithinRange } from "./economicCalendar.js";
+import { getMacroConfluence, type MacroConfluence } from "./macroConfluence.js";
 
 /**
  * The automated signal scanner.
@@ -101,7 +102,7 @@ function rsiMagnitude(rsi: number, direction: "Long" | "Short"): string {
   return "approaching overbought";
 }
 
-function buildAnalysisText(c: Candidate, isFallback: boolean): string {
+function buildAnalysisText(c: Candidate, isFallback: boolean, confluence: MacroConfluence, fomcInWindow: boolean): string {
   const { screen } = c;
   const setupLabel = c.screen.direction === "Long" ? "at support" : "at resistance";
   const level = c.screen.direction === "Long" ? screen.support : screen.resistance;
@@ -117,12 +118,28 @@ function buildAnalysisText(c: Candidate, isFallback: boolean): string {
         ? ` Trend context: price is on the ${screen.direction === "Long" ? "right" : "wrong"} side of its 50-day average, ${screen.direction === "Long" ? "consistent with a dip-buy in an uptrend" : "consistent with a fade in a downtrend"} — adds conviction.`
         : ` Trend context: price is against its 50-day average (${screen.direction === "Long" ? "downtrend" : "uptrend"}) — this is a counter-trend bounce/fade play, not a trend-following one, so size and conviction should reflect that.`;
 
+  // Cross-asset confluence (VIX/Dollar/Gold/Bonds) — a secondary decision
+  // factor layered on top of the technical screen, not a replacement for
+  // it. See macroConfluence.ts for the regime heuristic.
+  const macroAligned =
+    confluence.regime === "Mixed" ? null : (confluence.regime === "Risk-On") === (screen.direction === "Long");
+  const macroNote =
+    confluence.regime === "Mixed"
+      ? ` ${confluence.note}`
+      : ` ${confluence.note} ${macroAligned ? "That backdrop supports this direction." : "That backdrop runs counter to this direction — a headwind worth weighing."}`;
+
+  const rateNote = fomcInWindow
+    ? " A Fed rate decision falls inside this trade's window — expect elevated volatility around that date."
+    : "";
+
   return (
     `${prefix}RSI(14) at ${screen.rsi.toFixed(1)} — ${rsiMagnitude(screen.rsi, screen.direction)}, ` +
     `${setupLabel}. Price $${screen.price.toFixed(2)} vs ${levelLabel} $${level.toFixed(2)} ` +
     `(${(screen.proximityPct * 100).toFixed(1)}% away). ` +
     `Volume running ${screen.volumeRatio.toFixed(2)}x the 20-day average${screen.volumeRatio >= 1.3 ? " — real participation behind the move, not a low-volume drift." : "."}` +
-    trendNote
+    trendNote +
+    macroNote +
+    rateNote
   );
 }
 
@@ -165,7 +182,12 @@ function buildProjectionNote(
   return { text, targetGreeks, stopGreeks };
 }
 
-async function buildStockOptionSignal(c: Candidate, newsAlert: { flagged: boolean; note: string | null }) {
+async function buildStockOptionSignal(
+  c: Candidate,
+  newsAlert: { flagged: boolean; note: string | null },
+  confluence: MacroConfluence,
+  fomcInWindow: boolean,
+) {
   const { screen } = c;
   const isFallback = !screen.strictMatch;
   const optionType: "Call" | "Put" = c.screen.direction === "Long" ? "Call" : "Put";
@@ -210,7 +232,7 @@ async function buildStockOptionSignal(c: Candidate, newsAlert: { flagged: boolea
     timeframe: `${formatExpirationLabel(expirationDate)} expiry`,
     risk: "Medium",
     analysis:
-      buildAnalysisText(c, isFallback) +
+      buildAnalysisText(c, isFallback, confluence, fomcInWindow) +
       ` Premium and Greeks below are MODELED (Black-Scholes off ${(iv * 100).toFixed(0)}% realized volatility) — there is no live options-chain data source configured, so verify real bid/ask before publishing. ` +
       projection.text +
       (newsAlert.flagged ? ` ⚠ ${newsAlert.note}` : ""),
@@ -234,7 +256,12 @@ async function buildStockOptionSignal(c: Candidate, newsAlert: { flagged: boolea
   };
 }
 
-function buildCryptoSpotSignal(c: Candidate, newsAlert: { flagged: boolean; note: string | null }) {
+function buildCryptoSpotSignal(
+  c: Candidate,
+  newsAlert: { flagged: boolean; note: string | null },
+  confluence: MacroConfluence,
+  fomcInWindow: boolean,
+) {
   const { screen } = c;
   const isFallback = !screen.strictMatch;
   const target = c.screen.direction === "Long" ? screen.resistance : screen.support;
@@ -251,7 +278,7 @@ function buildCryptoSpotSignal(c: Candidate, newsAlert: { flagged: boolean; note
     stop: `$${stop.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
     timeframe: "Daily swing",
     risk: "Medium",
-    analysis: buildAnalysisText(c, isFallback) + (newsAlert.flagged ? ` ⚠ ${newsAlert.note}` : ""),
+    analysis: buildAnalysisText(c, isFallback, confluence, fomcInWindow) + (newsAlert.flagged ? ` ⚠ ${newsAlert.note}` : ""),
     isOption: false,
     optionType: null,
     contract: null,
@@ -272,10 +299,24 @@ function buildCryptoSpotSignal(c: Candidate, newsAlert: { flagged: boolean; note
   };
 }
 
+// How much a cross-asset confluence alignment/misalignment nudges a
+// candidate's rank versus a competing setup — modest relative to typical
+// technical scores (rsiGap alone can run into the teens/20s) so a strongly
+// qualified technical setup never gets bumped by macro alone; it only
+// tips close calls between similarly-scored candidates.
+const MACRO_SCORE_WEIGHT = 1.5;
+// Flat penalty (not directional — a rate decision adds uncertainty
+// regardless of which way a candidate is positioned) applied when the
+// trade's expected window contains an FOMC decision.
+const FOMC_WINDOW_PENALTY = 1;
+
 export async function runSignalScan(): Promise<void> {
   logger.info("Auto signal scan starting");
   try {
-    const [stockSymbols] = await Promise.all([buildStockCandidateList(STOCK_UNIVERSE_LIMIT)]);
+    const [stockSymbols, confluence] = await Promise.all([
+      buildStockCandidateList(STOCK_UNIVERSE_LIMIT),
+      getMacroConfluence(),
+    ]);
 
     const [stockResults, cryptoResults] = await Promise.all([
       batchScreen(
@@ -300,13 +341,45 @@ export async function runSignalScan(): Promise<void> {
       return;
     }
 
+    logger.info(
+      { regime: confluence.regime, score: confluence.score, legs: confluence.legs },
+      "Macro confluence read for this scan",
+    );
+
+    // FOMC-window check only depends on market (the holding window is the
+    // same for every stock candidate, and separately the same for every
+    // crypto candidate), so compute it twice total rather than per-symbol —
+    // unlike earnings, FOMC dates aren't symbol-specific.
+    const now = new Date();
+    const stockWindowEnd = new Date(now);
+    stockWindowEnd.setUTCDate(stockWindowEnd.getUTCDate() + 14);
+    const cryptoWindowEnd = new Date(now);
+    cryptoWindowEnd.setUTCDate(cryptoWindowEnd.getUTCDate() + SPOT_HOLD_DAYS);
+    const stockFomcInWindow = fomcWithinRange(now, stockWindowEnd);
+    const cryptoFomcInWindow = fomcWithinRange(now, cryptoWindowEnd);
+    const fomcInWindowFor = (market: "Stocks" | "Crypto") => (market === "Stocks" ? stockFomcInWindow : cryptoFomcInWindow);
+
+    // Ranking score layers the macro confluence read and FOMC-window caution
+    // on top of the pure technical score (technicalAnalysis.ts's screen.score
+    // stays untouched — this is a selection-time nudge, not a rewrite of the
+    // technical screen itself).
+    const rankScore = (c: Candidate): number => {
+      let s = c.screen.score;
+      if (confluence.regime !== "Mixed") {
+        const aligned = (confluence.regime === "Risk-On") === (c.screen.direction === "Long");
+        s += aligned ? MACRO_SCORE_WEIGHT : -MACRO_SCORE_WEIGHT;
+      }
+      if (fomcInWindowFor(c.market)) s -= FOMC_WINDOW_PENALTY;
+      return s;
+    };
+
     const recentAssets = await getRecentAutoAssets();
     const fresh = allCandidates.filter((c) => !recentAssets.has(c.symbol));
     // If dedup would wipe out the whole pool, ignore it rather than produce nothing.
     const pool = fresh.length > 0 ? fresh : allCandidates;
 
-    const strict = pool.filter((c) => c.screen.strictMatch).sort((a, b) => b.screen.score - a.screen.score);
-    const rest = pool.filter((c) => !c.screen.strictMatch).sort((a, b) => b.screen.score - a.screen.score);
+    const strict = pool.filter((c) => c.screen.strictMatch).sort((a, b) => rankScore(b) - rankScore(a));
+    const rest = pool.filter((c) => !c.screen.strictMatch).sort((a, b) => rankScore(b) - rankScore(a));
     const ranked = [...strict, ...rest];
 
     // Cap to MAX_SIGNALS_PER_RUN, avoiding duplicate symbols within the run.
@@ -328,9 +401,12 @@ export async function runSignalScan(): Promise<void> {
       const windowEnd = new Date();
       windowEnd.setUTCDate(windowEnd.getUTCDate() + (c.market === "Stocks" ? 14 : SPOT_HOLD_DAYS));
       const newsAlert = await getNewsAlert(c.symbol, c.market, new Date(), windowEnd);
+      const fomcInWindow = fomcInWindowFor(c.market);
 
       const record =
-        c.market === "Stocks" ? await buildStockOptionSignal(c, newsAlert) : buildCryptoSpotSignal(c, newsAlert);
+        c.market === "Stocks"
+          ? await buildStockOptionSignal(c, newsAlert, confluence, fomcInWindow)
+          : buildCryptoSpotSignal(c, newsAlert, confluence, fomcInWindow);
 
       try {
         await db.insert(signalsTable).values(record as never);
