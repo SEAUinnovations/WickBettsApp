@@ -36,6 +36,13 @@ export const signalsTable = pgTable("signals", {
   openInterest: text("open_interest"),
   createdBy: text("created_by").references(() => usersTable.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // 'manual' (admin-authored) or 'auto' (produced by the scheduled signal
+  // scanner). Auto signals land as status "Watching" for admin review.
+  source: text("source").notNull().default("manual"),
+  // "Keep in mind" star: true when the trade's expected window crosses a
+  // major macro event (FOMC/CPI/jobs report) or the symbol's own earnings date.
+  newsAlert: boolean("news_alert").notNull().default(false),
+  newsAlertNote: text("news_alert_note"),
 });
 
 export const insertSignalSchema = createInsertSchema(signalsTable).omit({ createdAt: true });

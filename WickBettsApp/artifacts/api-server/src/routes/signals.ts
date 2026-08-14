@@ -190,6 +190,25 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   }
 });
 
+// DELETE /api/signals/:id — remove a signal (admin only). Used to clear out
+// auto-generated "Watching" signals an admin doesn't want to run with, same
+// as removing any manually published one.
+router.delete("/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  try {
+    const deleted = await db.delete(signalsTable).where(eq(signalsTable.id, id)).returning({ id: signalsTable.id });
+    if (deleted.length === 0) {
+      res.status(404).json({ error: "Signal not found" });
+      return;
+    }
+    logger.info({ signalId: id }, "Signal deleted");
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error(err, "Failed to delete signal");
+    res.status(500).json({ error: "Failed to delete signal" });
+  }
+});
+
 export default router;
 
 const GRACE_PERIOD_DAYS = 5;

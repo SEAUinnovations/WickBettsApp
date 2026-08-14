@@ -47,6 +47,14 @@ interface AuthContextValue {
   getToken: () => Promise<string | null>;
   /** Optimistically update notification prefs in context after a successful API call */
   updateNotificationPrefs: (prefs: { notifySignals?: boolean; notifyNews?: boolean }) => void;
+  /**
+   * (Re-)request OS notification permission and register the device's Expo
+   * push token, if not already done. Call this whenever the user turns a
+   * push toggle ON in Settings — registration at sign-in time silently does
+   * nothing if permission wasn't granted yet, so without this, flipping the
+   * toggle later doesn't actually start delivering pushes.
+   */
+  ensurePushRegistered: () => Promise<PushRegistrationResult>;
   /** Re-fetch the subscription from the API and update context (e.g. after checkout) */
   refreshSubscription: () => Promise<void>;
   /**
@@ -99,34 +107,47 @@ async function fetchSubscription(token: string): Promise<AuthSubscription | null
   }
 }
 
+export type PushRegistrationResult = 'registered' | 'denied' | 'unsupported' | 'error';
+
 /**
  * Register for Expo push notifications and store the token on the server.
- * Silently no-ops on web, without an EAS project ID, or if permissions are denied.
+ * Returns why registration did or didn't happen so callers (e.g. the
+ * Settings toggle) can react — a silent no-op previously meant flipping
+ * "Push notifications" ON in Settings looked like it worked even when the
+ * device never actually granted permission or got a token, so no push ever
+ * arrived. Native only: Expo's push token flow isn't supported on web (the
+ * SDK itself warns push token listening "is not yet fully supported on
+ * web"), so this always resolves 'unsupported' there — the toggle still
+ * saves the preference, but no device token can back it on web.
  */
-async function registerPushToken(token: string): Promise<void> {
-  if (Platform.OS === 'web') return;
+async function registerPushToken(token: string): Promise<PushRegistrationResult> {
+  if (Platform.OS === 'web') return 'unsupported';
   try {
     type GrantedResult = { granted: boolean };
     const perms = (await Notifications.getPermissionsAsync()) as unknown as GrantedResult;
-    if (!perms.granted) {
+    let granted = perms.granted;
+    if (!granted) {
       const requested = (await Notifications.requestPermissionsAsync()) as unknown as GrantedResult;
-      if (!requested.granted) return;
+      granted = requested.granted;
     }
+    if (!granted) return 'denied';
+
     const projectId =
       (Constants.expoConfig?.extra?.eas?.projectId as string | undefined) ??
       (Constants.easConfig?.projectId as string | undefined);
-    if (!projectId) return;
+    if (!projectId) return 'error';
 
     const { data: pushToken } = await Notifications.getExpoPushTokenAsync({ projectId });
-    if (!pushToken) return;
+    if (!pushToken) return 'error';
 
-    await fetch(`${API_BASE}/auth/push-token`, {
+    const res = await fetch(`${API_BASE}/auth/push-token`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ pushToken }),
     });
+    return res.ok ? 'registered' : 'error';
   } catch {
-    // Non-critical — push notifications degrade gracefully
+    return 'error';
   }
 }
 
@@ -236,6 +257,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
+
+  const ensurePushRegistered = useCallback(async (): Promise<PushRegistrationResult> => {
+    const token = await getToken();
+    if (!token) return 'error';
+    return registerPushToken(token);
+  }, [getToken]);
 
   /** Re-fetch the subscription and refresh the user (picks up hasStripeCustomer). */
   const refreshSubscription = useCallback(async () => {
@@ -406,6 +433,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       getToken,
       updateNotificationPrefs,
+      ensurePushRegistered,
       refreshSubscription,
       startCheckout,
       openBillingPortal,
@@ -421,6 +449,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       getToken,
       updateNotificationPrefs,
+      ensurePushRegistered,
       refreshSubscription,
       startCheckout,
       openBillingPortal,

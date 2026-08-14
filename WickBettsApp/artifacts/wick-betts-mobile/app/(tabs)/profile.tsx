@@ -36,7 +36,16 @@ const STATUS_LABELS: Record<string, string> = {
 export default function ProfileScreen() {
   const router = useRouter();
   const colors = useColors();
-  const { user, getToken, subscription, isLoading, signOut, updateNotificationPrefs, uploadProfileImage } = useAuth();
+  const {
+    user,
+    getToken,
+    subscription,
+    isLoading,
+    signOut,
+    updateNotificationPrefs,
+    ensurePushRegistered,
+    uploadProfileImage,
+  } = useAuth();
   const [signingOut, setSigningOut] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
@@ -89,26 +98,53 @@ export default function ProfileScreen() {
     }
   }, [getToken, updateNotificationPrefs]);
 
+  /**
+   * Turning a toggle ON only means something if the device actually has a
+   * registered push token. Registration normally happens once, silently,
+   * right after sign-in — but if the OS permission prompt was dismissed or
+   * denied at that point, nothing ever retries it, so flipping a toggle ON
+   * later in Settings looked like it worked while no push could ever
+   * actually arrive. Re-request permission (and register the token if still
+   * missing) every time a toggle is turned on, and tell the user plainly if
+   * it can't be delivered instead of leaving the switch on silently.
+   */
+  const confirmPushDeliverable = useCallback(async (): Promise<boolean> => {
+    const result = await ensurePushRegistered();
+    if (result === 'denied') {
+      Alert.alert(
+        'Notifications are off for this app',
+        'Enable notifications for Wick Betts in your device Settings to receive push alerts.',
+      );
+      return false;
+    }
+    // 'unsupported' (web) and 'error' still let the preference save — web
+    // simply can't back it with a device token yet, and a transient error
+    // shouldn't block the user from expressing their preference.
+    return true;
+  }, [ensurePushRegistered]);
+
   const handlePushMaster = useCallback(async (value: boolean) => {
+    if (value && !(await confirmPushDeliverable())) return;
     setPushMaster(value);
     const newSignals = value ? true : false;
-    const newNews = value ? notifyNews : false;
     setNotifySignals(newSignals);
     if (!value) setNotifyNews(false);
     await savePrefs({ notifySignals: newSignals, notifyNews: value ? notifyNews : false });
-  }, [notifyNews, savePrefs]);
+  }, [notifyNews, savePrefs, confirmPushDeliverable]);
 
   const handleSignalsToggle = useCallback(async (value: boolean) => {
+    if (value && !(await confirmPushDeliverable())) return;
     setNotifySignals(value);
     if (value) setPushMaster(true);
     await savePrefs({ notifySignals: value });
-  }, [savePrefs]);
+  }, [savePrefs, confirmPushDeliverable]);
 
   const handleNewsToggle = useCallback(async (value: boolean) => {
+    if (value && !(await confirmPushDeliverable())) return;
     setNotifyNews(value);
     if (value) setPushMaster(true);
     await savePrefs({ notifyNews: value });
-  }, [savePrefs]);
+  }, [savePrefs, confirmPushDeliverable]);
 
   const handlePickAvatar = useCallback(async () => {
     if (uploadingAvatar) return;

@@ -44,6 +44,11 @@ export interface Signal {
   theta?: number;
   vega?: number;
   openInterest?: string;
+  /** 'manual' (admin-authored) or 'auto' (produced by the scheduled signal scanner). */
+  source?: string;
+  /** "Keep in mind" star: trade window overlaps a major macro event or the symbol's earnings date. */
+  newsAlert?: boolean;
+  newsAlertNote?: string;
 }
 
 interface ApiSignal {
@@ -73,6 +78,9 @@ interface ApiSignal {
   theta?: number;
   vega?: number;
   openInterest?: string;
+  source?: string;
+  newsAlert?: boolean;
+  newsAlertNote?: string;
 }
 
 const STORAGE_KEY_PREFIX = '@wick-betts/signals-v2';
@@ -139,6 +147,9 @@ function mapApiSignal(s: ApiSignal): Signal {
     theta: s.theta,
     vega: s.vega,
     openInterest: s.openInterest,
+    source: s.source,
+    newsAlert: s.newsAlert,
+    newsAlertNote: s.newsAlertNote,
   };
 }
 
@@ -154,6 +165,8 @@ interface SignalContextValue {
   addSignal: (signal: SignalInput) => Promise<void>;
   /** Admin: PATCH an existing signal (full field set or a partial like status). */
   updateSignal: (id: string, patch: Partial<SignalInput>) => Promise<void>;
+  /** Admin: permanently remove a signal (e.g. dismiss an auto-generated one). */
+  deleteSignal: (id: string) => Promise<void>;
 }
 
 const SignalContext = createContext<SignalContextValue | null>(null);
@@ -270,9 +283,32 @@ export function SignalProvider({ children }: { children: ReactNode }) {
     await fetchSignals();
   }, [getToken, fetchSignals]);
 
+  const deleteSignal = useCallback(async (id: string) => {
+    const token = await getToken();
+    if (!token) throw new Error('Not authenticated');
+    const res = await fetch(`${API_BASE}/signals/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(err.error ?? 'Failed to delete signal');
+    }
+    await fetchSignals();
+  }, [getToken, fetchSignals]);
+
   const value = useMemo(
-    () => ({ signals, isLoading, isSubscriptionRequired, error, refresh: fetchSignals, addSignal, updateSignal }),
-    [signals, isLoading, isSubscriptionRequired, error, fetchSignals, addSignal, updateSignal],
+    () => ({
+      signals,
+      isLoading,
+      isSubscriptionRequired,
+      error,
+      refresh: fetchSignals,
+      addSignal,
+      updateSignal,
+      deleteSignal,
+    }),
+    [signals, isLoading, isSubscriptionRequired, error, fetchSignals, addSignal, updateSignal, deleteSignal],
   );
 
   return <SignalContext.Provider value={value}>{children}</SignalContext.Provider>;

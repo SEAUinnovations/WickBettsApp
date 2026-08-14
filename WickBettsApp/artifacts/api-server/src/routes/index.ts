@@ -9,6 +9,7 @@ import adminRouter from "./admin.js";
 import communityRouter from "./community.js";
 import watchlistRouter from "./watchlist.js";
 import mentorshipRouter from "./mentorship.js";
+import "../services/signalScanner.js"; // self-starting scheduler, side-effect import only
 
 const router = Router();
 

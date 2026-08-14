@@ -162,6 +162,9 @@ function SignalCard({
             <Text style={[styles.assetName, { color: colors.foreground }]}>{signal.asset}</Text>
             {signal.isOption ? <Tag>OPTION</Tag> : null}
             <Tag tone={tone}>{signal.status}</Tag>
+            {signal.newsAlert ? (
+              <Ionicons name="star" size={14} color="#E2C25A" accessibilityLabel="Keep in mind: near a major news event" />
+            ) : null}
           </View>
           <Text style={[styles.meta, { color: colors.mutedForeground }]}>
             {signal.market} · {signal.timeframe} · {signal.direction}
@@ -188,11 +191,22 @@ function SignalCard({
       {expanded ? (
         <>
           {signal.isOption ? <Greeks signal={signal} /> : null}
+          {signal.newsAlert ? (
+            <View style={[styles.newsAlert, { backgroundColor: '#241d0a', borderColor: '#5c4a14' }]}>
+              <Ionicons name="star" size={14} color="#E2C25A" />
+              <Text style={[styles.newsAlertText, { color: '#E2C25A' }]}>
+                {signal.newsAlertNote ?? 'Keep in mind: this window overlaps a major market news event.'}
+              </Text>
+            </View>
+          ) : null}
           <View style={[styles.analysis, { backgroundColor: colors.muted }]}>
             <Text style={[styles.analysisLabel, { color: colors.primary }]}>WICK&apos;S READ</Text>
             <Text style={[styles.analysisText, { color: colors.mutedForeground }]}>{signal.analysis}</Text>
           </View>
-          <Text style={[styles.postedAt, { color: colors.mutedForeground }]}>{signal.postedAt}</Text>
+          <Text style={[styles.postedAt, { color: colors.mutedForeground }]}>
+            {signal.postedAt}
+            {signal.source === 'auto' ? '  ·  Auto-generated scan' : ''}
+          </Text>
         </>
       ) : null}
     </Card>
@@ -268,6 +282,8 @@ const styles = StyleSheet.create({
   greekValue: { fontSize: 14, fontFamily: 'Inter_700Bold' },
   quoteRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 11 },
   quoteText: { fontSize: 10, fontFamily: 'Inter_500Medium' },
+  newsAlert: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, borderWidth: 1, borderRadius: 12, padding: 11, marginTop: 15 },
+  newsAlertText: { flex: 1, fontSize: 11, lineHeight: 16, fontFamily: 'Inter_500Medium' },
   analysis: { padding: 12, borderRadius: 12, marginTop: 15 },
   analysisLabel: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1, marginBottom: 6 },
   analysisText: { fontSize: 12, lineHeight: 18, fontFamily: 'Inter_400Regular' },

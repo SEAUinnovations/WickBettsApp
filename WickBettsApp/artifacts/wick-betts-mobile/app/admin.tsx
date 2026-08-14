@@ -4,6 +4,7 @@ import {
   Image,
   Keyboard,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -73,7 +74,7 @@ export default function AdminScreen() {
   const router = useRouter();
   const colors = useColors();
   const { getToken, user } = useAuth();
-  const { signals, addSignal, updateSignal } = useSignals();
+  const { signals, addSignal, updateSignal, deleteSignal } = useSignals();
   const [form, setForm] = useState<FormState>(initialForm);
   const [error, setError] = useState('');
   const [published, setPublished] = useState(false);
@@ -81,6 +82,7 @@ export default function AdminScreen() {
   const [scanning, setScanning] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const isAdmin = user?.role === 'admin';
 
@@ -113,6 +115,38 @@ export default function AdminScreen() {
     } finally {
       setUpdatingStatusId(null);
     }
+  };
+
+  const doDelete = async (s: Signal) => {
+    setDeletingId(s.id);
+    setError('');
+    try {
+      await deleteSignal(s.id);
+      if (editingId === s.id) cancelEdit();
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete signal. Try again.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  // Alert.alert's multi-button dialogs silently no-op on react-native-web, so
+  // use window.confirm there (same pattern as sign-out / cancel-subscription).
+  const confirmDelete = (s: Signal) => {
+    const label = s.source === 'auto' ? 'Dismiss this auto-generated signal?' : `Delete the ${s.asset} signal?`;
+    if (Platform.OS === 'web') {
+      if (window.confirm(label)) void doDelete(s);
+      return;
+    }
+    Alert.alert(
+      s.source === 'auto' ? 'Dismiss signal' : 'Delete signal',
+      `${label} This can't be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: s.source === 'auto' ? 'Dismiss' : 'Delete', style: 'destructive', onPress: () => void doDelete(s) },
+      ],
+    );
   };
 
   const isValid = useMemo(
@@ -417,20 +451,46 @@ export default function AdminScreen() {
                   <View style={styles.signalRowTitle}>
                     <Text style={[styles.signalAsset, { color: colors.foreground }]}>{s.asset}</Text>
                     {s.isOption ? <Tag>{s.optionType ?? 'OPTION'}</Tag> : null}
+                    {s.source === 'auto' ? (
+                      <View style={[styles.autoBadge, { borderColor: colors.border, backgroundColor: colors.muted }]}>
+                        <Ionicons name="flash-outline" size={10} color={colors.mutedForeground} />
+                        <Text style={[styles.autoBadgeText, { color: colors.mutedForeground }]}>AUTO</Text>
+                      </View>
+                    ) : null}
+                    {s.newsAlert ? (
+                      <Ionicons name="star" size={14} color="#E2C25A" accessibilityLabel="Keep in mind: near a major news event" />
+                    ) : null}
                   </View>
                   <Text style={[styles.signalMeta, { color: colors.mutedForeground }]}>
                     {s.market} · {s.direction} · {s.postedAt}
                   </Text>
+                  {s.newsAlert && s.newsAlertNote ? (
+                    <Text style={[styles.newsAlertNote, { color: '#E2C25A' }]}>{s.newsAlertNote}</Text>
+                  ) : null}
                 </View>
-                <Pressable
-                  onPress={() => startEdit(s)}
-                  style={[styles.editButton, { borderColor: colors.border }]}
-                  accessibilityRole="button"
-                  testID={`edit-signal-${s.id}`}
-                >
-                  <Ionicons name="create-outline" size={14} color={colors.primary} />
-                  <Text style={[styles.editButtonText, { color: colors.primary }]}>Edit</Text>
-                </Pressable>
+                <View style={styles.rowActions}>
+                  <Pressable
+                    onPress={() => startEdit(s)}
+                    style={[styles.editButton, { borderColor: colors.border }]}
+                    accessibilityRole="button"
+                    testID={`edit-signal-${s.id}`}
+                  >
+                    <Ionicons name="create-outline" size={14} color={colors.primary} />
+                    <Text style={[styles.editButtonText, { color: colors.primary }]}>Edit</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => confirmDelete(s)}
+                    disabled={deletingId === s.id}
+                    style={[styles.editButton, { borderColor: colors.border }, deletingId === s.id && { opacity: 0.5 }]}
+                    accessibilityRole="button"
+                    testID={`delete-signal-${s.id}`}
+                  >
+                    <Ionicons name="trash-outline" size={14} color={colors.destructive} />
+                    <Text style={[styles.editButtonText, { color: colors.destructive }]}>
+                      {deletingId === s.id ? 'Removing…' : 'Delete'}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
               <View style={styles.statusRow}>
                 {STATUS_OPTIONS.map((st) => {
@@ -581,11 +641,15 @@ const styles = StyleSheet.create({
   listHeading: { marginTop: 28 },
   signalRow: { marginBottom: 12 },
   signalRowTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  signalRowTitle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  signalRowTitle: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   signalAsset: { fontSize: 14, fontFamily: 'Inter_700Bold' },
   signalMeta: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 4 },
+  newsAlertNote: { fontSize: 10, fontFamily: 'Inter_600SemiBold', marginTop: 4 },
+  rowActions: { flexDirection: 'row', gap: 7 },
   editButton: { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 7 },
   editButtonText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
+  autoBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, borderWidth: 1, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 3 },
+  autoBadgeText: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 0.5 },
   statusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 14 },
   statusChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
   statusChipText: { fontSize: 11, fontFamily: 'Inter_700Bold' },

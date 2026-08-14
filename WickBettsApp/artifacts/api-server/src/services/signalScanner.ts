@@ -1,0 +1,368 @@
+import { randomUUID } from "crypto";
+import { and, eq, gte, inArray } from "drizzle-orm";
+import { db, signalsTable } from "../lib/db.js";
+import { logger } from "../lib/logger.js";
+import { buildStockCandidateList } from "./stockUniverse.js";
+import { fetchStockDailyBars, fetchCryptoDailyBars } from "./marketHistory.js";
+import { screenSymbol, type ScreenResult } from "./technicalAnalysis.js";
+import { blackScholes, pickExpiration, pickStrike, formatExpirationLabel, formatExpirationCode } from "./optionsModel.js";
+import { getNewsAlert } from "./economicCalendar.js";
+
+/**
+ * The automated signal scanner.
+ *
+ * Runs a technical screen — RSI(14) oversold/overbought crossed with
+ * proximity to a rolling 20-day support/resistance level and above-average
+ * volume — across a curated universe (popular stocks priced over $90 that
+ * sit outside the S&P 500/Nasdaq-100, plus the most popular crypto assets),
+ * picks the 1-2 best-fitting setups, and inserts them as "Watching" signals
+ * for an admin to review, edit, or delete. Stock setups become a modeled
+ * 7-14 DTE options play (no live options-chain data source is configured —
+ * see optionsModel.ts); crypto setups become a spot Long/Short call.
+ *
+ * Every external data dependency here (Nasdaq screener/historical, Wikipedia
+ * index constituents, CoinGecko history, Nasdaq earnings calendar) degrades
+ * gracefully on failure — a bad fetch just removes that symbol from
+ * consideration rather than crashing the run.
+ */
+
+const CRYPTO_UNIVERSE = [
+  { symbol: "BTC", coingeckoId: "bitcoin" },
+  { symbol: "ETH", coingeckoId: "ethereum" },
+  { symbol: "SOL", coingeckoId: "solana" },
+  { symbol: "XRP", coingeckoId: "ripple" },
+  { symbol: "DOGE", coingeckoId: "dogecoin" },
+];
+
+const MIN_SIGNALS_PER_RUN = 1;
+const MAX_SIGNALS_PER_RUN = 2;
+const STOCK_UNIVERSE_LIMIT = 60;
+const FETCH_BATCH_SIZE = 10;
+const DEDUP_WINDOW_DAYS = 14;
+const SPOT_HOLD_DAYS = 10; // assumed holding window for crypto/spot star-flag checks
+
+interface Candidate {
+  symbol: string;
+  market: "Stocks" | "Crypto";
+  screen: ScreenResult;
+}
+
+async function batchScreen<T>(
+  items: T[],
+  fetchBars: (item: T) => Promise<{ date: string; open: number; high: number; low: number; close: number; volume: number }[]>,
+  toSymbol: (item: T) => string,
+): Promise<Array<{ symbol: string; screen: ScreenResult }>> {
+  const out: Array<{ symbol: string; screen: ScreenResult }> = [];
+  for (let i = 0; i < items.length; i += FETCH_BATCH_SIZE) {
+    const batch = items.slice(i, i + FETCH_BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (item) => {
+        const bars = await fetchBars(item);
+        const screen = screenSymbol(bars);
+        return screen ? { symbol: toSymbol(item), screen } : null;
+      }),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value) out.push(r.value);
+    }
+  }
+  return out;
+}
+
+async function getRecentAutoAssets(): Promise<Set<string>> {
+  const cutoff = new Date(Date.now() - DEDUP_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  try {
+    const rows = await db
+      .select({ asset: signalsTable.asset })
+      .from(signalsTable)
+      .where(
+        and(
+          eq(signalsTable.source, "auto"),
+          inArray(signalsTable.status, ["Active", "Watching"]),
+          gte(signalsTable.createdAt, cutoff),
+        ),
+      );
+    return new Set(rows.map((r) => r.asset));
+  } catch (err) {
+    logger.warn({ err }, "Could not load recent auto-signal assets for dedup — proceeding without dedup this run");
+    return new Set();
+  }
+}
+
+/** Qualitative read on how extreme the RSI reading is, for the thesis narrative. */
+function rsiMagnitude(rsi: number, direction: "Long" | "Short"): string {
+  if (direction === "Long") {
+    if (rsi <= 20) return "deeply oversold";
+    if (rsi <= 30) return "oversold";
+    return "approaching oversold";
+  }
+  if (rsi >= 80) return "deeply overbought";
+  if (rsi >= 70) return "overbought";
+  return "approaching overbought";
+}
+
+function buildAnalysisText(c: Candidate, isFallback: boolean): string {
+  const { screen } = c;
+  const setupLabel = c.screen.direction === "Long" ? "at support" : "at resistance";
+  const level = c.screen.direction === "Long" ? screen.support : screen.resistance;
+  const levelLabel = c.screen.direction === "Long" ? "support" : "resistance";
+  const prefix = isFallback
+    ? `Automated scan (best available — no setup fully cleared the strict oversold/overbought + support/resistance + volume thresholds today): `
+    : `Automated scan: `;
+
+  const trendNote =
+    screen.trendAligned === null
+      ? ""
+      : screen.trendAligned
+        ? ` Trend context: price is on the ${screen.direction === "Long" ? "right" : "wrong"} side of its 50-day average, ${screen.direction === "Long" ? "consistent with a dip-buy in an uptrend" : "consistent with a fade in a downtrend"} — adds conviction.`
+        : ` Trend context: price is against its 50-day average (${screen.direction === "Long" ? "downtrend" : "uptrend"}) — this is a counter-trend bounce/fade play, not a trend-following one, so size and conviction should reflect that.`;
+
+  return (
+    `${prefix}RSI(14) at ${screen.rsi.toFixed(1)} — ${rsiMagnitude(screen.rsi, screen.direction)}, ` +
+    `${setupLabel}. Price $${screen.price.toFixed(2)} vs ${levelLabel} $${level.toFixed(2)} ` +
+    `(${(screen.proximityPct * 100).toFixed(1)}% away). ` +
+    `Volume running ${screen.volumeRatio.toFixed(2)}x the 20-day average${screen.volumeRatio >= 1.3 ? " — real participation behind the move, not a low-volume drift." : "."}` +
+    trendNote +
+    ` Generated by the signal scanner — review before promoting to Active.`
+  );
+}
+
+/**
+ * A simple "price/cost projector" for the options play: re-prices the same
+ * contract at a few what-if checkpoints (flat/time-decay-only, halfway to
+ * target, full target, and stop) so the thesis shows how the position's
+ * value is expected to move with the underlying and with time/theta —
+ * not just a single entry number. These are Black-Scholes estimates off
+ * modeled IV, not a live options-chain projection tool, so it's labeled
+ * accordingly wherever it's shown.
+ */
+function buildProjectionNote(
+  optionType: "Call" | "Put",
+  direction: "Long" | "Short",
+  spot: number,
+  strike: number,
+  dte: number,
+  iv: number,
+  targetSpot: number,
+  stopSpot: number,
+): { text: string; targetGreeks: ReturnType<typeof blackScholes>; stopGreeks: ReturnType<typeof blackScholes> } {
+  const entry = blackScholes(spot, strike, dte, iv, optionType);
+  const halfwaySpot = (spot + targetSpot) / 2;
+  const flat = blackScholes(spot, strike, Math.max(Math.round(dte / 2), 1), iv, optionType);
+  const halfway = blackScholes(halfwaySpot, strike, Math.max(Math.round(dte * 0.4), 1), iv, optionType);
+  const targetGreeks = blackScholes(targetSpot, strike, Math.max(dte - 3, 1), iv, optionType);
+  const stopGreeks = blackScholes(stopSpot, strike, Math.max(dte - 1, 1), iv, optionType);
+
+  const pct = (from: number) => (((from - entry.price) / entry.price) * 100).toFixed(0);
+
+  const text =
+    `Projection (estimates only — actual pricing will vary with real IV/skew): ` +
+    `if the underlying stays flat, ~$${flat.price.toFixed(2)} at the halfway mark (${pct(flat.price)}% from theta decay alone). ` +
+    `Halfway to target, ~$${halfway.price.toFixed(2)} (${pct(halfway.price)}%). ` +
+    `At target, ~$${targetGreeks.price.toFixed(2)} (${pct(targetGreeks.price)}%). ` +
+    `At stop, ~$${stopGreeks.price.toFixed(2)} (${pct(stopGreeks.price)}%). ` +
+    `Delta ${entry.delta.toFixed(2)} and theta $${entry.theta.toFixed(2)}/day at entry — expect the contract to move roughly $${Math.abs(entry.delta).toFixed(2)} per $1 the underlying moves, decaying by about $${Math.abs(entry.theta).toFixed(2)}/day if price sits still.`;
+
+  return { text, targetGreeks, stopGreeks };
+}
+
+async function buildStockOptionSignal(c: Candidate, newsAlert: { flagged: boolean; note: string | null }) {
+  const { screen } = c;
+  const isFallback = !screen.strictMatch;
+  const optionType: "Call" | "Put" = c.screen.direction === "Long" ? "Call" : "Put";
+  const expirationDate = pickExpiration(new Date(), 7, 14);
+  const dte = Math.round((expirationDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+  const strike = pickStrike(screen.price, c.screen.direction);
+  const iv = screen.realizedVol && screen.realizedVol > 0 ? screen.realizedVol : 0.4;
+
+  const entryGreeks = blackScholes(screen.price, strike, dte, iv, optionType);
+  // Target: underlying reaches the opposite level (resistance for a call
+  // setup, support for a put setup), option re-priced at that spot with a
+  // few fewer days on the clock. Stop: underlying breaks back through the
+  // level that defined the setup in the first place.
+  const targetSpot = c.screen.direction === "Long" ? screen.resistance : screen.support;
+  const stopSpot =
+    c.screen.direction === "Long" ? screen.support * 0.985 : screen.resistance * 1.015;
+
+  const projection = buildProjectionNote(
+    optionType,
+    c.screen.direction,
+    screen.price,
+    strike,
+    dte,
+    iv,
+    targetSpot,
+    stopSpot,
+  );
+  const targetGreeks = projection.targetGreeks;
+  const stopGreeks = projection.stopGreeks;
+
+  const contract = `${c.symbol} ${formatExpirationCode(expirationDate)} ${strike} ${optionType === "Call" ? "C" : "P"}`;
+
+  return {
+    id: randomUUID(),
+    asset: c.symbol,
+    market: "Stocks" as const,
+    direction: c.screen.direction,
+    status: "Watching" as const,
+    entry: `$${entryGreeks.price.toFixed(2)}`,
+    target: `$${targetGreeks.price.toFixed(2)}`,
+    stop: `$${stopGreeks.price.toFixed(2)}`,
+    timeframe: `${formatExpirationLabel(expirationDate)} expiry`,
+    risk: "Medium",
+    analysis:
+      buildAnalysisText(c, isFallback) +
+      ` Premium and Greeks below are MODELED (Black-Scholes off ${(iv * 100).toFixed(0)}% realized volatility) — there is no live options-chain data source configured, so verify real bid/ask before publishing. ` +
+      projection.text +
+      (newsAlert.flagged ? ` ⚠ ${newsAlert.note}` : ""),
+    isOption: true,
+    optionType,
+    contract,
+    expiration: formatExpirationLabel(expirationDate),
+    strike: `$${strike.toFixed(2)}`,
+    premium: `$${entryGreeks.price.toFixed(2)}`,
+    bid: `$${Math.max(entryGreeks.price - 0.05, 0.01).toFixed(2)}`,
+    ask: `$${(entryGreeks.price + 0.05).toFixed(2)}`,
+    impliedVolatility: `${(iv * 100).toFixed(1)}%`,
+    delta: Number(entryGreeks.delta.toFixed(3)),
+    gamma: Number(entryGreeks.gamma.toFixed(4)),
+    theta: Number(entryGreeks.theta.toFixed(3)),
+    vega: Number(entryGreeks.vega.toFixed(3)),
+    openInterest: null,
+    source: "auto" as const,
+    newsAlert: newsAlert.flagged,
+    newsAlertNote: newsAlert.note,
+  };
+}
+
+function buildCryptoSpotSignal(c: Candidate, newsAlert: { flagged: boolean; note: string | null }) {
+  const { screen } = c;
+  const isFallback = !screen.strictMatch;
+  const target = c.screen.direction === "Long" ? screen.resistance : screen.support;
+  const stop = c.screen.direction === "Long" ? screen.support * 0.97 : screen.resistance * 1.03;
+
+  return {
+    id: randomUUID(),
+    asset: c.symbol,
+    market: "Crypto" as const,
+    direction: c.screen.direction,
+    status: "Watching" as const,
+    entry: `$${screen.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+    target: `$${target.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+    stop: `$${stop.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+    timeframe: "Daily swing",
+    risk: "Medium",
+    analysis: buildAnalysisText(c, isFallback) + (newsAlert.flagged ? ` ⚠ ${newsAlert.note}` : ""),
+    isOption: false,
+    optionType: null,
+    contract: null,
+    expiration: null,
+    strike: null,
+    premium: null,
+    bid: null,
+    ask: null,
+    impliedVolatility: null,
+    delta: null,
+    gamma: null,
+    theta: null,
+    vega: null,
+    openInterest: null,
+    source: "auto" as const,
+    newsAlert: newsAlert.flagged,
+    newsAlertNote: newsAlert.note,
+  };
+}
+
+export async function runSignalScan(): Promise<void> {
+  logger.info("Auto signal scan starting");
+  try {
+    const [stockSymbols] = await Promise.all([buildStockCandidateList(STOCK_UNIVERSE_LIMIT)]);
+
+    const [stockResults, cryptoResults] = await Promise.all([
+      batchScreen(
+        stockSymbols,
+        (symbol) => fetchStockDailyBars(symbol),
+        (symbol) => symbol,
+      ),
+      batchScreen(
+        CRYPTO_UNIVERSE,
+        (c) => fetchCryptoDailyBars(c.coingeckoId),
+        (c) => c.symbol,
+      ),
+    ]);
+
+    const allCandidates: Candidate[] = [
+      ...stockResults.map((r) => ({ symbol: r.symbol, market: "Stocks" as const, screen: r.screen })),
+      ...cryptoResults.map((r) => ({ symbol: r.symbol, market: "Crypto" as const, screen: r.screen })),
+    ];
+
+    if (allCandidates.length === 0) {
+      logger.warn("Auto signal scan found zero usable candidates (all data fetches failed) — no signals created this run");
+      return;
+    }
+
+    const recentAssets = await getRecentAutoAssets();
+    const fresh = allCandidates.filter((c) => !recentAssets.has(c.symbol));
+    // If dedup would wipe out the whole pool, ignore it rather than produce nothing.
+    const pool = fresh.length > 0 ? fresh : allCandidates;
+
+    const strict = pool.filter((c) => c.screen.strictMatch).sort((a, b) => b.screen.score - a.screen.score);
+    const rest = pool.filter((c) => !c.screen.strictMatch).sort((a, b) => b.screen.score - a.screen.score);
+    const ranked = [...strict, ...rest];
+
+    // Cap to MAX_SIGNALS_PER_RUN, avoiding duplicate symbols within the run.
+    const chosen: Candidate[] = [];
+    const usedSymbols = new Set<string>();
+    for (const c of ranked) {
+      if (chosen.length >= MAX_SIGNALS_PER_RUN) break;
+      if (usedSymbols.has(c.symbol)) continue;
+      chosen.push(c);
+      usedSymbols.add(c.symbol);
+    }
+
+    if (chosen.length < MIN_SIGNALS_PER_RUN && ranked.length > 0) {
+      chosen.push(ranked[0]);
+    }
+
+    const inserted: string[] = [];
+    for (const c of chosen) {
+      const windowEnd = new Date();
+      windowEnd.setUTCDate(windowEnd.getUTCDate() + (c.market === "Stocks" ? 14 : SPOT_HOLD_DAYS));
+      const newsAlert = await getNewsAlert(c.symbol, c.market, new Date(), windowEnd);
+
+      const record =
+        c.market === "Stocks" ? await buildStockOptionSignal(c, newsAlert) : buildCryptoSpotSignal(c, newsAlert);
+
+      try {
+        await db.insert(signalsTable).values(record as never);
+        inserted.push(c.symbol);
+      } catch (err) {
+        logger.error({ err, symbol: c.symbol }, "Failed to insert auto-generated signal");
+      }
+    }
+
+    logger.info({ inserted, scanned: allCandidates.length }, "Auto signal scan complete");
+  } catch (err) {
+    logger.error({ err }, "Auto signal scan failed");
+  }
+}
+
+const RUN_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000; // every 2 days
+let schedulerStarted = false;
+
+export function startSignalScanScheduler(): void {
+  if (schedulerStarted) return;
+  schedulerStarted = true;
+
+  // Run once shortly after boot so the Signals tab has real data immediately
+  // instead of waiting up to 2 days for the first scheduled pass, then every
+  // 2 days after that.
+  setTimeout(() => {
+    void runSignalScan();
+  }, 20_000);
+  setInterval(() => {
+    void runSignalScan();
+  }, RUN_INTERVAL_MS);
+}
+
+startSignalScanScheduler();
