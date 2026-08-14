@@ -197,6 +197,60 @@ export async function fanOutNewsEmail(alert: {
   }
 }
 
+/** "2026-08-17" -> "Monday, August 17" — used by the mentorship emails below. */
+function formatSessionDate(isoDate: string): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  if (isNaN(d.getTime())) return isoDate;
+  return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
+}
+
+interface MentorshipSessionSummary {
+  sessionDate: string; // ISO date, e.g. "2026-08-17"
+  slot: string; // e.g. "10:00 AM"
+}
+
+/** Fired right after a booking is confirmed (routes/mentorship.ts POST /bookings). */
+export async function sendMentorshipBookingConfirmation(email: string, session: MentorshipSessionSummary): Promise<void> {
+  try {
+    const when = `${formatSessionDate(session.sessionDate)} at ${session.slot} Central`;
+    const subject = `Confirmed: your mentorship session on ${when}`;
+    const bodyHtml = `<p>Your one-hour mentorship session is confirmed for <strong>${escapeHtml(when)}</strong>.</p><p>We'll send a reminder the day before. Need to change plans? You can cancel or rebook anytime from the Mentorship tab.</p>`;
+    const text = `Your mentorship session is confirmed for ${when}.\nWe'll send a reminder the day before. You can cancel or rebook anytime from the Mentorship tab.`;
+    const html = wrapHtml(subject, bodyHtml, "View booking", "/mentorship");
+    await sendBatch([{ to: email, subject, html, text }]);
+  } catch (err) {
+    logger.error({ err }, "Mentorship booking confirmation email failed");
+  }
+}
+
+/** Fired by the reminder scheduler (services/mentorshipReminders.ts) roughly a day out from the session. */
+export async function sendMentorshipReminder(email: string, session: MentorshipSessionSummary): Promise<void> {
+  try {
+    const when = `${formatSessionDate(session.sessionDate)} at ${session.slot} Central`;
+    const subject = `Reminder: mentorship session tomorrow at ${session.slot}`;
+    const bodyHtml = `<p>This is a reminder that your one-hour mentorship session is coming up: <strong>${escapeHtml(when)}</strong>.</p><p>Come with real setups or questions — the more specific, the more useful the hour is.</p>`;
+    const text = `Reminder: your mentorship session is coming up on ${when}.\nCome with real setups or questions — the more specific, the more useful the hour is.`;
+    const html = wrapHtml(subject, bodyHtml, "View booking", "/mentorship");
+    await sendBatch([{ to: email, subject, html, text }]);
+  } catch (err) {
+    logger.error({ err }, "Mentorship reminder email failed");
+  }
+}
+
+/** Fired when a member cancels a booking (routes/mentorship.ts DELETE /bookings/:id). */
+export async function sendMentorshipCancellation(email: string, session: MentorshipSessionSummary): Promise<void> {
+  try {
+    const when = `${formatSessionDate(session.sessionDate)} at ${session.slot} Central`;
+    const subject = `Cancelled: your mentorship session on ${when}`;
+    const bodyHtml = `<p>Your mentorship session for <strong>${escapeHtml(when)}</strong> has been cancelled.</p><p>You can book a new session anytime from the Mentorship tab.</p>`;
+    const text = `Your mentorship session for ${when} has been cancelled.\nYou can book a new session anytime from the Mentorship tab.`;
+    const html = wrapHtml(subject, bodyHtml, "Book a session", "/mentorship");
+    await sendBatch([{ to: email, subject, html, text }]);
+  } catch (err) {
+    logger.error({ err }, "Mentorship cancellation email failed");
+  }
+}
+
 /** Direct single-recipient send, used outside the fan-out paths (e.g. future
  *  account-level notices). Kept small and generic so it doesn't need its own
  *  ADR entry — same transport as the two fan-out helpers above. */

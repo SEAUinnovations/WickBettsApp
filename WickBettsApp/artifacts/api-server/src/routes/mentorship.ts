@@ -4,6 +4,7 @@ import { eq, and, desc } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
+import { sendMentorshipBookingConfirmation, sendMentorshipCancellation } from "../utils/emailNotifications.js";
 
 const GRACE_PERIOD_DAYS = 5;
 
@@ -57,6 +58,11 @@ const SLOT_TIMES: Record<(typeof DAY_ORDER)[number], string[]> = {
   TUE: ["11:00 AM", "3:00 PM"],
   WED: ["9:00 AM"],
 };
+// How many upcoming occurrences of each weekday to expose as bookable —
+// e.g. 4 gives roughly a month of Mon/Tue/Wed dates to pick from instead of
+// just the single nearest one, so the client can render an actual calendar
+// of choices rather than three fixed rows.
+const WEEKS_AHEAD = 4;
 
 function nextDateForWeekday(from: Date, targetDow: number): Date {
   const d = new Date(from);
@@ -66,19 +72,52 @@ function nextDateForWeekday(from: Date, targetDow: number): Date {
   return d;
 }
 
-/** Returns the upcoming Mon/Tue/Wed session slots, computed relative to now. */
+/** The Monday (00:00) of the week containing `date` — used to group bookable days into week sections. */
+function mondayOf(date: Date): Date {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const dow = d.getDay(); // 0 = Sun .. 6 = Sat
+  const diffToMonday = (dow + 6) % 7; // Mon -> 0, Tue -> 1, ... Sun -> 6
+  d.setDate(d.getDate() - diffToMonday);
+  return d;
+}
+
+/**
+ * Returns the next `WEEKS_AHEAD` occurrences of each bookable weekday
+ * (Mon/Tue/Wed), flattened and sorted into one date-ascending list — the
+ * bookable calendar. Each row also carries `weekStart` (that week's Monday,
+ * ISO date) so the client can group rows into "This week" / "Week of ..."
+ * sections instead of one long flat list.
+ */
 function getUpcomingSlots() {
   const now = new Date();
-  return DAY_ORDER.map((day) => {
-    const date = nextDateForWeekday(now, WEEKDAY_NUMBER[day]);
-    const iso = date.toISOString().slice(0, 10);
-    return {
-      day,
-      date: iso,
-      dateLabel: String(date.getDate()),
-      slots: SLOT_TIMES[day],
-    };
-  });
+  const rows: {
+    day: (typeof DAY_ORDER)[number];
+    date: string;
+    dateLabel: string;
+    weekdayLabel: string;
+    weekStart: string;
+    slots: string[];
+  }[] = [];
+
+  for (const day of DAY_ORDER) {
+    const first = nextDateForWeekday(now, WEEKDAY_NUMBER[day]);
+    for (let i = 0; i < WEEKS_AHEAD; i++) {
+      const date = new Date(first);
+      date.setDate(date.getDate() + i * 7);
+      rows.push({
+        day,
+        date: date.toISOString().slice(0, 10),
+        dateLabel: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        weekdayLabel: date.toLocaleDateString("en-US", { weekday: "long" }),
+        weekStart: mondayOf(date).toISOString().slice(0, 10),
+        slots: SLOT_TIMES[day],
+      });
+    }
+  }
+
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+  return rows;
 }
 
 const router = Router();

@@ -165,9 +165,13 @@ export default function NewsScreen() {
     try {
       const token = await getToken();
       if (!token) throw new Error('Not authenticated');
-      const res = await fetch(`${API_BASE}/news/articles/${encodeURIComponent(article.id)}`, {
+      const res = await fetch(`${API_BASE}/news/articles`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ sourceArticleId: article.id }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       if (editingId === article.id) setEditingId(null);

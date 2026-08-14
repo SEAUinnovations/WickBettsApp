@@ -404,17 +404,29 @@ router.patch("/overrides", requireAuth, requireAdmin, async (req: Request, res: 
   }
 });
 
-// DELETE /api/news/articles/:id — remove an article from the member feed
-// (admin only). Articles are sourced live from RSS, not owned rows in our
-// DB, so this is a soft delete: it upserts a `hidden: true` override keyed
-// by the article's source id (same id scheme as GET /feed and PATCH
-// /overrides), and GET /feed filters any hidden article out for everyone,
-// admins included — same end result as the hard-delete used for signals.
-router.delete("/articles/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+// DELETE /api/news/articles — remove an article from the member feed (admin
+// only). Article ids are RSS-sourced and are frequently full URLs (see
+// fetchRss: `id: link || title`), so — same as PATCH /overrides just above
+// — the id travels in the JSON body rather than a URL path segment. A path
+// param would need round-tripping through encodeURIComponent on the way in
+// and Express's automatic decoding on the way out; an extra decode on top of
+// that (which a path-param version of this route previously did) can mangle
+// any id that itself contains a "%" (common in URLs with encoded query
+// params), silently saving the hidden-flag under a key that never matches
+// the real article — so the delete appears to succeed but nothing actually
+// disappears from the feed. The body-based approach sidesteps that class of
+// bug entirely.
+//
+// This is a soft delete: it upserts a `hidden: true` override keyed by the
+// article's source id (same id scheme as GET /feed and PATCH /overrides),
+// and GET /feed filters any hidden article out for everyone, admins
+// included — same end result as the hard-delete used for signals.
+router.delete("/articles", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const user = req.dbUser!;
-  const sourceArticleId = decodeURIComponent(String(req.params.id ?? "")).trim();
+  const { sourceArticleId: rawId } = req.body as { sourceArticleId?: string };
+  const sourceArticleId = typeof rawId === "string" ? rawId.trim() : "";
   if (!sourceArticleId) {
-    res.status(400).json({ error: "Article id is required" });
+    res.status(400).json({ error: "sourceArticleId is required" });
     return;
   }
 
