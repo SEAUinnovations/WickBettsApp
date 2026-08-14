@@ -263,6 +263,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(err.error ?? 'Could not start checkout. Please try again.');
       }
       const { url } = (await res.json()) as { url: string };
+      if (Platform.OS === 'web') {
+        // WebBrowser.openBrowserAsync opens via window.open() on web, which
+        // browsers treat as a popup — since it fires after an `await fetch`,
+        // it's no longer inside the original click's user-gesture window, so
+        // popup blockers silently swallow it and the button appears to do
+        // nothing. A full-page redirect has no such restriction, and Stripe
+        // Checkout is designed to redirect back afterward anyway.
+        if (typeof window !== 'undefined') {
+          window.location.href = url;
+        }
+        return;
+      }
       await WebBrowser.openBrowserAsync(url);
       // Refresh subscription state once the member returns from the browser
       await refreshSubscription();
@@ -282,6 +294,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(err.error ?? 'Could not open the billing portal. Please try again.');
     }
     const { url } = (await res.json()) as { url: string };
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined') {
+        window.location.href = url;
+      }
+      return;
+    }
     await WebBrowser.openBrowserAsync(url);
     await refreshSubscription();
   }, [getToken, refreshSubscription]);

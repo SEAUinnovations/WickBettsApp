@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Platform, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -139,17 +139,29 @@ export default function ProfileScreen() {
     }
   }, [uploadingAvatar, uploadProfileImage]);
 
+  const doSignOut = async () => {
+    setSigningOut(true);
+    await signOut();
+    setSigningOut(false);
+  };
+
   const handleSignOut = () => {
+    // react-native-web's Alert.alert doesn't reliably support multi-button
+    // dialogs with onPress callbacks — on web it can silently no-op, which is
+    // why the confirmation (and the sign-out itself) never appeared. Use the
+    // browser's native confirm() on web instead.
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm('Are you sure you want to sign out?')) {
+        void doSignOut();
+      }
+      return;
+    }
     Alert.alert('Sign out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Sign out',
         style: 'destructive',
-        onPress: async () => {
-          setSigningOut(true);
-          await signOut();
-          setSigningOut(false);
-        },
+        onPress: () => void doSignOut(),
       },
     ]);
   };

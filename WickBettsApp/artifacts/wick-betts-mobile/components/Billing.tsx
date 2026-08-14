@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { PrimaryButton } from '@/components/WickUI';
 import { useColors } from '@/hooks/useColors';
@@ -202,16 +202,21 @@ export function CancelSubscriptionButton({ renewalDate }: { renewalDate?: string
   const busy = loading === 'cancel';
 
   const confirmCancel = () => {
-    Alert.alert(
-      'Cancel subscription?',
-      renewalDate
-        ? `You'll keep access until ${renewalDate}, then your subscription will end. You can undo this anytime before then.`
-        : "You'll keep access until the end of your current billing period, then your subscription will end.",
-      [
-        { text: 'Keep subscription', style: 'cancel' },
-        { text: 'Cancel subscription', style: 'destructive', onPress: () => void runCancel() },
-      ],
-    );
+    const message = renewalDate
+      ? `You'll keep access until ${renewalDate}, then your subscription will end. You can undo this anytime before then.`
+      : "You'll keep access until the end of your current billing period, then your subscription will end.";
+    // react-native-web's Alert.alert doesn't reliably support multi-button
+    // dialogs with onPress callbacks — same issue as the sign-out confirm.
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(`Cancel subscription?\n\n${message}`)) {
+        void runCancel();
+      }
+      return;
+    }
+    Alert.alert('Cancel subscription?', message, [
+      { text: 'Keep subscription', style: 'cancel' },
+      { text: 'Cancel subscription', style: 'destructive', onPress: () => void runCancel() },
+    ]);
   };
 
   return (
