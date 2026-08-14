@@ -117,7 +117,7 @@ export interface ScreenResult {
   score: number;
 }
 
-const RSI_OVERSOLD = 30;
+const RSI_OVERSOLD = 35;
 const RSI_OVERBOUGHT = 70;
 const PROXIMITY_TOLERANCE = 0.02; // within 2% of the level
 const VOLUME_RATIO_MIN = 1.3; // at least 30% above the 20-day average
@@ -126,9 +126,15 @@ const VOLUME_RATIO_MIN = 1.3; // at least 30% above the 20-day average
  * Screens a single symbol's daily bars for the "oversold at support" (bullish)
  * or "overbought at resistance" (bearish) setup described by the trading
  * criteria: RSI extreme + price near a daily support/resistance level +
- * above-average volume. Returns the best-fitting direction (whichever side
- * is closer to qualifying) so the caller can still rank near-misses when
- * nothing in the universe strictly qualifies on a given scan.
+ * above-average volume.
+ *
+ * Hard RSI gate: a symbol only becomes a candidate at all when RSI(14) is at
+ * or below 35 (oversold — bullish direction) or above 70 (overbought —
+ * bearish direction). Anything in between (35 < RSI <= 70) is skipped
+ * entirely, regardless of how well it scores on proximity/volume — RSI is a
+ * required filter here, not just a scoring input. Since the two bands don't
+ * overlap, whichever one the reading falls into determines the direction;
+ * there is no more "pick whichever side scores better" fallback.
  */
 export function screenSymbol(bars: DailyBar[]): ScreenResult | null {
   if (bars.length < 25) return null;
@@ -146,38 +152,27 @@ export function screenSymbol(bars: DailyBar[]): ScreenResult | null {
 
   if (rsi === null || !sr || avgVolume === null || !avgVolume) return null;
 
+  const isOversold = rsi <= RSI_OVERSOLD;
+  const isOverbought = rsi > RSI_OVERBOUGHT;
+  if (!isOversold && !isOverbought) return null;
+
   const volumeRatio = currentVolume / avgVolume;
+  const direction: "Long" | "Short" = isOversold ? "Long" : "Short";
+  const rsiGap = isOversold ? RSI_OVERSOLD - rsi : rsi - RSI_OVERBOUGHT; // always >= 0 given the gate above
+  const proximityPct =
+    direction === "Long"
+      ? Math.abs(price - sr.support) / sr.support
+      : Math.abs(price - sr.resistance) / sr.resistance;
 
-  // Distance from oversold/support (bullish case)
-  const bullishRsiGap = RSI_OVERSOLD - rsi; // positive = actually oversold
-  const bullishProximity = Math.abs(price - sr.support) / sr.support;
-
-  // Distance from overbought/resistance (bearish case)
-  const bearishRsiGap = rsi - RSI_OVERBOUGHT; // positive = actually overbought
-  const bearishProximity = Math.abs(price - sr.resistance) / sr.resistance;
-
-  // Score each side; higher is a "more extreme" / more interesting setup.
-  // RSI gap dominates (it's the primary oversold/overbought signal), proximity
-  // and volume are secondary confirmations baked into the same score so a
-  // deeply oversold stock miles from support still ranks below one that's
-  // oversold AND sitting right on the level with volume behind it.
-  const scoreFor = (rsiGap: number, proximity: number) => {
-    const proximityScore = Math.max(0, 1 - proximity / PROXIMITY_TOLERANCE) * 5;
-    const volumeScore = Math.max(0, volumeRatio - 1) * 5;
-    return rsiGap + proximityScore + volumeScore;
-  };
-
-  const bullishScore = scoreFor(bullishRsiGap, bullishProximity);
-  const bearishScore = scoreFor(bearishRsiGap, bearishProximity);
-
-  const isBullishBetter = bullishScore >= bearishScore;
-  const direction: "Long" | "Short" = isBullishBetter ? "Long" : "Short";
-  const rsiGap = isBullishBetter ? bullishRsiGap : bearishRsiGap;
-  const proximityPct = isBullishBetter ? bullishProximity : bearishProximity;
-  const score = isBullishBetter ? bullishScore : bearishScore;
+  // Score is now purely a ranking signal among already-qualifying candidates
+  // (RSI gap dominates, proximity/volume are secondary confirmations) — the
+  // RSI requirement itself is enforced by the gate above, not by this score.
+  const proximityScore = Math.max(0, 1 - proximityPct / PROXIMITY_TOLERANCE) * 5;
+  const volumeScore = Math.max(0, volumeRatio - 1) * 5;
+  const score = rsiGap + proximityScore + volumeScore;
 
   const strictMatch =
-    rsiGap >= 0 && proximityPct <= PROXIMITY_TOLERANCE && volumeRatio >= VOLUME_RATIO_MIN;
+    proximityPct <= PROXIMITY_TOLERANCE && volumeRatio >= VOLUME_RATIO_MIN;
 
   // Trend alignment: a Long (bullish, oversold-bounce) setup carries more
   // conviction when the 50-day trend is still up (dip-buy) than when it's

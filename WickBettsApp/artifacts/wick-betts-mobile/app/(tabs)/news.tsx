@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Linking,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,6 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { Card, Header, SectionLabel, Tag } from '@/components/WickUI';
 import { LapsedRecovery, SubscribePanel } from '@/components/Billing';
 import { useColors } from '@/hooks/useColors';
@@ -116,6 +119,7 @@ export default function NewsScreen() {
   const [summaryDraft, setSummaryDraft] = useState('');
   const [categoryDraft, setCategoryDraft] = useState('');
   const [savingOverride, setSavingOverride] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -154,6 +158,40 @@ export default function NewsScreen() {
     } finally {
       setSavingOverride(false);
     }
+  };
+
+  const removeArticle = async (article: NewsArticle) => {
+    setRemovingId(article.id);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+      const res = await fetch(`${API_BASE}/news/articles/${encodeURIComponent(article.id)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (editingId === article.id) setEditingId(null);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await onRefresh();
+    } catch {
+      Alert.alert('Could not remove article', 'Try again in a moment.');
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  // Alert.alert's multi-button dialogs silently no-op on react-native-web, so
+  // use window.confirm there (same pattern used for sign-out / delete-signal).
+  const confirmRemove = (article: NewsArticle) => {
+    const label = `Remove "${article.headline}" from the feed?`;
+    if (Platform.OS === 'web') {
+      if (window.confirm(label)) void removeArticle(article);
+      return;
+    }
+    Alert.alert('Remove article', `${label} This can't be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => void removeArticle(article) },
+    ]);
   };
 
   return (
@@ -274,9 +312,23 @@ export default function NewsScreen() {
                       </View>
                     </View>
                   ) : (
-                    <Pressable onPress={() => startEditing(article)} accessibilityRole="button">
-                      <Text style={[styles.retryText, { color: colors.primary }]}>Edit article copy</Text>
-                    </Pressable>
+                    <View style={styles.adminInlineActions}>
+                      <Pressable onPress={() => startEditing(article)} accessibilityRole="button">
+                        <Text style={[styles.retryText, { color: colors.primary }]}>Edit article copy</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => confirmRemove(article)}
+                        disabled={removingId === article.id}
+                        style={[styles.removeButton, removingId === article.id && { opacity: 0.5 }]}
+                        accessibilityRole="button"
+                        testID={`remove-news-${article.id}`}
+                      >
+                        <Ionicons name="trash-outline" size={14} color={colors.destructive} />
+                        <Text style={[styles.retryText, { color: colors.destructive }]}>
+                          {removingId === article.id ? 'Removing…' : 'Remove'}
+                        </Text>
+                      </Pressable>
+                    </View>
                   )}
                 </Card>
               ) : null}
@@ -303,6 +355,8 @@ const styles = StyleSheet.create({
   editorInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, fontFamily: 'Inter_400Regular' },
   editorMultiline: { minHeight: 90, textAlignVertical: 'top' },
   editorActions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  adminInlineActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  removeButton: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   loadingWrap: { alignItems: 'center', paddingVertical: 40, gap: 14 },
   loadingText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
   errorCard: { borderWidth: 1, borderRadius: 16, padding: 20, alignItems: 'center', gap: 10, marginBottom: 20 },

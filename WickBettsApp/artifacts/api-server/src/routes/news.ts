@@ -28,6 +28,7 @@ interface NewsArticleOverride {
   source: string | null;
   url: string | null;
   publishedAt: string | null;
+  hidden: boolean;
 }
 
 interface NewsCache {
@@ -200,26 +201,30 @@ async function fetchOverrides(): Promise<NewsArticleOverride[]> {
       source: newsOverridesTable.source,
       url: newsOverridesTable.url,
       publishedAt: newsOverridesTable.publishedAt,
+      hidden: newsOverridesTable.hidden,
     })
     .from(newsOverridesTable);
 }
 
+/** Applies admin edits and drops any article an admin has removed (hidden). */
 function applyOverrides(articles: NewsArticle[], overrides: NewsArticleOverride[]): NewsArticle[] {
   if (overrides.length === 0) return articles;
   const overrideMap = new Map(overrides.map((item) => [item.sourceArticleId, item]));
-  return articles.map((article) => {
-    const override = overrideMap.get(article.id);
-    if (!override) return article;
-    return {
-      ...article,
-      headline: override.headline || article.headline,
-      summary: override.summary || article.summary,
-      category: override.category || article.category,
-      source: override.source || article.source,
-      url: override.url || article.url,
-      publishedAt: override.publishedAt || article.publishedAt,
-    };
-  });
+  return articles
+    .filter((article) => !overrideMap.get(article.id)?.hidden)
+    .map((article) => {
+      const override = overrideMap.get(article.id);
+      if (!override) return article;
+      return {
+        ...article,
+        headline: override.headline || article.headline,
+        summary: override.summary || article.summary,
+        category: override.category || article.category,
+        source: override.source || article.source,
+        url: override.url || article.url,
+        publishedAt: override.publishedAt || article.publishedAt,
+      };
+    });
 }
 
 function getChicagoClockParts(now = new Date()): {
@@ -396,6 +401,49 @@ router.patch("/overrides", requireAuth, requireAdmin, async (req: Request, res: 
   } catch (err) {
     logger.error(err, "Failed to save news override");
     res.status(500).json({ error: "Failed to save news override" });
+  }
+});
+
+// DELETE /api/news/articles/:id — remove an article from the member feed
+// (admin only). Articles are sourced live from RSS, not owned rows in our
+// DB, so this is a soft delete: it upserts a `hidden: true` override keyed
+// by the article's source id (same id scheme as GET /feed and PATCH
+// /overrides), and GET /feed filters any hidden article out for everyone,
+// admins included — same end result as the hard-delete used for signals.
+router.delete("/articles/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const user = req.dbUser!;
+  const sourceArticleId = decodeURIComponent(String(req.params.id ?? "")).trim();
+  if (!sourceArticleId) {
+    res.status(400).json({ error: "Article id is required" });
+    return;
+  }
+
+  try {
+    const existing = await db
+      .select()
+      .from(newsOverridesTable)
+      .where(eq(newsOverridesTable.sourceArticleId, sourceArticleId))
+      .limit(1);
+
+    if (existing[0]) {
+      await db
+        .update(newsOverridesTable)
+        .set({ hidden: true, updatedBy: user.id, updatedAt: new Date() })
+        .where(eq(newsOverridesTable.sourceArticleId, sourceArticleId));
+    } else {
+      await db.insert(newsOverridesTable).values({
+        id: randomUUID(),
+        sourceArticleId,
+        hidden: true,
+        updatedBy: user.id,
+      } as any);
+    }
+
+    logger.info({ sourceArticleId, adminId: user.id }, "News article removed from feed");
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error(err, "Failed to remove news article");
+    res.status(500).json({ error: "Failed to remove article" });
   }
 });
 

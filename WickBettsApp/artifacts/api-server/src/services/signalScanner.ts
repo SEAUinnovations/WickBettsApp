@@ -12,11 +12,15 @@ import { getMacroConfluence, type MacroConfluence } from "./macroConfluence.js";
 /**
  * The automated signal scanner.
  *
- * Runs a technical screen — RSI(14) oversold/overbought crossed with
- * proximity to a rolling 20-day support/resistance level and above-average
- * volume — across a curated universe (popular stocks priced over $90 that
- * sit outside the S&P 500/Nasdaq-100, plus the most popular crypto assets),
- * picks the 1-2 best-fitting setups, and inserts them as "Watching" signals
+ * Runs a technical screen — RSI(14) at or below 35 (oversold, bullish) or
+ * above 70 (overbought, bearish) is a hard requirement; anything in between
+ * is filtered out entirely before ranking even starts (see screenSymbol in
+ * technicalAnalysis.ts). Within that RSI-qualifying pool, candidates are
+ * further ranked by proximity to a rolling 20-day support/resistance level
+ * and above-average volume — across a curated universe (popular stocks
+ * priced over $90 that sit outside the S&P 500/Nasdaq-100, plus the most
+ * popular crypto assets), picks the 1-2 best-fitting setups, and inserts
+ * them as "Watching" signals
  * for an admin to review, edit, or delete. Each chosen setup is also
  * assigned a trading "style" (Swing/LEAPS/Buy & Hold — see `pickStyle`
  * below) based on trend conviction, the same way a human would decide
@@ -104,12 +108,10 @@ async function getRecentAutoAssets(): Promise<Set<string>> {
 function rsiMagnitude(rsi: number, direction: "Long" | "Short"): string {
   if (direction === "Long") {
     if (rsi <= 20) return "deeply oversold";
-    if (rsi <= 30) return "oversold";
-    return "approaching oversold";
+    return "oversold";
   }
-  if (rsi >= 80) return "deeply overbought";
-  if (rsi >= 70) return "overbought";
-  return "approaching overbought";
+  if (rsi > 80) return "deeply overbought";
+  return "overbought";
 }
 
 /**
@@ -151,7 +153,7 @@ function buildAnalysisText(c: Candidate, isFallback: boolean, confluence: MacroC
   const level = c.screen.direction === "Long" ? screen.support : screen.resistance;
   const levelLabel = c.screen.direction === "Long" ? "support" : "resistance";
   const prefix = isFallback
-    ? `Best available read — no setup fully cleared the strict oversold/overbought + support/resistance + volume thresholds today: `
+    ? `Best available read — RSI is oversold/overbought, but this setup didn't fully clear the strict support/resistance + volume thresholds today: `
     : ``;
 
   const trendNote =

@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { usersTable } from "./users";
@@ -12,6 +12,8 @@ export const newsOverridesTable = pgTable("news_overrides", {
   source: text("source"),
   url: text("url"),
   publishedAt: text("published_at"),
+  /** Admin-removed articles are hidden from the member feed entirely (soft delete — the article still lives in the source RSS feed). */
+  hidden: boolean("hidden").notNull().default(false),
   updatedBy: text("updated_by").references(() => usersTable.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
