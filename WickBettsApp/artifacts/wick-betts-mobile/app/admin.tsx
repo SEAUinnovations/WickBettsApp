@@ -20,12 +20,13 @@ import { Card, PrimaryButton, Tag } from '@/components/WickUI';
 import { TickerAutocomplete } from '@/components/TickerAutocomplete';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
-import { useSignals, type OptionType, type Signal, type SignalDirection, type SignalInput, type SignalMarket, type SignalStatus } from '@/context/SignalContext';
+import { useSignals, type OptionType, type Signal, type SignalDirection, type SignalInput, type SignalMarket, type SignalStatus, type SignalStyle } from '@/context/SignalContext';
 
 const STATUS_OPTIONS: SignalStatus[] = ['Active', 'Watching', 'Closed', 'Stopped'];
+const STYLE_OPTIONS: SignalStyle[] = ['Swing', 'Buy & Hold', 'LEAPS'];
 
 type FormState = {
-  asset: string; market: SignalMarket; direction: SignalDirection; status: SignalStatus;
+  asset: string; market: SignalMarket; direction: SignalDirection; status: SignalStatus; style: SignalStyle;
   timeframe: string; entry: string; target: string; stop: string; risk: string; analysis: string;
   isOption: boolean; optionType: OptionType; contract: string; expiration: string; strike: string;
   premium: string; bid: string; ask: string; impliedVolatility: string;
@@ -33,12 +34,19 @@ type FormState = {
 };
 
 const initialForm: FormState = {
-  asset: '', market: 'Stocks', direction: 'Long', status: 'Active',
+  asset: '', market: 'Stocks', direction: 'Long', status: 'Active', style: 'Swing',
   timeframe: '', entry: '', target: '', stop: '', risk: 'Medium', analysis: '',
   isOption: true, optionType: 'Call', contract: '', expiration: '', strike: '',
   premium: '', bid: '', ask: '', impliedVolatility: '', delta: '', gamma: '',
   theta: '', vega: '', openInterest: '',
 };
+
+/** ~N months out from today, formatted for the Expiration field. */
+function monthsOut(n: number): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() + n);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 /** Build the flat form state from an existing signal for editing. */
 function formFromSignal(s: Signal): FormState {
@@ -47,10 +55,11 @@ function formFromSignal(s: Signal): FormState {
     market: s.market,
     direction: s.direction,
     status: s.status,
+    style: s.style ?? 'Swing',
     timeframe: s.timeframe,
     entry: s.entry,
     target: s.target,
-    stop: s.stop,
+    stop: s.stop ?? '',
     risk: s.risk,
     analysis: s.analysis,
     isOption: s.isOption,
@@ -88,6 +97,21 @@ export default function AdminScreen() {
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((c) => ({ ...c, [key]: value }));
+
+  // Style drives isOption: LEAPS is always an options contract, Buy & Hold
+  // is always spot/equity. Swing leaves whatever the admin had selected.
+  const setStyle = (style: SignalStyle) => {
+    setForm((c) => ({
+      ...c,
+      style,
+      isOption: style === 'LEAPS' ? true : style === 'Buy & Hold' ? false : c.isOption,
+      stop: style === 'Buy & Hold' ? '' : c.stop,
+    }));
+  };
+
+  const applyLeapsExpiry = (months: number) => {
+    setForm((c) => ({ ...c, expiration: monthsOut(months), timeframe: `~${months}mo LEAPS` }));
+  };
 
   const startEdit = (s: Signal) => {
     setEditingId(s.id);
@@ -151,7 +175,8 @@ export default function AdminScreen() {
 
   const isValid = useMemo(
     () =>
-      [form.asset, form.timeframe, form.entry, form.target, form.stop, form.analysis].every((v) => v.trim().length > 0) &&
+      [form.asset, form.timeframe, form.entry, form.target, form.analysis].every((v) => v.trim().length > 0) &&
+      (form.style === 'Buy & Hold' || form.stop.trim().length > 0) &&
       (!form.isOption || [form.contract, form.expiration, form.strike, form.premium, form.impliedVolatility, form.delta, form.gamma, form.theta, form.vega].every((v) => v.trim().length > 0)),
     [form],
   );
@@ -205,8 +230,9 @@ export default function AdminScreen() {
 
   const buildPayload = (): SignalInput => ({
     asset: form.asset.trim().toUpperCase(),
-    market: form.market, direction: form.direction, status: form.status,
-    entry: form.entry.trim(), target: form.target.trim(), stop: form.stop.trim(),
+    market: form.market, direction: form.direction, status: form.status, style: form.style,
+    entry: form.entry.trim(), target: form.target.trim(),
+    stop: form.style === 'Buy & Hold' ? undefined : form.stop.trim(),
     timeframe: form.timeframe.trim(), risk: form.risk.trim(), analysis: form.analysis.trim(),
     isOption: form.isOption,
     optionType: form.isOption ? form.optionType : undefined,
@@ -227,7 +253,7 @@ export default function AdminScreen() {
   const publish = async () => {
     Keyboard.dismiss();
     if (!isValid) {
-      setError(form.isOption ? 'Complete setup and all options fields.' : 'Complete the setup fields.');
+      setError(form.isOption ? 'Complete setup and all options fields.' : form.style === 'Buy & Hold' ? 'Complete the setup fields (entry, target — no stop needed).' : 'Complete the setup fields.');
       return;
     }
     setError('');
@@ -350,12 +376,43 @@ export default function AdminScreen() {
           </View>
         ) : null}
 
+        {/* Trading style */}
+        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Trading style</Text>
+        <View style={styles.segmentRow}>
+          {STYLE_OPTIONS.map((st) => (
+            <Segment key={st} active={form.style === st} label={st} onPress={() => setStyle(st)} />
+          ))}
+        </View>
+        <Text style={[styles.styleHint, { color: colors.mutedForeground }]}>
+          {form.style === 'Buy & Hold'
+            ? 'Long-term spot position — entry + target only, no hard stop-loss.'
+            : form.style === 'LEAPS'
+            ? 'Long-dated options contract (6mo+). Pick a quick expiry below or set one manually in Contract details.'
+            : 'Short-hold setup with a full entry / target / stop.'}
+        </Text>
+        {form.style === 'LEAPS' ? (
+          <View style={styles.segmentRow}>
+            <Segment active={false} label="~6 months" onPress={() => applyLeapsExpiry(6)} />
+            <Segment active={false} label="~8 months" onPress={() => applyLeapsExpiry(8)} />
+            <Segment active={false} label="~12 months" onPress={() => applyLeapsExpiry(12)} />
+          </View>
+        ) : null}
+
         {/* Signal type */}
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Signal type</Text>
-        <View style={styles.segmentRow}>
-          <Segment active={form.isOption} label="Options contract" onPress={() => update('isOption', true)} />
-          <Segment active={!form.isOption} label="Spot / equity" onPress={() => update('isOption', false)} />
-        </View>
+        {form.style === 'Swing' ? (
+          <View style={styles.segmentRow}>
+            <Segment active={form.isOption} label="Options contract" onPress={() => update('isOption', true)} />
+            <Segment active={!form.isOption} label="Spot / equity" onPress={() => update('isOption', false)} />
+          </View>
+        ) : (
+          <View style={[styles.lockedType, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+            <Ionicons name="lock-closed-outline" size={13} color={colors.mutedForeground} />
+            <Text style={[styles.lockedTypeText, { color: colors.mutedForeground }]}>
+              {form.style === 'LEAPS' ? 'Options contract — required for LEAPS' : 'Spot / equity — required for Buy & Hold'}
+            </Text>
+          </View>
+        )}
 
         {/* Core setup */}
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Core setup</Text>
@@ -376,11 +433,18 @@ export default function AdminScreen() {
           <SelectField label="Status" value={form.status} options={['Active','Watching','Closed','Stopped']} onChange={(v) => update('status', v as SignalStatus)} />
           <Field label="Timeframe" value={form.timeframe} onChangeText={(v) => update('timeframe', v)} placeholder="e.g. Aug 22 expiry" />
         </View>
-        <View style={styles.threeCol}>
-          <Field label={form.isOption ? 'Debit / entry' : 'Entry'} value={form.entry} onChangeText={(v) => update('entry', v)} placeholder="$3.42" />
-          <Field label="Target" value={form.target} onChangeText={(v) => update('target', v)} placeholder="$5.10" />
-          <Field label="Stop" value={form.stop} onChangeText={(v) => update('stop', v)} placeholder="$2.10" />
-        </View>
+        {form.style === 'Buy & Hold' ? (
+          <View style={styles.twoCol}>
+            <Field label="Entry" value={form.entry} onChangeText={(v) => update('entry', v)} placeholder="$3.42" />
+            <Field label="Long-term target" value={form.target} onChangeText={(v) => update('target', v)} placeholder="$5.10" />
+          </View>
+        ) : (
+          <View style={styles.threeCol}>
+            <Field label={form.isOption ? 'Debit / entry' : 'Entry'} value={form.entry} onChangeText={(v) => update('entry', v)} placeholder="$3.42" />
+            <Field label="Target" value={form.target} onChangeText={(v) => update('target', v)} placeholder="$5.10" />
+            <Field label="Stop" value={form.stop} onChangeText={(v) => update('stop', v)} placeholder="$2.10" />
+          </View>
+        )}
 
         {/* Options-specific */}
         {form.isOption ? (
@@ -451,6 +515,7 @@ export default function AdminScreen() {
                   <View style={styles.signalRowTitle}>
                     <Text style={[styles.signalAsset, { color: colors.foreground }]}>{s.asset}</Text>
                     {s.isOption ? <Tag>{s.optionType ?? 'OPTION'}</Tag> : null}
+                    {s.style && s.style !== 'Swing' ? <Tag tone="orange">{s.style}</Tag> : null}
                     {s.source === 'auto' ? (
                       <View style={[styles.autoBadge, { borderColor: colors.border, backgroundColor: colors.muted }]}>
                         <Ionicons name="flash-outline" size={10} color={colors.mutedForeground} />
@@ -611,6 +676,9 @@ const styles = StyleSheet.create({
   segmentRow: { flexDirection: 'row', gap: 8, marginBottom: 18 },
   segment: { flex: 1, minHeight: 44, borderWidth: 1, borderRadius: 13, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
   segmentText: { fontSize: 11, fontFamily: 'Inter_700Bold', textAlign: 'center' },
+  styleHint: { fontSize: 10, fontFamily: 'Inter_400Regular', lineHeight: 15, marginTop: -10, marginBottom: 16 },
+  lockedType: { flexDirection: 'row', alignItems: 'center', gap: 7, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 11, marginBottom: 18 },
+  lockedTypeText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
   twoCol: { flexDirection: 'row', gap: 9 },
   threeCol: { flexDirection: 'row', gap: 8 },
   fourCol: { flexDirection: 'row', gap: 7 },

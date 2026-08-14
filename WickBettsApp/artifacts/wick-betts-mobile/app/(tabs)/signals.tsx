@@ -8,7 +8,7 @@ import { useColors } from '@/hooks/useColors';
 import { useAuth, type Plan } from '@/context/AuthContext';
 import { useSignals, type Signal } from '@/context/SignalContext';
 
-type Filter = 'All' | 'Stocks' | 'Crypto' | 'Options' | 'Active' | 'Closed';
+type Filter = 'All' | 'Stocks' | 'Crypto' | 'Options' | 'Buy & Hold' | 'LEAPS' | 'Active' | 'Closed';
 
 export default function SignalsScreen() {
   const router = useRouter();
@@ -34,7 +34,8 @@ export default function SignalsScreen() {
           filter === 'All' ||
           signal.market === filter ||
           signal.status === filter ||
-          (filter === 'Options' && signal.isOption),
+          (filter === 'Options' && signal.isOption) ||
+          signal.style === filter,
       ),
     [filter, signals],
   );
@@ -102,7 +103,7 @@ export default function SignalsScreen() {
       ) : null}
       <SectionLabel>Signal history</SectionLabel>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
-        {(['All', 'Stocks', 'Crypto', 'Options', 'Active', 'Closed'] as Filter[]).map((item) => (
+        {(['All', 'Stocks', 'Crypto', 'Options', 'Buy & Hold', 'LEAPS', 'Active', 'Closed'] as Filter[]).map((item) => (
           <Pressable
             key={item}
             onPress={() => setFilter(item)}
@@ -161,6 +162,7 @@ function SignalCard({
           <View style={styles.titleLine}>
             <Text style={[styles.assetName, { color: colors.foreground }]}>{signal.asset}</Text>
             {signal.isOption ? <Tag>OPTION</Tag> : null}
+            {signal.style && signal.style !== 'Swing' ? <Tag tone="orange">{signal.style}</Tag> : null}
             <Tag tone={tone}>{signal.status}</Tag>
             {signal.newsAlert ? (
               <Ionicons name="star" size={14} color="#E2C25A" accessibilityLabel="Keep in mind: near a major news event" />
@@ -184,10 +186,15 @@ function SignalCard({
         </View>
       ) : null}
       <View style={[styles.levels, { borderTopColor: colors.border }]}>
-        <View><Text style={[styles.levelLabel, { color: colors.mutedForeground }]}>{signal.isOption ? 'Debit' : 'Entry'}</Text><Text style={[styles.levelValue, { color: colors.foreground }]}>{signal.entry}</Text></View>
-        <View><Text style={[styles.levelLabel, { color: colors.mutedForeground }]}>Target</Text><Text style={[styles.levelValue, { color: colors.accent }]}>{signal.target}</Text></View>
-        <View><Text style={[styles.levelLabel, { color: colors.mutedForeground }]}>Stop</Text><Text style={[styles.levelValue, { color: colors.destructive }]}>{signal.stop}</Text></View>
+        <View><Text style={[styles.levelLabel, { color: colors.mutedForeground }]}>{signal.isOption ? 'Debit' : signal.style === 'Buy & Hold' ? 'Entry zone' : 'Entry'}</Text><Text style={[styles.levelValue, { color: colors.foreground }]}>{signal.entry}</Text></View>
+        <View><Text style={[styles.levelLabel, { color: colors.mutedForeground }]}>{signal.style === 'Buy & Hold' ? 'Long-term target' : 'Target'}</Text><Text style={[styles.levelValue, { color: colors.accent }]}>{signal.target}</Text></View>
+        {signal.stop ? (
+          <View><Text style={[styles.levelLabel, { color: colors.mutedForeground }]}>Stop</Text><Text style={[styles.levelValue, { color: colors.destructive }]}>{signal.stop}</Text></View>
+        ) : null}
       </View>
+      {!signal.stop && signal.style === 'Buy & Hold' ? (
+        <Text style={[styles.noStopNote, { color: colors.mutedForeground }]}>No hard stop — long-term thesis, not a swing trade.</Text>
+      ) : null}
       {expanded ? (
         <>
           {signal.isOption ? <Greeks signal={signal} /> : null}
@@ -205,7 +212,6 @@ function SignalCard({
           </View>
           <Text style={[styles.postedAt, { color: colors.mutedForeground }]}>
             {signal.postedAt}
-            {signal.source === 'auto' ? '  ·  Auto-generated scan' : ''}
           </Text>
         </>
       ) : null}
@@ -272,6 +278,7 @@ const styles = StyleSheet.create({
   levels: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, marginTop: 16, paddingTop: 14 },
   levelLabel: { fontSize: 10, fontFamily: 'Inter_500Medium', marginBottom: 4 },
   levelValue: { fontSize: 13, fontFamily: 'Inter_700Bold' },
+  noStopNote: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 8, fontStyle: 'italic' },
   greeks: { borderTopWidth: 1, paddingTop: 15, marginTop: 15 },
   greeksHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   greeksTitle: { fontSize: 13, fontFamily: 'Inter_700Bold' },

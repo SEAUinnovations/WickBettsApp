@@ -55,10 +55,14 @@ router.get("/", requireAuth, requireActiveSubscription, async (_req, res) => {
   res.json({ signals });
 });
 
+const VALID_STYLES = ["Swing", "Buy & Hold", "LEAPS"] as const;
+type SignalStyle = (typeof VALID_STYLES)[number];
+
 // POST /api/signals — publish a signal (admin only)
 router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const body = req.body as {
     status?: "Active" | "Watching" | "Closed" | "Stopped" | null;
+    style?: SignalStyle | null;
     asset?: string | null; market?: "Stocks" | "Crypto" | null; direction?: "Long" | "Short" | null;
     entry?: string | null; target?: string | null; stop?: string | null; timeframe?: string | null;
     risk?: string | null; analysis?: string | null; isOption?: boolean | null;
@@ -68,25 +72,41 @@ router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) 
     theta?: number | null; vega?: number | null; openInterest?: string | null;
   };
 
-  if (!body.asset || !body.entry || !body.target || !body.stop || !body.analysis) {
-    res.status(400).json({ error: "Missing required signal fields" });
+  const style: SignalStyle = body.style && VALID_STYLES.includes(body.style) ? body.style : "Swing";
+  // Buy & Hold is a long-term spot thesis with no hard stop-loss by design
+  // (see signalStyleEnum in lib/db/src/schema/signals.ts) — every other
+  // style still requires one, same as before this feature existed.
+  const stopRequired = style !== "Buy & Hold";
+
+  if (!body.asset || !body.entry || !body.target || !body.analysis || (stopRequired && !body.stop)) {
+    res.status(400).json({ error: stopRequired ? "Missing required signal fields" : "Missing required signal fields (stop is optional for Buy & Hold)" });
+    return;
+  }
+  if (style === "LEAPS" && !body.isOption) {
+    res.status(400).json({ error: "LEAPS signals must be an options contract (isOption: true)" });
+    return;
+  }
+  if (style === "Buy & Hold" && body.isOption) {
+    res.status(400).json({ error: "Buy & Hold signals are a spot/equity position, not an options contract" });
     return;
   }
 
   const user = req.dbUser!;
   try {
     // Explicit construction so TypeScript can verify required non-null fields.
-    // The guard above already ensures asset/entry/target/stop/analysis are
-    // non-empty strings; non-null assertions here are therefore safe.
+    // The guard above already ensures asset/entry/target/analysis are
+    // non-empty strings (and stop too, when required); non-null assertions
+    // here are therefore safe.
     const signal = {
       id: randomUUID(),
       asset: body.asset!,
       market: body.market ?? "Stocks",
       direction: body.direction ?? "Long",
       status: body.status ?? undefined,
+      style,
       entry: body.entry!,
       target: body.target!,
-      stop: body.stop!,
+      stop: body.stop ?? undefined,
       timeframe: body.timeframe ?? "Day",
       risk: body.risk ?? undefined,
       analysis: body.analysis!,
@@ -134,6 +154,7 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   const id = String(req.params.id);
   const body = req.body as {
     status?: "Active" | "Watching" | "Closed" | "Stopped" | null;
+    style?: SignalStyle | null;
     asset?: string | null; market?: "Stocks" | "Crypto" | null; direction?: "Long" | "Short" | null;
     entry?: string | null; target?: string | null; stop?: string | null; timeframe?: string | null;
     risk?: string | null; analysis?: string | null; isOption?: boolean | null;
@@ -151,6 +172,9 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   if (body.status != null && !validStatus.includes(body.status)) {
     res.status(400).json({ error: `Invalid status value: ${String(body.status)}` }); return;
   }
+  if (body.style != null && !VALID_STYLES.includes(body.style)) {
+    res.status(400).json({ error: `Invalid style value: ${String(body.style)}` }); return;
+  }
   if (body.market != null && !validMarket.includes(body.market)) {
     res.status(400).json({ error: `Invalid market value: ${String(body.market)}` }); return;
   }
@@ -159,6 +183,12 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   }
   if (body.optionType != null && !validOptionType.includes(body.optionType)) {
     res.status(400).json({ error: `Invalid optionType value: ${String(body.optionType)}` }); return;
+  }
+  if (body.style === "LEAPS" && body.isOption === false) {
+    res.status(400).json({ error: "LEAPS signals must be an options contract (isOption: true)" }); return;
+  }
+  if (body.style === "Buy & Hold" && body.isOption === true) {
+    res.status(400).json({ error: "Buy & Hold signals are a spot/equity position, not an options contract" }); return;
   }
   for (const field of ["delta", "gamma", "theta", "vega"] as const) {
     const val = body[field];
@@ -170,7 +200,7 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   const updates: Record<string, unknown> = {};
   const include = (key: string, val: unknown) => { if (val !== undefined) updates[key] = val; };
 
-  include("status", body.status); include("asset", body.asset); include("market", body.market);
+  include("status", body.status); include("style", body.style); include("asset", body.asset); include("market", body.market);
   include("direction", body.direction); include("entry", body.entry); include("target", body.target);
   include("stop", body.stop); include("timeframe", body.timeframe); include("risk", body.risk);
   include("analysis", body.analysis); include("isOption", body.isOption);

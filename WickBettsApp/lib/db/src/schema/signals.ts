@@ -7,6 +7,12 @@ export const marketEnum = pgEnum("market", ["Stocks", "Crypto"]);
 export const directionEnum = pgEnum("direction", ["Long", "Short"]);
 export const signalStatusEnum = pgEnum("signal_status", ["Active", "Watching", "Closed", "Stopped"]);
 export const optionTypeEnum = pgEnum("option_type", ["Call", "Put"]);
+// Trading style/horizon for the setup. "Swing" is the original short-hold
+// behavior (days/weeks, always has a stop). "Buy & Hold" is a long-term spot
+// position (stocks or crypto) with an entry + target but deliberately no
+// stop — the thesis plays out over a long horizon, not a hard invalidation
+// price. "LEAPS" is a long-dated options contract (6/8/12+ months out).
+export const signalStyleEnum = pgEnum("signal_style", ["Swing", "Buy & Hold", "LEAPS"]);
 
 export const signalsTable = pgTable("signals", {
   id: text("id").primaryKey(),
@@ -14,9 +20,12 @@ export const signalsTable = pgTable("signals", {
   market: marketEnum("market").notNull(),
   direction: directionEnum("direction").notNull(),
   status: signalStatusEnum("status").notNull().default("Active"),
+  style: signalStyleEnum("style").notNull().default("Swing"),
   entry: text("entry").notNull(),
   target: text("target").notNull(),
-  stop: text("stop").notNull(),
+  // Nullable: Buy & Hold signals intentionally have no hard stop-loss (see
+  // signalStyleEnum comment above) — Swing and LEAPS signals still set this.
+  stop: text("stop"),
   timeframe: text("timeframe").notNull(),
   risk: text("risk").notNull().default("Medium"),
   analysis: text("analysis").notNull(),

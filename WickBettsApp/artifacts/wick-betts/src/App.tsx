@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Route, Router as WouterRouter, Switch, useLocation, useRoute } from 'wouter';
 import {
-  ArrowRight, Bell, BookOpen, CalendarDays, Camera, Check, ChevronLeft, ChevronRight, CircleHelp,
-  Clock3, CreditCard, ExternalLink, Filter, Heart, LayoutDashboard, LoaderCircle, LockKeyhole,
-  LogOut, MessageCircle, Newspaper, PanelLeft, Pencil, Plus, Radio, Settings,
-  ShieldCheck, SlidersHorizontal, Sparkles, TrendingUp, UserRound, WalletCards, X, Chrome,
+  ArrowRight, Award, Bell, BookMarked, BookOpen, CalendarDays, CandlestickChart, Camera, Check,
+  ChevronLeft, ChevronRight, CircleHelp, Clock3, CreditCard, Crown, ExternalLink, Filter, Flame,
+  Gamepad2, GraduationCap, Heart, Layers, LayoutDashboard, LoaderCircle, LockKeyhole,
+  LogOut, MessageCircle, Newspaper, PanelLeft, Pencil, Percent, Plus, Radio, Rocket, RotateCcw,
+  Settings, ShieldCheck, SlidersHorizontal, Sparkles, Star, Swords, Target, TrendingUp, Trophy,
+  UserRound, WalletCards, X, Chrome, Zap,
 } from 'lucide-react';
 import { ClerkProvider, SignIn, SignUp } from '@clerk/react';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -85,6 +87,7 @@ const navItems = [
   { href:'/app/signals', label:'Signals', icon:Radio },
   { href:'/app/market', label:'Market', icon:TrendingUp },
   { href:'/app/news', label:'Newsroom', icon:Newspaper },
+  { href:'/app/learning', label:'Learning', icon:GraduationCap },
   { href:'/app/community', label:'Community', icon:MessageCircle },
   { href:'/app/mentorship', label:'Mentorship', icon:CalendarDays },
   { href:'/app/profile', label:'Profile', icon:UserRound },

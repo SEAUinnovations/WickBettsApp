@@ -71,6 +71,13 @@
       "when": 1786687400000,
       "tag": "0009_community_post_reactions",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786687500000,
+      "tag": "0010_signal_style",
+      "breakpoints": true
     }
   ]
 }

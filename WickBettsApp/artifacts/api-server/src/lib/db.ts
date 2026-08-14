@@ -25,6 +25,7 @@ export {
   directionEnum,
   signalStatusEnum,
   optionTypeEnum,
+  signalStyleEnum,
   type InsertSignal,
   type Signal,
   // Community

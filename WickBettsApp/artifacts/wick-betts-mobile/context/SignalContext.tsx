@@ -16,6 +16,9 @@ export type SignalMarket = 'Stocks' | 'Crypto';
 export type SignalDirection = 'Long' | 'Short';
 export type SignalStatus = 'Active' | 'Watching' | 'Closed' | 'Stopped';
 export type OptionType = 'Call' | 'Put';
+/** Trading horizon: 'Swing' (short-hold, original behavior), 'Buy & Hold'
+ *  (long-term spot position, no stop), 'LEAPS' (long-dated options, 6mo+). */
+export type SignalStyle = 'Swing' | 'Buy & Hold' | 'LEAPS';
 
 export interface Signal {
   id: string;
@@ -23,9 +26,11 @@ export interface Signal {
   market: SignalMarket;
   direction: SignalDirection;
   status: SignalStatus;
+  style: SignalStyle;
   entry: string;
   target: string;
-  stop: string;
+  /** Absent for Buy & Hold signals — deliberately no hard stop-loss. */
+  stop?: string;
   timeframe: string;
   risk: string;
   analysis: string;
@@ -57,9 +62,10 @@ interface ApiSignal {
   market: string;
   direction: string;
   status: string;
+  style?: string;
   entry: string;
   target: string;
-  stop: string;
+  stop?: string | null;
   timeframe: string;
   risk: string;
   analysis: string;
@@ -126,9 +132,10 @@ function mapApiSignal(s: ApiSignal): Signal {
     market: s.market as SignalMarket,
     direction: s.direction as SignalDirection,
     status: s.status as SignalStatus,
+    style: (s.style as SignalStyle) ?? 'Swing',
     entry: s.entry,
     target: s.target,
-    stop: s.stop,
+    stop: s.stop ?? undefined,
     timeframe: s.timeframe,
     risk: s.risk,
     analysis: s.analysis,
