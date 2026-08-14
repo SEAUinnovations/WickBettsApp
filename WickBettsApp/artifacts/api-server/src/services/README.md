@@ -34,7 +34,9 @@ which self-starts a 2-day interval scheduler on import (see
 `signalScanner.ts` ties these together, screens both stocks and crypto,
 picks the 1-2 best-fitting setups, and inserts them as `status: "Watching"`
 for admin review — never auto-published live. See
-`docs/adr/0002-automated-signal-scanner-design.md`.
+`docs/adr/0002-automated-signal-scanner-design.md`. Each chosen setup also
+gets an automatic `style` (Swing/LEAPS/Buy & Hold) based on trend
+conviction — see `docs/adr/0009-automated-leaps-buy-hold-signals.md`.
 
 ## Trade review AI
 

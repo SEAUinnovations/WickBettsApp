@@ -17,9 +17,17 @@ import { getMacroConfluence, type MacroConfluence } from "./macroConfluence.js";
  * volume — across a curated universe (popular stocks priced over $90 that
  * sit outside the S&P 500/Nasdaq-100, plus the most popular crypto assets),
  * picks the 1-2 best-fitting setups, and inserts them as "Watching" signals
- * for an admin to review, edit, or delete. Stock setups become a modeled
- * 7-14 DTE options play (no live options-chain data source is configured —
- * see optionsModel.ts); crypto setups become a spot Long/Short call.
+ * for an admin to review, edit, or delete. Each chosen setup is also
+ * assigned a trading "style" (Swing/LEAPS/Buy & Hold — see `pickStyle`
+ * below) based on trend conviction, the same way a human would decide
+ * whether a setup deserves a short-dated trade or a longer-horizon
+ * position: trend-aligned stock setups with a strict technical match become
+ * a modeled 6mo+ LEAPS play, trend-aligned setups without a strict match
+ * (stocks) or any trend-aligned crypto setup become a Buy & Hold spot
+ * position (no hard stop), and everything else stays a short-dated Swing
+ * trade — a modeled 7-14 DTE options play for stocks (no live options-chain
+ * data source is configured — see optionsModel.ts), a spot Long/Short call
+ * for crypto.
  *
  * Every external data dependency here (Nasdaq screener/historical, Wikipedia
  * index constituents, CoinGecko history, Nasdaq earnings calendar) degrades
@@ -47,6 +55,8 @@ interface Candidate {
   market: "Stocks" | "Crypto";
   screen: ScreenResult;
 }
+
+type SignalStyle = "Swing" | "Buy & Hold" | "LEAPS";
 
 async function batchScreen<T>(
   items: T[],
@@ -100,6 +110,39 @@ function rsiMagnitude(rsi: number, direction: "Long" | "Short"): string {
   if (rsi >= 80) return "deeply overbought";
   if (rsi >= 70) return "overbought";
   return "approaching overbought";
+}
+
+/**
+ * Assigns a trading style to a chosen candidate based on trend conviction —
+ * the same `trendAligned`/`strictMatch` fields already computed by
+ * technicalAnalysis.ts, reused rather than adding a new indicator. A
+ * counter-trend or trend-agnostic setup (trendAligned false/null) is a
+ * short-dated timing play — Swing. A trend-aligned setup that also cleared
+ * the strict technical thresholds is high enough conviction to justify a
+ * longer-dated LEAPS contract (stocks only — there's no crypto options
+ * builder in this app). A trend-aligned setup that only cleared the looser
+ * fallback thresholds (or any trend-aligned crypto setup) becomes a Buy &
+ * Hold spot position: real conviction in the direction, but not a precise
+ * enough technical trigger to time an options entry against.
+ */
+function pickStyle(c: Candidate): SignalStyle {
+  const { screen, market } = c;
+  if (!screen.trendAligned) return "Swing";
+  if (market === "Stocks") return screen.strictMatch ? "LEAPS" : "Buy & Hold";
+  return "Buy & Hold";
+}
+
+/**
+ * How far out to set a LEAPS expiration, in months — scales with how
+ * extreme the RSI reading is (deeper oversold/overbought = more conviction
+ * = more room given). Always at least 6 months out per spec.
+ */
+function leapsMonthsOut(screen: ScreenResult): number {
+  const extreme = screen.direction === "Long" ? screen.rsi <= 20 : screen.rsi >= 80;
+  const strong = screen.direction === "Long" ? screen.rsi <= 30 : screen.rsi >= 70;
+  if (extreme) return 12;
+  if (strong) return 8;
+  return 6;
 }
 
 function buildAnalysisText(c: Candidate, isFallback: boolean, confluence: MacroConfluence, fomcInWindow: boolean): string {
@@ -187,11 +230,21 @@ async function buildStockOptionSignal(
   newsAlert: { flagged: boolean; note: string | null },
   confluence: MacroConfluence,
   fomcInWindow: boolean,
+  style: "Swing" | "LEAPS",
 ) {
   const { screen } = c;
   const isFallback = !screen.strictMatch;
+  const isLeaps = style === "LEAPS";
   const optionType: "Call" | "Put" = c.screen.direction === "Long" ? "Call" : "Put";
-  const expirationDate = pickExpiration(new Date(), 7, 14);
+  // Swing stays the original 7-14 DTE window. LEAPS targets a Friday near
+  // the conviction-scaled month mark from leapsMonthsOut, clamped to never
+  // land under 6 months out.
+  const expirationDate = isLeaps
+    ? (() => {
+        const anchorDays = Math.round(leapsMonthsOut(screen) * 30.44);
+        return pickExpiration(new Date(), Math.max(anchorDays - 7, 180), anchorDays + 7);
+      })()
+    : pickExpiration(new Date(), 7, 14);
   const dte = Math.round((expirationDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
   const strike = pickStrike(screen.price, c.screen.direction);
   const iv = screen.realizedVol && screen.realizedVol > 0 ? screen.realizedVol : 0.4;
@@ -200,10 +253,25 @@ async function buildStockOptionSignal(
   // Target: underlying reaches the opposite level (resistance for a call
   // setup, support for a put setup), option re-priced at that spot with a
   // few fewer days on the clock. Stop: underlying breaks back through the
-  // level that defined the setup in the first place.
-  const targetSpot = c.screen.direction === "Long" ? screen.resistance : screen.support;
-  const stopSpot =
-    c.screen.direction === "Long" ? screen.support * 0.985 : screen.resistance * 1.015;
+  // level that defined the setup in the first place. LEAPS extrapolates
+  // the same near-term support/resistance move out further (a multi-month
+  // thesis should be sized on a bigger expected move than a 1-2 week
+  // swing) and gives the underlying more room before invalidating the
+  // thesis on the way there.
+  const targetSpot = isLeaps
+    ? c.screen.direction === "Long"
+      ? screen.price + (screen.resistance - screen.price) * 3
+      : screen.price - (screen.price - screen.support) * 3
+    : c.screen.direction === "Long"
+      ? screen.resistance
+      : screen.support;
+  const stopSpot = isLeaps
+    ? c.screen.direction === "Long"
+      ? screen.support * 0.95
+      : screen.resistance * 1.05
+    : c.screen.direction === "Long"
+      ? screen.support * 0.985
+      : screen.resistance * 1.015;
 
   const projection = buildProjectionNote(
     optionType,
@@ -231,10 +299,14 @@ async function buildStockOptionSignal(
     stop: `$${stopGreeks.price.toFixed(2)}`,
     timeframe: `${formatExpirationLabel(expirationDate)} expiry`,
     risk: "Medium",
+    style,
     analysis:
       buildAnalysisText(c, isFallback, confluence, fomcInWindow) +
       ` Premium and Greeks below are MODELED (Black-Scholes off ${(iv * 100).toFixed(0)}% realized volatility) — there is no live options-chain data source configured, so verify real bid/ask before publishing. ` +
       projection.text +
+      (isLeaps
+        ? ` Structured as a longer-dated LEAPS position (${formatExpirationLabel(expirationDate)}, ~${dte} days out) to give the trend room to play out rather than timing a short-term bounce — size and expect price swings accordingly given the extended time horizon.`
+        : "") +
       (newsAlert.flagged ? ` ⚠ ${newsAlert.note}` : ""),
     isOption: true,
     optionType,
@@ -256,7 +328,15 @@ async function buildStockOptionSignal(
   };
 }
 
-function buildCryptoSpotSignal(
+/**
+ * Buy & Hold stock signal: a plain spot position, not an options play (the
+ * schema/admin rules require Buy & Hold ↔ isOption: false, mirroring
+ * LEAPS/Swing ↔ isOption: true — see routes/signals.ts). No hard stop
+ * (the `stop` column is nullable specifically for this style); target is
+ * the same near-term support/resistance move extrapolated further out,
+ * same reasoning as the LEAPS branch above.
+ */
+function buildStockBuyHoldSignal(
   c: Candidate,
   newsAlert: { flagged: boolean; note: string | null },
   confluence: MacroConfluence,
@@ -264,8 +344,72 @@ function buildCryptoSpotSignal(
 ) {
   const { screen } = c;
   const isFallback = !screen.strictMatch;
-  const target = c.screen.direction === "Long" ? screen.resistance : screen.support;
-  const stop = c.screen.direction === "Long" ? screen.support * 0.97 : screen.resistance * 1.03;
+  const target =
+    c.screen.direction === "Long"
+      ? screen.price + (screen.resistance - screen.price) * 3
+      : screen.price - (screen.price - screen.support) * 3;
+
+  return {
+    id: randomUUID(),
+    asset: c.symbol,
+    market: "Stocks" as const,
+    direction: c.screen.direction,
+    status: "Watching" as const,
+    entry: `$${screen.price.toFixed(2)}`,
+    target: `$${target.toFixed(2)}`,
+    stop: null,
+    timeframe: "Long-term hold (6-12mo+)",
+    risk: "Medium",
+    style: "Buy & Hold" as const,
+    analysis:
+      buildAnalysisText(c, isFallback, confluence, fomcInWindow) +
+      " Structured as a long-term accumulation position — no fixed expiration or hard stop; the thesis is meant to play out over months, not days." +
+      (newsAlert.flagged ? ` ⚠ ${newsAlert.note}` : ""),
+    isOption: false,
+    optionType: null,
+    contract: null,
+    expiration: null,
+    strike: null,
+    premium: null,
+    bid: null,
+    ask: null,
+    impliedVolatility: null,
+    delta: null,
+    gamma: null,
+    theta: null,
+    vega: null,
+    openInterest: null,
+    source: "auto" as const,
+    newsAlert: newsAlert.flagged,
+    newsAlertNote: newsAlert.note,
+  };
+}
+
+function buildCryptoSpotSignal(
+  c: Candidate,
+  newsAlert: { flagged: boolean; note: string | null },
+  confluence: MacroConfluence,
+  fomcInWindow: boolean,
+  style: "Swing" | "Buy & Hold",
+) {
+  const { screen } = c;
+  const isFallback = !screen.strictMatch;
+  const isBuyHold = style === "Buy & Hold";
+  // Buy & Hold extrapolates the same near-term S/R move out further (a
+  // multi-month thesis, not a 1-2 week swing) and drops the hard stop —
+  // same reasoning as the stock LEAPS/Buy & Hold branches above.
+  const target = isBuyHold
+    ? c.screen.direction === "Long"
+      ? screen.price + (screen.resistance - screen.price) * 3
+      : screen.price - (screen.price - screen.support) * 3
+    : c.screen.direction === "Long"
+      ? screen.resistance
+      : screen.support;
+  const stop = isBuyHold
+    ? null
+    : c.screen.direction === "Long"
+      ? screen.support * 0.97
+      : screen.resistance * 1.03;
 
   return {
     id: randomUUID(),
@@ -275,10 +419,16 @@ function buildCryptoSpotSignal(
     status: "Watching" as const,
     entry: `$${screen.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
     target: `$${target.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
-    stop: `$${stop.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
-    timeframe: "Daily swing",
+    stop: stop == null ? null : `$${stop.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+    timeframe: isBuyHold ? "Long-term hold (6-12mo+)" : "Daily swing",
     risk: "Medium",
-    analysis: buildAnalysisText(c, isFallback, confluence, fomcInWindow) + (newsAlert.flagged ? ` ⚠ ${newsAlert.note}` : ""),
+    style,
+    analysis:
+      buildAnalysisText(c, isFallback, confluence, fomcInWindow) +
+      (isBuyHold
+        ? " Structured as a long-term accumulation position — no fixed hard stop; the thesis is meant to play out over months, not days."
+        : "") +
+      (newsAlert.flagged ? ` ⚠ ${newsAlert.note}` : ""),
     isOption: false,
     optionType: null,
     contract: null,
@@ -402,11 +552,14 @@ export async function runSignalScan(): Promise<void> {
       windowEnd.setUTCDate(windowEnd.getUTCDate() + (c.market === "Stocks" ? 14 : SPOT_HOLD_DAYS));
       const newsAlert = await getNewsAlert(c.symbol, c.market, new Date(), windowEnd);
       const fomcInWindow = fomcInWindowFor(c.market);
+      const style = pickStyle(c);
 
       const record =
         c.market === "Stocks"
-          ? await buildStockOptionSignal(c, newsAlert, confluence, fomcInWindow)
-          : buildCryptoSpotSignal(c, newsAlert, confluence, fomcInWindow);
+          ? style === "Buy & Hold"
+            ? buildStockBuyHoldSignal(c, newsAlert, confluence, fomcInWindow)
+            : await buildStockOptionSignal(c, newsAlert, confluence, fomcInWindow, style)
+          : buildCryptoSpotSignal(c, newsAlert, confluence, fomcInWindow, style === "LEAPS" ? "Swing" : style);
 
       try {
         await db.insert(signalsTable).values(record as never);
