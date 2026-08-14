@@ -1,21 +1,35 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { Card, Header, Screen, SectionLabel, Tag } from '@/components/WickUI';
 import { LapsedRecovery, SubscribePanel } from '@/components/Billing';
 import { useColors } from '@/hooks/useColors';
 import { useAuth, type Plan } from '@/context/AuthContext';
-import { useSignals, type Signal } from '@/context/SignalContext';
+import { useSignals, type Signal, type SignalStatus } from '@/context/SignalContext';
 
 type Filter = 'All' | 'Stocks' | 'Crypto' | 'Options' | 'Buy & Hold' | 'LEAPS' | 'Active' | 'Closed';
+
+// Tapping a signal's status pill (admin only) advances it one step around
+// this cycle — most usefully Watching -> Active, the moment an
+// auto-generated "Watching" signal becomes the live call that's shared
+// throughout the app (push + email fan-out fires on that exact transition;
+// see the PATCH /api/signals/:id handler).
+const STATUS_CYCLE: SignalStatus[] = ['Watching', 'Active', 'Closed', 'Stopped'];
+function nextStatus(current: SignalStatus): SignalStatus {
+  const idx = STATUS_CYCLE.indexOf(current);
+  return STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length];
+}
 
 export default function SignalsScreen() {
   const router = useRouter();
   const colors = useColors();
   const { subscription, user } = useAuth();
-  const { signals, isLoading, isSubscriptionRequired, error, refresh } = useSignals();
+  const { signals, isLoading, isSubscriptionRequired, error, refresh, updateSignal, deleteSignal } = useSignals();
   const isAdmin = user?.role === 'admin';
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   // Re-fetch whenever this tab gains focus so a signal an admin just
   // published (from the Signal studio, or another device) shows up as soon
@@ -39,6 +53,48 @@ export default function SignalsScreen() {
       ),
     [filter, signals],
   );
+
+  const advanceStatus = async (signal: Signal) => {
+    setUpdatingId(signal.id);
+    try {
+      await updateSignal(signal.id, { status: nextStatus(signal.status) });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      Alert.alert('Could not update status', e instanceof Error ? e.message : 'Try again.');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const removeSignal = async (signal: Signal) => {
+    setRemovingId(signal.id);
+    try {
+      await deleteSignal(signal.id);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      Alert.alert('Could not remove signal', e instanceof Error ? e.message : 'Try again.');
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  // Alert.alert's multi-button dialogs silently no-op on react-native-web, so
+  // use window.confirm there (same pattern used in the signal studio).
+  const confirmRemove = (signal: Signal) => {
+    const label = signal.source === 'auto' ? `Dismiss the auto-generated ${signal.asset} signal?` : `Delete the ${signal.asset} signal?`;
+    if (Platform.OS === 'web') {
+      if (window.confirm(label)) void removeSignal(signal);
+      return;
+    }
+    Alert.alert(
+      signal.source === 'auto' ? 'Dismiss signal' : 'Delete signal',
+      `${label} This can't be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: signal.source === 'auto' ? 'Dismiss' : 'Delete', style: 'destructive', onPress: () => void removeSignal(signal) },
+      ],
+    );
+  };
 
   return (
     <Screen contentStyle={styles.content}>
@@ -127,6 +183,11 @@ export default function SignalsScreen() {
           signal={signal}
           expanded={expanded === signal.id}
           onPress={() => setExpanded(expanded === signal.id ? null : signal.id)}
+          isAdmin={isAdmin}
+          updatingStatus={updatingId === signal.id}
+          removing={removingId === signal.id}
+          onAdvanceStatus={() => void advanceStatus(signal)}
+          onRemove={() => confirmRemove(signal)}
         />
       ))}
       {visibleSignals.length === 0 ? (
@@ -145,15 +206,25 @@ function SignalCard({
   signal,
   expanded,
   onPress,
+  isAdmin = false,
+  updatingStatus = false,
+  removing = false,
+  onAdvanceStatus,
+  onRemove,
 }: {
   signal: Signal;
   expanded: boolean;
   onPress: () => void;
+  isAdmin?: boolean;
+  updatingStatus?: boolean;
+  removing?: boolean;
+  onAdvanceStatus?: () => void;
+  onRemove?: () => void;
 }) {
   const colors = useColors();
   const tone = signal.status === 'Active' ? 'green' : signal.status === 'Watching' ? 'orange' : 'muted';
   return (
-    <Card onPress={onPress} style={styles.signalCard}>
+    <Card onPress={onPress} style={[styles.signalCard, removing && { opacity: 0.5 }]}>
       <View style={styles.row}>
         <View style={[styles.assetIcon, { backgroundColor: colors.secondary }]}>
           <Text style={[styles.assetText, { color: colors.accent }]}>{signal.asset.slice(0, 2)}</Text>
@@ -163,7 +234,20 @@ function SignalCard({
             <Text style={[styles.assetName, { color: colors.foreground }]}>{signal.asset}</Text>
             {signal.isOption ? <Tag>OPTION</Tag> : null}
             {signal.style && signal.style !== 'Swing' ? <Tag tone="orange">{signal.style}</Tag> : null}
-            <Tag tone={tone}>{signal.status}</Tag>
+            {isAdmin && onAdvanceStatus ? (
+              <Pressable
+                onPress={onAdvanceStatus}
+                disabled={updatingStatus || removing}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel={`Advance status, currently ${signal.status}`}
+                testID={`advance-status-${signal.id}`}
+              >
+                <Tag tone={tone}>{updatingStatus ? 'Updating…' : signal.status}</Tag>
+              </Pressable>
+            ) : (
+              <Tag tone={tone}>{signal.status}</Tag>
+            )}
             {signal.newsAlert ? (
               <Ionicons name="star" size={14} color="#E2C25A" accessibilityLabel="Keep in mind: near a major news event" />
             ) : null}
@@ -172,8 +256,26 @@ function SignalCard({
             {signal.market} · {signal.timeframe} · {signal.direction}
           </Text>
         </View>
+        {isAdmin && onRemove ? (
+          <Pressable
+            onPress={onRemove}
+            disabled={removing}
+            hitSlop={8}
+            style={styles.removeIcon}
+            accessibilityRole="button"
+            accessibilityLabel={`Remove ${signal.asset} signal`}
+            testID={`remove-signal-${signal.id}`}
+          >
+            <Ionicons name="close-circle" size={19} color={colors.destructive} />
+          </Pressable>
+        ) : null}
         <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={17} color={colors.mutedForeground} />
       </View>
+      {isAdmin ? (
+        <Text style={[styles.adminHint, { color: colors.mutedForeground }]}>
+          Tap the status to advance it (Watching → Active shares it live). Tap ✕ to remove.
+        </Text>
+      ) : null}
       {signal.isOption ? (
         <View style={[styles.contract, { backgroundColor: colors.muted }]}>
           <Text style={[styles.contractLabel, { color: colors.primary }]}>CONTRACT</Text>
@@ -270,6 +372,8 @@ const styles = StyleSheet.create({
   titleLine: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   assetName: { fontSize: 15, fontFamily: 'Inter_700Bold' },
   meta: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 4 },
+  removeIcon: { paddingHorizontal: 6, paddingVertical: 2, marginRight: 4 },
+  adminHint: { fontSize: 9, fontFamily: 'Inter_400Regular', marginTop: 10, fontStyle: 'italic' },
   contract: { borderRadius: 12, padding: 12, marginTop: 15 },
   contractLabel: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1.2, marginBottom: 5 },
   contractName: { fontSize: 14, fontFamily: 'Inter_700Bold' },
