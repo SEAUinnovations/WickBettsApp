@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { logger } from "../lib/logger.js";
+import { requireAuth } from "../middlewares/requireAuth.js";
+import { requireActiveSubscription } from "./signals.js";
 
 const router = Router();
 
@@ -228,8 +230,10 @@ function startScheduler(): void {
 
 startScheduler();
 
-// GET /api/market/quotes
-router.get("/quotes", async (_req, res) => {
+// GET /api/market/quotes — members only (any active/grace-period subscription,
+// admins always allowed). The live-priced board is paid content, same as
+// signals and news.
+router.get("/quotes", requireAuth, requireActiveSubscription, async (_req, res) => {
   if (cache) {
     const ageMs = Date.now() - cache.fetchedAt;
     res.json({

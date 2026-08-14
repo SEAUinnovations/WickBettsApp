@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Route, Router as WouterRouter, Switch, useLocation, useRoute } from 'wouter';
 import {
-  ArrowRight, Bell, BookOpen, CalendarDays, Check, ChevronLeft, ChevronRight, CircleHelp,
-  Clock3, CreditCard, ExternalLink, Filter, Heart, LayoutDashboard, LockKeyhole,
+  ArrowRight, Bell, BookOpen, CalendarDays, Camera, Check, ChevronLeft, ChevronRight, CircleHelp,
+  Clock3, CreditCard, ExternalLink, Filter, Heart, LayoutDashboard, LoaderCircle, LockKeyhole,
   LogOut, MessageCircle, Newspaper, PanelLeft, Pencil, Plus, Radio, Settings,
   ShieldCheck, SlidersHorizontal, Sparkles, TrendingUp, UserRound, WalletCards, X, Chrome,
 } from 'lucide-react';
@@ -344,13 +344,24 @@ function SubscriptionLapsedScreen() {
 
 const GRACE_PERIOD_DAYS = 5;
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading, subscription } = useAuth();
+  const { user, isAuthenticated, isLoading, subscription } = useAuth();
   const [location, setLocation] = useLocation();
   const isDevAuthMode = (import.meta.env.VITE_DEV_AUTH_MODE as string | undefined)?.trim().toLowerCase() === 'localhost'
     || (import.meta.env.VITE_DEV_AUTH_MODE as string | undefined)?.trim().toLowerCase() === 'dev';
 
-  const shouldRedirect =
-    !isLoading && (!isAuthenticated || subscription === null);
+  // Admins get full access regardless of subscription state — mirrors the
+  // `role !== 'admin'` bypass already enforced on every gated API route
+  // (community, mentorship, signals). Without this, an admin account with
+  // no Stripe subscription of its own gets bounced back to the landing
+  // page on every visit and never reaches the app shell at all.
+  const isAdmin = user?.role === 'admin';
+
+  // Only unauthenticated visitors get bounced to the landing page. Members
+  // who have never subscribed (subscription === null) are still let into
+  // the app shell — Community and Profile stay open to them, while
+  // RequireSubscription locks the paid rooms (Home, Signals, Market, News)
+  // behind an upsell panel instead of denying access to the whole app.
+  const shouldRedirect = !isLoading && !isAuthenticated;
 
   useEffect(() => {
     if (isDevAuthMode) return;
@@ -362,14 +373,16 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   if (isLoading) return <div className="loading-screen"><div className="loading-mark">W</div></div>;
   if (!isAuthenticated) return null;
 
-  // null here means the fetch completed and confirmed no subscription — useEffect redirects to '/'
-  if (subscription === null) return null;
+  // null here means the fetch completed and confirmed the member has never
+  // subscribed — let them through; RequireSubscription gates the paid rooms.
+  if (subscription === null) return <>{children}</>;
 
   // Determine whether the subscription allows access — mirrors requireActiveSubscription on the API:
   //   - active or trialing: full access
   //   - past_due within 5 days of currentPeriodEnd: grace period, let through
   //   - everything else (canceled, incomplete, past_due after grace): show recovery screen
   const hasAccess =
+    isAdmin ||
     subscription.status === 'active' ||
     subscription.status === 'trialing' ||
     isWithinGracePeriod(subscription);
@@ -379,13 +392,77 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * Route-level paywall for members with no subscription at all
+ * (subscription === null). Used to restrict Home, Signals, Market, and News
+ * to paying members / admins while still letting unsubscribed members reach
+ * Community and Profile (handled by not wrapping those routes with this).
+ */
+function RequireSubscription({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  const { user, subscription } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  if (!isAdmin && subscription === null) {
+    return <div className="page"><NoSubscriptionGate title={title} description={description} /></div>;
+  }
+  return <>{children}</>;
+}
+
+function NoSubscriptionGate({ title, description }: { title: string; description: string }) {
+  const { startCheckout } = useAuth();
+  const [loadingPlan, setLoadingPlan] = useState<Plan | null>(null);
+  const [error, setError] = useState('');
+
+  const choose = async (plan: Plan) => {
+    setError('');
+    setLoadingPlan(plan);
+    try {
+      await startCheckout(plan);
+    } catch (err) {
+      setError((err as Error).message);
+      setLoadingPlan(null);
+    }
+  };
+
+  return (
+    <div className="locked-panel animate-in">
+      <LockKeyhole size={18} />
+      <h3>{title}</h3>
+      <p>{description}</p>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6 }}>
+        <button className="button button-dark" onClick={() => void choose('signals')} disabled={loadingPlan !== null}>
+          {loadingPlan === 'signals' ? 'Redirecting…' : 'Join Signals · $250/mo'}
+        </button>
+        <button className="button button-outline" onClick={() => void choose('mentorship')} disabled={loadingPlan !== null}>
+          {loadingPlan === 'mentorship' ? 'Redirecting…' : 'Mentorship · $500/mo'}
+        </button>
+        <button className="button button-outline" onClick={() => void choose('membership')} disabled={loadingPlan !== null}>
+          {loadingPlan === 'membership' ? 'Redirecting…' : 'Membership'}
+        </button>
+      </div>
+      {error && <p className="checkout-error" style={{ marginTop: 10 }}>{error}</p>}
+    </div>
+  );
+}
+
 // ── Member Shell ──────────────────────────────────────────────────────────────
+// Tabs that stay open to authenticated members even with no subscription —
+// everything else requires an active plan (see RequireSubscription / the
+// Mentorship page's own plan check).
+const FREE_NAV_HREFS = new Set(['/app/community', '/app/profile']);
+
 function MemberShell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { user, subscription, logout } = useAuth();
   const active = (href: string) => location === href;
   const memberName = usernameFromUser(user);
   const plan = subscription?.plan ?? 'signals';
+  const isAdmin = user?.role === 'admin';
+  const [sidebarAvatarBroken, setSidebarAvatarBroken] = useState(false);
+  const [topbarAvatarBroken, setTopbarAvatarBroken] = useState(false);
+  useEffect(() => { setSidebarAvatarBroken(false); setTopbarAvatarBroken(false); }, [user?.avatarUrl]);
+  const visibleNavItems = (isAdmin || subscription !== null)
+    ? navItems
+    : navItems.filter((item) => FREE_NAV_HREFS.has(item.href));
 
   return <div className="member-shell app-noise">
     <aside className="sidebar">
@@ -395,7 +472,7 @@ function MemberShell({ children }: { children: React.ReactNode }) {
         <p>Good morning,<br /><em>{memberName.split(' ')[0]}.</em></p>
       </div>
       <nav className="member-nav">
-        {navItems.map(({ href, label, icon: Icon }) => (
+        {visibleNavItems.map(({ href, label, icon: Icon }) => (
           <Link key={href} href={href} className={active(href) ? 'active' : ''} data-testid={`link-${label.toLowerCase().replace(' ', '-')}`}>
             <Icon />{label}
           </Link>
@@ -403,8 +480,8 @@ function MemberShell({ children }: { children: React.ReactNode }) {
       </nav>
       <div className="sidebar-bottom">
         <div className="member-badge">
-          {user?.avatarUrl
-            ? <img src={user.avatarUrl} alt={memberName} className="avatar-img" referrerPolicy="no-referrer" />
+          {user?.avatarUrl && !sidebarAvatarBroken
+            ? <img src={user.avatarUrl} alt={memberName} className="avatar-img" referrerPolicy="no-referrer" onError={() => setSidebarAvatarBroken(true)} />
             : <span className="avatar">{initials(memberName)}</span>
           }
           <div><strong>{memberName}</strong><span>{plan === 'mentorship' ? 'Mentorship member' : plan === 'membership' ? 'Membership member' : 'Signals member'}</span></div>
@@ -423,8 +500,8 @@ function MemberShell({ children }: { children: React.ReactNode }) {
             <CircleHelp size={15} />
           </Link>
           <Link href="/app/profile" className="icon-button" title="Profile" data-testid="link-top-profile">
-            {user?.avatarUrl
-              ? <img src={user.avatarUrl} alt="" className="avatar-img avatar-img--sm" referrerPolicy="no-referrer" />
+            {user?.avatarUrl && !topbarAvatarBroken
+              ? <img src={user.avatarUrl} alt="" className="avatar-img avatar-img--sm" referrerPolicy="no-referrer" onError={() => setTopbarAvatarBroken(true)} />
               : <UserRound size={15} />
             }
           </Link>
@@ -433,7 +510,7 @@ function MemberShell({ children }: { children: React.ReactNode }) {
       {children}
     </main>
     <nav className="mobile-nav">
-      {navItems.slice(0, 5).map(({ href, label, icon: Icon }) => (
+      {visibleNavItems.slice(0, 5).map(({ href, label, icon: Icon }) => (
         <Link key={href} href={href} className={active(href) ? 'active' : ''} data-testid={`mobile-link-${label.toLowerCase().replace(' ', '-')}`}>
           <Icon /><span>{label === 'Overview' ? 'Home' : label}</span>
         </Link>
@@ -962,13 +1039,39 @@ function Toggle({ on, onToggle, label }: { on: boolean; onToggle: () => void; la
 }
 
 function ProfilePage() {
-  const { user, subscription, logout, openBillingPortal, startCheckout, getToken } = useAuth();
+  const { user, subscription, logout, openBillingPortal, startCheckout, getToken, uploadProfileImage } = useAuth();
   const [notifySignals, setNotifySignals] = useState(user?.notifySignals ?? true);
   const [notifyNews, setNotifyNews] = useState(user?.notifyNews ?? false);
   const [notifyError, setNotifyError] = useState('');
   const [portalLoading, setPortalLoading] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [portalError, setPortalError] = useState('');
+  const [avatarBroken, setAvatarBroken] = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState('');
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+
+  // Reset the broken-image flag whenever the avatar URL itself changes
+  // (e.g. right after a successful upload) so a fresh URL gets a fresh try.
+  useEffect(() => { setAvatarBroken(false); }, [user?.avatarUrl]);
+
+  const handleAvatarFile = async (file: File) => {
+    setAvatarError('');
+    setAvatarUploading(true);
+    try {
+      const dataUri = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Could not read the selected file.'));
+        reader.readAsDataURL(file);
+      });
+      await uploadProfileImage(dataUri);
+    } catch (err) {
+      setAvatarError((err as Error).message || 'Could not update your profile picture. Try again.');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
 
   const memberName = usernameFromUser(user);
   const plan = subscription?.plan ?? 'signals';
@@ -1027,12 +1130,48 @@ function ProfilePage() {
       <section className="surface profile-card animate-in">
         <span className="eyebrow">Account</span>
         <div className="profile-identity" style={{marginTop:18}}>
-          {user?.avatarUrl
-            ? <img src={user.avatarUrl} alt={memberName} className="avatar-img avatar-img--lg" referrerPolicy="no-referrer" />
-            : <span className="avatar">{initials(memberName)}</span>
-          }
+          <button
+            type="button"
+            onClick={() => avatarInputRef.current?.click()}
+            disabled={avatarUploading}
+            className="avatar-edit-button"
+            style={{ position: 'relative', border: 0, background: 'none', padding: 0, cursor: avatarUploading ? 'default' : 'pointer' }}
+            title="Change profile picture"
+            data-testid="button-change-avatar"
+          >
+            {user?.avatarUrl && !avatarBroken
+              ? (
+                <img
+                  src={user.avatarUrl}
+                  alt={memberName}
+                  className="avatar-img avatar-img--lg"
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarBroken(true)}
+                />
+              )
+              : <span className="avatar" style={{ width: 44, height: 44, fontSize: 15 }}>{initials(memberName)}</span>
+            }
+            <span
+              style={{
+                position: 'absolute', bottom: -2, right: -2, width: 18, height: 18, borderRadius: '50%',
+                background: 'var(--primary)', color: 'var(--primary-foreground)', display: 'grid', placeItems: 'center',
+                border: '2px solid var(--card)',
+              }}
+            >
+              {avatarUploading ? <LoaderCircle size={9} className="spin" /> : <Camera size={9} />}
+            </span>
+          </button>
+          <input
+            ref={avatarInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleAvatarFile(f); e.target.value = ''; }}
+            data-testid="input-avatar-file"
+          />
           <div><strong>{memberName}</strong><span>{plan === 'mentorship' ? 'Mentorship member' : 'Signals member'}{isAdmin ? ' · Admin' : ''}</span></div>
         </div>
+        {avatarError && <p className="checkout-error" style={{marginTop:8}}>{avatarError}</p>}
         <div className="detail-list">
           <div className="detail"><label>Email</label><span>{user?.email}</span></div>
           <div className="detail"><label>Signed in with</label><span>Google</span></div>
@@ -1610,10 +1749,26 @@ function AppRouter() {
   return <AuthGate>
     <MemberShell>
       <Switch>
-        <Route path="/app/home"><HomePage /></Route>
-        <Route path="/app/signals"><SignalsPage /></Route>
-        <Route path="/app/market"><MarketPage /></Route>
-        <Route path="/app/news"><NewsPage /></Route>
+        <Route path="/app/home">
+          <RequireSubscription title="Your desk is one step away." description="Subscribe to a plan to unlock the morning brief, live signals, and market data.">
+            <HomePage />
+          </RequireSubscription>
+        </Route>
+        <Route path="/app/signals">
+          <RequireSubscription title="Signals are for members." description="An active subscription unlocks the daily signal stream with full Greeks and levels.">
+            <SignalsPage />
+          </RequireSubscription>
+        </Route>
+        <Route path="/app/market">
+          <RequireSubscription title="The board is for members." description="Subscribe to see live delayed quotes across indices, sectors, mega-caps, and crypto.">
+            <MarketPage />
+          </RequireSubscription>
+        </Route>
+        <Route path="/app/news">
+          <RequireSubscription title="The newsroom is for members." description="Subscribe to unlock live market headlines curated for the desk.">
+            <NewsPage />
+          </RequireSubscription>
+        </Route>
         <Route path="/app/community"><CommunityPage /></Route>
         <Route path="/app/mentorship"><MentorshipPage /></Route>
         <Route path="/app/profile"><ProfilePage /></Route>

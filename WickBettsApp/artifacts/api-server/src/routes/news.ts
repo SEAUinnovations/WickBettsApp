@@ -5,6 +5,7 @@ import { randomUUID } from "crypto";
 import { db, newsOverridesTable } from "../lib/db.js";
 import { logger } from "../lib/logger.js";
 import { requireAuth, requireAdmin } from "../middlewares/requireAuth.js";
+import { requireActiveSubscription } from "./signals.js";
 
 const router = Router();
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
@@ -297,8 +298,10 @@ function startScheduler(): void {
 
 startScheduler();
 
-// GET /api/news/feed
-router.get("/feed", async (_req, res) => {
+// GET /api/news/feed — members only (any active/grace-period subscription,
+// admins always allowed). News used to be public; it's now paywalled
+// alongside signals so browsing it isn't a way to skip subscribing.
+router.get("/feed", requireAuth, requireActiveSubscription, async (_req, res) => {
   const overrides = await fetchOverrides().catch((err) => {
     logger.warn({ err }, "Failed to fetch news overrides");
     return [] as NewsArticleOverride[];

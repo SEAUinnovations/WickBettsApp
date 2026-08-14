@@ -49,6 +49,13 @@ interface AuthState {
   logout: () => Promise<void>;
   startCheckout: (plan: 'signals' | 'mentorship' | 'membership') => Promise<void>;
   openBillingPortal: () => Promise<void>;
+  /**
+   * Upload a new profile picture. `fileDataUri` is a base64 data URI read
+   * from a <input type="file">. Uploads to Clerk first (the canonical image
+   * host), then mirrors the resulting URL onto the local user row so other
+   * members see it too (community chat, admin roster).
+   */
+  uploadProfileImage: (fileDataUri: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -169,6 +176,27 @@ function ClerkAuthProvider({ children }: { children: ReactNode }) {
     window.location.href = url;
   }, [getToken]);
 
+  const uploadProfileImage = useCallback(async (fileDataUri: string) => {
+    if (!clerkUser) throw new Error('Not signed in');
+    await clerkUser.setProfileImage({ file: fileDataUri });
+    await clerkUser.reload();
+    const newUrl = clerkUser.imageUrl;
+    if (newUrl) {
+      setDbUser((prev) => (prev ? { ...prev, avatarUrl: newUrl } : prev));
+      try {
+        const headers = await authHeaders(getToken, { 'Content-Type': 'application/json' });
+        await fetch(apiPath('/auth/profile'), {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({ avatarUrl: newUrl }),
+        });
+      } catch {
+        // Non-critical — the user's own view already updated via Clerk;
+        // other members just see the old avatar until the next sync.
+      }
+    }
+  }, [clerkUser, getToken]);
+
   // Merge Clerk identity with local DB data — prefer Clerk for live display fields
   const user = useMemo<AuthUser | null>(() => {
     if (!dbUser) return null;
@@ -192,8 +220,9 @@ function ClerkAuthProvider({ children }: { children: ReactNode }) {
       logout,
       startCheckout,
       openBillingPortal,
+      uploadProfileImage,
     }),
-    [getToken, logout, openBillingPortal, isLoading, refresh, startCheckout, subscription, user],
+    [getToken, logout, openBillingPortal, isLoading, refresh, startCheckout, subscription, user, uploadProfileImage],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -285,6 +314,13 @@ function DevAuthProvider({ children }: { children: ReactNode }) {
     window.location.href = url;
   }, []);
 
+  // No real Clerk user object exists in the dev-auth bypass, so there's
+  // nowhere to host an uploaded image. Fail with a clear message rather
+  // than silently no-op-ing.
+  const uploadProfileImage = useCallback(async () => {
+    throw new Error('Profile photo upload is not available in local dev-auth mode.');
+  }, []);
+
   const user = useMemo<AuthUser | null>(() => dbUser, [dbUser]);
 
   const value = useMemo<AuthState>(
@@ -298,8 +334,9 @@ function DevAuthProvider({ children }: { children: ReactNode }) {
       logout,
       startCheckout,
       openBillingPortal,
+      uploadProfileImage,
     }),
-    [getToken, logout, openBillingPortal, isLoadingData, refresh, startCheckout, subscription, user],
+    [getToken, logout, openBillingPortal, isLoadingData, refresh, startCheckout, subscription, user, uploadProfileImage],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
