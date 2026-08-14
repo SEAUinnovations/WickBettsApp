@@ -116,6 +116,7 @@ export function SubscribePanel() {
   const { loading, error, runCheckout } = useBillingActions();
   return (
     <View style={styles.stack}>
+      <Text style={styles.includedNote}>Every plan includes community access, the full Learning tab, and trade reviews.</Text>
       <Text style={styles.stripeNote}>Secure checkout opens in Stripe.</Text>
       <ActionButton
         onPress={() => void runCheckout('signals')}
@@ -319,6 +320,7 @@ export function LapsedRecovery({
 const styles = StyleSheet.create({
   stack: { gap: 10 },
   stripeNote: { fontSize: 11, fontFamily: 'Inter_500Medium', color: '#A78BFA' },
+  includedNote: { fontSize: 11, lineHeight: 16, fontFamily: 'Inter_400Regular', color: '#A59DB3' },
   busyButton: {
     minHeight: 52,
     borderRadius: 15,

@@ -94,6 +94,10 @@ function RootLayoutNav() {
       <Stack.Screen name="sso-callback" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="auth" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="mentorship" options={{ headerShown: false }} />
+      <Stack.Screen name="learning/index" options={{ headerShown: false }} />
+      <Stack.Screen name="learning/lesson" options={{ headerShown: false }} />
+      <Stack.Screen name="learning/candle-arcade" options={{ headerShown: false }} />
+      <Stack.Screen name="learning/trivia-arena" options={{ headerShown: false }} />
       <Stack.Screen name="admin" options={{ headerShown: false }} />
       <Stack.Screen name="admin/users" options={{ headerShown: false }} />
     </Stack>

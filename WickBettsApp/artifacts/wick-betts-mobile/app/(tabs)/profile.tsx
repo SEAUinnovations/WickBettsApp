@@ -349,6 +349,11 @@ export default function ProfileScreen() {
       {/* Account */}
       <SectionLabel>Account</SectionLabel>
       <Card style={styles.settingsCard}>
+        <Pressable onPress={() => router.push('/learning')} style={styles.accountRow} accessibilityRole="button">
+          <Ionicons name="school-outline" size={19} color={colors.accent} />
+          <Text style={[styles.accountText, { color: colors.foreground }]}>Learning</Text>
+          <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+        </Pressable>
         <Pressable onPress={() => router.push('/settings' as never)} style={styles.accountRow} accessibilityRole="button">
           <Ionicons name="time-outline" size={19} color={colors.accent} />
           <Text style={[styles.accountText, { color: colors.foreground }]}>Timezone</Text>

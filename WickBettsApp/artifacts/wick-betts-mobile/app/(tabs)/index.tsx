@@ -47,14 +47,14 @@ export default function HomeScreen() {
           <Text style={[styles.statusText, { color: colors.accent }]}>YOUR DESK IS ONE STEP AWAY</Text>
         </View>
         <Text style={[styles.heroBody, { color: colors.mutedForeground, marginBottom: 20 }]}>
-          Subscribe to a plan to unlock the morning brief, live signals, and market data. You can still catch up in Community while you decide.
+          Subscribe to a plan to unlock the morning brief, live signals, and market data. Every plan also includes community access, the full Learning tab, and trade reviews — you can still catch up in Community while you decide.
         </Text>
         <SubscribePanel />
       </Screen>
     );
   }
 
-  const pushProtected = (href: '/mentorship' | '/(tabs)/signals') => {
+  const pushProtected = (href: '/mentorship' | '/(tabs)/signals' | '/learning') => {
     if (!user) {
       router.push('/login');
       return;
@@ -65,6 +65,11 @@ export default function HomeScreen() {
   const openMentorship = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     pushProtected('/mentorship');
+  };
+
+  const openLearning = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    pushProtected('/learning');
   };
 
   const trackedSymbols = [
@@ -256,6 +261,23 @@ export default function HomeScreen() {
             <Text style={[styles.signalTeaserTitle, { color: colors.foreground }]}>View today's signals</Text>
             <Text style={[styles.signalTeaserBody, { color: colors.mutedForeground }]}>
               Stocks, crypto & options with full Greeks
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={17} color={colors.mutedForeground} />
+        </View>
+      </Card>
+
+      {/* Learning CTA */}
+      <Card style={styles.learningCard} onPress={openLearning}>
+        <View style={styles.learningRow}>
+          <View style={[styles.learningBadge, { backgroundColor: colors.secondary }]}>
+            <Ionicons name="school-outline" size={18} color={colors.primary} />
+          </View>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={[styles.learningKicker, { color: colors.primary }]}>THE ACADEMY</Text>
+            <Text style={[styles.learningTitle, { color: colors.foreground }]}>Keep leveling up.</Text>
+            <Text style={[styles.learningBody, { color: colors.mutedForeground }]}>
+              Candlesticks, indicators, market history — gamified, beginner to expert.
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={17} color={colors.mutedForeground} />
@@ -472,6 +494,12 @@ const styles = StyleSheet.create({
   signalBadge: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   signalTeaserTitle: { fontSize: 14, fontFamily: 'Inter_700Bold' },
   signalTeaserBody: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 3 },
+  learningCard: { marginBottom: 14 },
+  learningRow: { flexDirection: 'row', alignItems: 'center' },
+  learningBadge: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  learningKicker: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1.5, marginBottom: 4 },
+  learningTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', marginBottom: 3 },
+  learningBody: { fontSize: 11, lineHeight: 16, fontFamily: 'Inter_400Regular' },
   mentorCard: { borderWidth: 1.5, marginBottom: 10 },
   mentorKicker: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1.5, marginBottom: 8 },
   mentorTitle: { fontSize: 20, fontFamily: 'Inter_700Bold', letterSpacing: -0.5, marginBottom: 7 },
