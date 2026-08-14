@@ -79,7 +79,7 @@ const router = Router();
 // GET /api/community — fetch posts with author name (all threads), newest first.
 // Only returns posts within the last RETENTION_DAYS days; older posts are
 // periodically purged from the DB entirely (see startRetentionCleanup above).
-router.get("/", requireAuth, requireActiveSubscription, async (_req, res) => {
+router.get("/", requireAuth, async (_req, res) => {
   try {
     const rows = await db
       .select({
@@ -105,7 +105,7 @@ router.get("/", requireAuth, requireActiveSubscription, async (_req, res) => {
 });
 
 // POST /api/community — create a new post (members + admins)
-router.post("/", requireAuth, requireActiveSubscription, async (req: Request, res: Response) => {
+router.post("/", requireAuth, async (req: Request, res: Response) => {
   const { thread, text } = req.body as { thread?: string; text?: string };
 
   const validThreads = ["Signals", "News", "Community Chat"];

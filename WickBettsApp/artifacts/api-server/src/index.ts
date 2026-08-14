@@ -1,9 +1,25 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
-import { db } from "./lib/db.js";
+import { db, pool } from "./lib/db.js";
 import app from "./app.js";
 import { logger } from "./lib/logger.js";
+
+// Safety net: without these, an unhandled rejection or a thrown error outside
+// an Express request handler either crashes the process with zero log output
+// (uncaughtException) or gets silently swallowed forever (unhandledRejection),
+// which is indistinguishable from the server just hanging. Log loudly so any
+// future incident leaves a trace, then exit so Railway's restartPolicy
+// (ON_FAILURE, up to 10 retries) can actually bring it back up.
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "Uncaught exception — exiting so Railway can restart the service");
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.error({ err: reason }, "Unhandled promise rejection — exiting so Railway can restart the service");
+  process.exit(1);
+});
 
 const rawPort = process.env["PORT"];
 
@@ -36,7 +52,7 @@ try {
   logger.warn("Continuing startup without applying migrations; some database-backed routes may be degraded");
 }
 
-app.listen(port, (err) => {
+const server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
@@ -44,3 +60,25 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
 });
+
+// Railway sends SIGTERM on every redeploy/stop. Without handling it, the
+// process is killed while still holding open Postgres connections, which
+// leak on the database side until Postgres's own keepalive eventually times
+// them out — and with enough redeploys in a short window, that can push a
+// shared/managed Postgres instance toward its connection limit, causing the
+// *next* deploy's pool.connect() calls to hang waiting for a free slot.
+// Closing cleanly here avoids piling that up.
+function shutdown(signal: string) {
+  logger.info({ signal }, "Received shutdown signal, closing server and DB pool");
+  server.close(() => {
+    pool
+      .end()
+      .catch((err) => logger.warn({ err }, "Error closing DB pool"))
+      .finally(() => process.exit(0));
+  });
+  // Force-exit if graceful shutdown hangs for any reason.
+  setTimeout(() => process.exit(1), 8_000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
