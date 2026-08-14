@@ -13,8 +13,21 @@ import {
 } from "./middlewares/clerkProxyMiddleware.js";
 import { logger } from "./lib/logger.js";
 import router from "./routes/index.js";
+import { securityHeaders } from "./middlewares/securityHeaders.js";
+import { apiRateLimit } from "./middlewares/rateLimit.js";
 
 const app: Express = express();
+
+// Railway terminates TLS and proxies requests to this container, so without
+// `trust proxy`, req.ip and the `secure` flag both resolve to Railway's
+// internal proxy rather than the real client — which would make the rate
+// limiter below bucket every visitor together under one IP. `1` trusts
+// exactly one hop (Railway's edge), not an arbitrary X-Forwarded-For chain.
+app.set("trust proxy", 1);
+
+// Stop advertising the framework/version in the X-Powered-By header —
+// trivial to spoof either way, but no reason to hand attackers a free hint.
+app.disable("x-powered-by");
 
 function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
   for (const value of values) {
@@ -56,8 +69,17 @@ const webDistDir = process.env.WEB_DIST_DIR
 // though the API itself is healthy. Match the apex plus any subdomain
 // (anchored, so it can't be spoofed by e.g. "wickbetts.com.evil.com" or
 // "evilwickbetts.com").
+//
+// The localhost pattern is anchored the same way — it previously was a bare
+// /localhost/ with no start/end anchors, which matches "localhost" ANYWHERE
+// in the origin string, so an attacker-controlled origin like
+// "https://localhost.evil.com" or "https://evil.com/?x=localhost" would
+// have passed this check and been granted CORS + credentials. Anchoring to
+// exactly http(s)://localhost[:port] and http(s)://127.0.0.1[:port] closes
+// that hole while still covering local dev.
 const allowedOriginPatterns: RegExp[] = [
-  /localhost/,
+  /^https?:\/\/localhost(:\d+)?$/i,
+  /^https?:\/\/127\.0\.0\.1(:\d+)?$/i,
   /^https:\/\/([a-z0-9-]+\.)*wickbetts\.com$/i,
 ];
 if (process.env.CORS_ALLOW_REPLIT_ORIGINS !== "false") {
@@ -81,6 +103,9 @@ app.use(
     },
   })
 );
+
+// ── Security headers ──────────────────────────────────────────────────────────
+app.use(securityHeaders);
 
 // ── Clerk proxy — must come before CORS and body parsers (streams raw bytes) ──
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());
@@ -118,8 +143,23 @@ app.use((req: Request & { rawBody?: Buffer }, _res: Response, next: NextFunction
 });
 
 // ── Body parsers ──────────────────────────────────────────────────────────────
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Raised from Express's 100kb default to accommodate base64-encoded chart
+// screenshots (Review My Trade) and admin screenshot scans — both send
+// images as JSON data URLs rather than multipart, so the JSON body itself
+// needs headroom for a compressed photo (client-side quality is capped at
+// 0.7-0.85, so real uploads land well under this). Kept at 6mb rather than
+// a larger figure specifically to limit how much memory an unauthenticated
+// request can force this process to allocate before auth middleware (which
+// runs after body parsing in Express) ever gets a chance to reject it —
+// see docs/adr/0004-security-hardening.md.
+app.use(express.json({ limit: "6mb" }));
+app.use(express.urlencoded({ extended: true, limit: "6mb" }));
+
+// ── Rate limiting ──────────────────────────────────────────────────────────────
+// Applied after body parsing (parsing itself is cheap relative to a full
+// request being handled) but before every /api route, so it can't be
+// bypassed by hitting a route directly.
+app.use("/api", apiRateLimit);
 
 // ── Clerk middleware ───────────────────────────────────────────────────────────
 // Resolves the publishable key from the request host so the same server can

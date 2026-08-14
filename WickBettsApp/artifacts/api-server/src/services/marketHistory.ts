@@ -1,13 +1,6 @@
 import { logger } from "../lib/logger.js";
 import type { DailyBar } from "./technicalAnalysis.js";
-
-const NASDAQ_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  Accept: "application/json, text/plain, */*",
-  Origin: "https://www.nasdaq.com",
-  Referer: "https://www.nasdaq.com/",
-};
+import { NASDAQ_HEADERS } from "./httpHeaders.js";
 
 function parseMoney(s: string | undefined | null): number {
   if (!s) return 0;

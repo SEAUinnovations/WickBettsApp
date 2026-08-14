@@ -62,6 +62,8 @@ interface AuthContextValue {
    * an in-app browser, then refreshes the subscription once the browser closes.
    */
   startCheckout: (plan: Plan) => Promise<void>;
+  /** One-time $2.50 checkout for an extra Review My Trade credit. */
+  buyTradeReviewCredit: () => Promise<void>;
   /**
    * Open the Stripe billing portal in an in-app browser, then refresh the
    * subscription once the browser closes.
@@ -309,6 +311,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [getToken, refreshSubscription],
   );
 
+  // One-time $2.50 purchase for an extra Review My Trade credit once a
+  // member's 4 free-per-week reviews are used up. Same web/native checkout
+  // redirect handling as startCheckout above, just against a different
+  // (mode: "payment", not "subscription") backend endpoint.
+  const buyTradeReviewCredit = useCallback(async () => {
+    const token = await getToken();
+    if (!token) throw new Error('Not authenticated');
+    const res = await fetch(`${API_BASE}/stripe/trade-review-credit-checkout`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(err.error ?? 'Could not start checkout. Please try again.');
+    }
+    const { url } = (await res.json()) as { url: string };
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined') {
+        window.location.href = url;
+      }
+      return;
+    }
+    await WebBrowser.openBrowserAsync(url);
+  }, [getToken]);
+
   const openBillingPortal = useCallback(async () => {
     const token = await getToken();
     if (!token) throw new Error('Not authenticated');
@@ -436,6 +466,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ensurePushRegistered,
       refreshSubscription,
       startCheckout,
+      buyTradeReviewCredit,
       openBillingPortal,
       cancelSubscription,
       resumeSubscription,
@@ -452,6 +483,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ensurePushRegistered,
       refreshSubscription,
       startCheckout,
+      buyTradeReviewCredit,
       openBillingPortal,
       cancelSubscription,
       resumeSubscription,

@@ -40,3 +40,6 @@ yarn-error.*
 
 .env
 .wrangler/
+
+# Google Play service account credential (used by `eas submit --platform android`)
+google-play-service-account.json

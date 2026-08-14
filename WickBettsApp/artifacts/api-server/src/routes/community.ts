@@ -1,11 +1,17 @@
 import { Router, type Request, type Response } from "express";
-import { db, communityPostsTable, usersTable, subscriptionsTable } from "../lib/db.js";
-import { eq, desc, gte, lt } from "drizzle-orm";
+import { db, communityPostsTable, communityPostReactionsTable, usersTable, subscriptionsTable } from "../lib/db.js";
+import { eq, desc, gte, lt, and, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
+import { checkProfanity } from "../lib/profanityFilter.js";
 
 const GRACE_PERIOD_DAYS = 5;
+
+// Fixed emoji set — buttons, not a freeform picker (keeps rendering and
+// validation simple, and matches "emote buttons" rather than a full emoji
+// keyboard).
+const ALLOWED_REACTIONS = ["👍", "🔥", "💯", "😂", "🚀", "📉"];
 
 // Community chat is a rolling 30-day window — older posts are filtered out
 // of reads and periodically purged from the DB so the table doesn't grow
@@ -76,10 +82,12 @@ async function requireActiveSubscription(req: Request, res: Response, next: () =
 
 const router = Router();
 
-// GET /api/community — fetch posts with author name (all threads), newest first.
-// Only returns posts within the last RETENTION_DAYS days; older posts are
-// periodically purged from the DB entirely (see startRetentionCleanup above).
-router.get("/", requireAuth, async (_req, res) => {
+// GET /api/community — fetch posts with author name (all threads), newest first,
+// plus each post's reaction counts and which of them the requesting member
+// has tapped. Only returns posts within the last RETENTION_DAYS days; older
+// posts are periodically purged from the DB entirely (see
+// startRetentionCleanup above) — their reactions cascade-delete with them.
+router.get("/", requireAuth, async (req: Request, res: Response) => {
   try {
     const rows = await db
       .select({
@@ -97,10 +105,88 @@ router.get("/", requireAuth, async (_req, res) => {
       .orderBy(desc(communityPostsTable.createdAt))
       .limit(200);
 
-    res.json({ posts: rows });
+    const postIds = rows.map((r) => r.id);
+    const reactionsByPost = new Map<string, { counts: Record<string, number>; mine: string[] }>();
+    if (postIds.length > 0) {
+      const reactionRows = await db
+        .select({
+          postId: communityPostReactionsTable.postId,
+          emoji: communityPostReactionsTable.emoji,
+          userId: communityPostReactionsTable.userId,
+        })
+        .from(communityPostReactionsTable)
+        .where(inArray(communityPostReactionsTable.postId, postIds));
+
+      const myId = req.dbUser!.id;
+      for (const r of reactionRows) {
+        const entry = reactionsByPost.get(r.postId) ?? { counts: {}, mine: [] };
+        entry.counts[r.emoji] = (entry.counts[r.emoji] ?? 0) + 1;
+        if (r.userId === myId) entry.mine.push(r.emoji);
+        reactionsByPost.set(r.postId, entry);
+      }
+    }
+
+    const posts = rows.map((r) => ({
+      ...r,
+      reactions: reactionsByPost.get(r.id) ?? { counts: {}, mine: [] },
+    }));
+
+    res.json({ posts, allowedReactions: ALLOWED_REACTIONS });
   } catch (err) {
     logger.error(err, "Failed to fetch community posts");
     res.status(500).json({ error: "Failed to fetch community posts" });
+  }
+});
+
+// POST /api/community/:postId/react — toggle a reaction on/off for the
+// requesting member. Re-tapping the same emoji removes it (relies on the
+// (post_id, user_id, emoji) unique index — insert fails silently.. actually
+// we check existence explicitly below to return an accurate toggled state).
+router.post("/:postId/react", requireAuth, async (req: Request, res: Response) => {
+  const postId = String(req.params.postId);
+  const { emoji } = req.body as { emoji?: string };
+
+  if (!emoji || !ALLOWED_REACTIONS.includes(emoji)) {
+    res.status(400).json({ error: `emoji must be one of: ${ALLOWED_REACTIONS.join(" ")}` });
+    return;
+  }
+
+  const user = req.dbUser!;
+  try {
+    const post = await db.select({ id: communityPostsTable.id }).from(communityPostsTable).where(eq(communityPostsTable.id, postId)).limit(1);
+    if (post.length === 0) {
+      res.status(404).json({ error: "Post not found" });
+      return;
+    }
+
+    const existing = await db
+      .select({ id: communityPostReactionsTable.id })
+      .from(communityPostReactionsTable)
+      .where(
+        and(
+          eq(communityPostReactionsTable.postId, postId),
+          eq(communityPostReactionsTable.userId, user.id),
+          eq(communityPostReactionsTable.emoji, emoji),
+        ),
+      )
+      .limit(1);
+
+    if (existing.length > 0) {
+      await db.delete(communityPostReactionsTable).where(eq(communityPostReactionsTable.id, existing[0].id));
+      res.json({ ok: true, active: false, emoji });
+      return;
+    }
+
+    await db.insert(communityPostReactionsTable).values({
+      id: randomUUID(),
+      postId,
+      userId: user.id,
+      emoji,
+    });
+    res.json({ ok: true, active: true, emoji });
+  } catch (err) {
+    logger.error(err, "Failed to toggle community post reaction");
+    res.status(500).json({ error: "Failed to react to post" });
   }
 });
 
@@ -117,6 +203,11 @@ router.post("/", requireAuth, async (req: Request, res: Response) => {
   }
   if (text.trim().length > 2000) {
     res.status(400).json({ error: "text must be 2000 characters or fewer" });
+    return;
+  }
+  const profanityCheck = checkProfanity(text);
+  if (profanityCheck.blocked) {
+    res.status(422).json({ error: "That message was blocked for inappropriate language.", code: "PROFANITY_BLOCKED" });
     return;
   }
 

@@ -9,6 +9,7 @@ import adminRouter from "./admin.js";
 import communityRouter from "./community.js";
 import watchlistRouter from "./watchlist.js";
 import mentorshipRouter from "./mentorship.js";
+import tradeReviewsRouter from "./tradeReviews.js";
 import "../services/signalScanner.js"; // self-starting scheduler, side-effect import only
 
 const router = Router();
@@ -23,5 +24,6 @@ router.use("/admin", adminRouter);
 router.use("/community", communityRouter);
 router.use("/watchlist", watchlistRouter);
 router.use("/mentorship", mentorshipRouter);
+router.use("/trade-reviews", tradeReviewsRouter);
 
 export default router;

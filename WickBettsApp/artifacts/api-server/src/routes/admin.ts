@@ -5,6 +5,7 @@ import { logger } from "../lib/logger.js";
 import OpenAI from "openai";
 import { requireAuth, requireAdmin, isBootstrapAdmin } from "../middlewares/requireAuth.js";
 import { pickPrimarySubscription } from "../lib/subscriptionUtils.js";
+import { aiRateLimit } from "../middlewares/rateLimit.js";
 
 const router = Router();
 
@@ -82,7 +83,7 @@ router.patch("/users/:id/role", requireAuth, requireAdmin, async (req: Request, 
 });
 
 // POST /api/admin/extract-signal — AI screenshot → signal fields
-router.post("/extract-signal", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+router.post("/extract-signal", requireAuth, requireAdmin, aiRateLimit, async (req: Request, res: Response) => {
   const { imageBase64 } = req.body as { imageBase64?: string };
   if (!imageBase64) {
     res.status(400).json({ error: "imageBase64 is required" });

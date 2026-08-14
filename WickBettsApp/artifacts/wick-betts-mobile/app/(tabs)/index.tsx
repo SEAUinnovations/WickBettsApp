@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
-import { useMarketData } from '@/hooks/useMarketData';
+import { useMarketData, type QuoteItem } from '@/hooks/useMarketData';
 import { useAuth } from '@/context/AuthContext';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { Card, Header, Metric, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
@@ -165,7 +165,7 @@ export default function HomeScreen() {
 
       {/* Market Block Grid */}
       <SectionLabel>Sector heat</SectionLabel>
-      <MarketHeatGrid quotes={market?.quotes ?? []} loading={marketLoading} />
+      <SectorHeatmap quotes={market?.quotes ?? []} loading={marketLoading} />
 
       {isAdmin ? (
         <>
@@ -275,45 +275,138 @@ export default function HomeScreen() {
   );
 }
 
-function MarketHeatGrid({
-  quotes,
-  loading,
-}: {
-  quotes: ReturnType<typeof useMarketData>['data'] extends null ? [] : NonNullable<ReturnType<typeof useMarketData>['data']>['quotes'];
-  loading: boolean;
-}) {
-  const colors = useColors();
-  const shown = quotes.filter((q) => q.group === 'sectors').slice(0, 14);
+// Each key matches a `group` value the API tags quotes with (see
+// routes/market.ts EQUITY_TICKERS/CRYPTO_TICKERS). "sectors" holds the 11
+// SPDR sector ETFs — a real sector heatmap — the rest give the "different
+// sectors/views" switcher something else to show.
+const HEAT_GROUPS: { key: string; label: string }[] = [
+  { key: 'sectors', label: 'Sectors' },
+  { key: 'indices', label: 'Indices' },
+  { key: 'megacap', label: 'Mega-cap' },
+  { key: 'finance', label: 'Finance' },
+  { key: 'macro', label: 'Macro' },
+  { key: 'crypto', label: 'Crypto' },
+];
 
-  if (loading && shown.length === 0) {
-    return (
-      <View style={[styles.heatPlaceholder, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        <ActivityIndicator color={colors.primary} size="small" />
-      </View>
-    );
-  }
+function formatVolume(v: number): string {
+  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1)}B`;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+  return v.toLocaleString();
+}
+
+function SectorHeatmap({ quotes, loading }: { quotes: QuoteItem[]; loading: boolean }) {
+  const colors = useColors();
+  const [activeGroup, setActiveGroup] = React.useState('sectors');
+  const [expandedSymbol, setExpandedSymbol] = React.useState<string | null>(null);
+
+  const shown = quotes.filter((q) => q.group === activeGroup).slice(0, 14);
+  const expanded = expandedSymbol ? shown.find((q) => q.symbol === expandedSymbol) ?? null : null;
+
+  const selectGroup = (key: string) => {
+    if (key === activeGroup) return;
+    void Haptics.selectionAsync();
+    setActiveGroup(key);
+    setExpandedSymbol(null);
+  };
+
+  const toggleTile = (symbol: string) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setExpandedSymbol((prev) => (prev === symbol ? null : symbol));
+  };
 
   return (
-    <View style={styles.heatGrid}>
-      {!loading && shown.length === 0 ? (
+    <View style={styles.heatSection}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.heatPillRow}>
+        {HEAT_GROUPS.map((g) => {
+          const active = g.key === activeGroup;
+          return (
+            <Pressable
+              key={g.key}
+              onPress={() => selectGroup(g.key)}
+              style={[
+                styles.heatPill,
+                {
+                  backgroundColor: active ? colors.primary : colors.secondary,
+                  borderColor: active ? colors.primary : colors.border,
+                },
+              ]}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.heatPillText, { color: active ? colors.primaryForeground : colors.mutedForeground }]}>{g.label}</Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      {loading && shown.length === 0 ? (
         <View style={[styles.heatPlaceholder, { borderColor: colors.border, backgroundColor: colors.card }]}>
-          <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>No symbols available for this focus yet.</Text>
+          <ActivityIndicator color={colors.primary} size="small" />
         </View>
-      ) : null}
-      {shown.map((q) => {
-        const pct = q.changePercent;
-        const bg = pct >= 2 ? '#0d3322' : pct >= 0.5 ? '#13281c' : pct >= -0.5 ? '#1a1a2e' : pct >= -2 ? '#2d0f0f' : '#3d0808';
-        const textColor = pct >= 0.5 ? '#7AE2AA' : pct >= -0.5 ? colors.mutedForeground : '#E27A7A';
-        const label = q.symbol.replace('-USD', '').replace('^', '');
-        return (
-          <View key={q.symbol} style={[styles.heatCell, { backgroundColor: bg, borderColor: colors.border }]}>
-            <Text style={[styles.heatTicker, { color: colors.foreground }]}>{label}</Text>
-            <Text style={[styles.heatPct, { color: textColor }]}>
-              {pct >= 0 ? '+' : ''}{pct.toFixed(2)}%
-            </Text>
+      ) : (
+        <View style={styles.heatGrid}>
+          {!loading && shown.length === 0 ? (
+            <View style={[styles.heatPlaceholder, { borderColor: colors.border, backgroundColor: colors.card }]}>
+              <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>No symbols available for this view yet.</Text>
+            </View>
+          ) : null}
+          {shown.map((q) => {
+            const pct = q.changePercent;
+            const bg = pct >= 2 ? '#0d3322' : pct >= 0.5 ? '#13281c' : pct >= -0.5 ? '#1a1a2e' : pct >= -2 ? '#2d0f0f' : '#3d0808';
+            const textColor = pct >= 0.5 ? '#7AE2AA' : pct >= -0.5 ? colors.mutedForeground : '#E27A7A';
+            const label = q.symbol.replace('-USD', '').replace('^', '');
+            const isExpanded = q.symbol === expandedSymbol;
+            return (
+              <Pressable
+                key={q.symbol}
+                onPress={() => toggleTile(q.symbol)}
+                style={[
+                  styles.heatCell,
+                  { backgroundColor: bg, borderColor: isExpanded ? colors.primary : colors.border },
+                  isExpanded && styles.heatCellActive,
+                ]}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.heatTicker, { color: colors.foreground }]}>{label}</Text>
+                <Text style={[styles.heatPct, { color: textColor }]}>
+                  {pct >= 0 ? '+' : ''}{pct.toFixed(2)}%
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+
+      {expanded ? (
+        <View style={[styles.heatDetail, { borderColor: colors.border, backgroundColor: colors.card }]}>
+          <View style={styles.heatDetailHeader}>
+            <Text style={[styles.heatDetailName, { color: colors.foreground }]}>{expanded.shortName}</Text>
+            <Pressable onPress={() => setExpandedSymbol(null)} accessibilityRole="button">
+              <Ionicons name="close" size={16} color={colors.mutedForeground} />
+            </Pressable>
           </View>
-        );
-      })}
+          <View style={styles.heatDetailRow}>
+            <View style={styles.heatDetailStat}>
+              <Text style={[styles.heatDetailLabel, { color: colors.mutedForeground }]}>Price</Text>
+              <Text style={[styles.heatDetailValue, { color: colors.foreground }]}>{formatPrice(expanded.price, expanded.symbol)}</Text>
+            </View>
+            <View style={styles.heatDetailStat}>
+              <Text style={[styles.heatDetailLabel, { color: colors.mutedForeground }]}>Change</Text>
+              <Text style={[styles.heatDetailValue, { color: changeColor(expanded.changePercent, '#7AE2AA', '#E27A7A', colors.mutedForeground) }]}>
+                {expanded.change >= 0 ? '+' : ''}{expanded.change.toFixed(2)} ({expanded.changePercent >= 0 ? '+' : ''}{expanded.changePercent.toFixed(2)}%)
+              </Text>
+            </View>
+            {expanded.volume ? (
+              <View style={styles.heatDetailStat}>
+                <Text style={[styles.heatDetailLabel, { color: colors.mutedForeground }]}>Volume</Text>
+                <Text style={[styles.heatDetailValue, { color: colors.foreground }]}>{formatVolume(expanded.volume)}</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      ) : (
+        <Text style={[styles.heatHint, { color: colors.mutedForeground }]}>Tap a group to switch views, tap a tile for detail.</Text>
+      )}
     </View>
   );
 }
@@ -340,11 +433,24 @@ const styles = StyleSheet.create({
   metricCardWrap: { minWidth: 110 },
   microLine: { height: 1, marginTop: 14, marginBottom: 10 },
   microText: { fontSize: 9, fontFamily: 'Inter_400Regular', marginTop: 10, textAlign: 'center', letterSpacing: 0.5 },
-  heatGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 22 },
+  heatSection: { marginBottom: 22 },
+  heatPillRow: { gap: 8, paddingRight: 8, marginBottom: 12 },
+  heatPill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 },
+  heatPillText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  heatGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   heatCell: { width: '22%', flexGrow: 1, borderRadius: 12, borderWidth: 1, padding: 10, alignItems: 'center', minHeight: 60, justifyContent: 'center' },
+  heatCellActive: { borderWidth: 1.5 },
   heatTicker: { fontSize: 10, fontFamily: 'Inter_700Bold', marginBottom: 4 },
   heatPct: { fontSize: 12, fontFamily: 'Inter_700Bold' },
-  heatPlaceholder: { height: 80, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginBottom: 22 },
+  heatPlaceholder: { height: 80, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  heatDetail: { borderWidth: 1, borderRadius: 12, padding: 14, marginTop: 10 },
+  heatDetailHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  heatDetailName: { fontSize: 13, fontFamily: 'Inter_700Bold' },
+  heatDetailRow: { flexDirection: 'row', gap: 20 },
+  heatDetailStat: { gap: 3 },
+  heatDetailLabel: { fontSize: 9, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.5, textTransform: 'uppercase' },
+  heatDetailValue: { fontSize: 13, fontFamily: 'Inter_700Bold' },
+  heatHint: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 10, textAlign: 'center' },
   watchlistCard: { marginBottom: 22 },
   adminCard: { marginBottom: 22 },
   adminActions: { gap: 10 },

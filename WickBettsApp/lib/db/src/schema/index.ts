@@ -6,3 +6,4 @@ export * from "./watchlists";
 export * from "./newsOverrides";
 export * from "./mentorshipBookings";
 export * from "./tradeReviews";
+export * from "./communityPostReactions";

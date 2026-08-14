@@ -1,4 +1,5 @@
 import { logger } from "../lib/logger.js";
+import { NASDAQ_HEADERS } from "./httpHeaders.js";
 
 /**
  * "Big news day" awareness for the auto-signal scanner's star flag: does this
@@ -73,14 +74,6 @@ interface EarningsLookupResult {
 const earningsCache = new Map<string, { result: EarningsLookupResult; fetchedAt: number }>();
 const EARNINGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-const HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  Accept: "application/json, text/plain, */*",
-  Origin: "https://www.nasdaq.com",
-  Referer: "https://www.nasdaq.com/",
-};
-
 /** Best-effort next-earnings-date lookup. Returns null on any failure. */
 async function fetchNextEarningsDate(symbol: string): Promise<Date | null> {
   const cached = earningsCache.get(symbol);
@@ -89,7 +82,7 @@ async function fetchNextEarningsDate(symbol: string): Promise<Date | null> {
   }
   try {
     const url = `https://api.nasdaq.com/api/company/${encodeURIComponent(symbol)}/earnings-forecast`;
-    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(6000) });
+    const res = await fetch(url, { headers: NASDAQ_HEADERS, signal: AbortSignal.timeout(6000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = (await res.json()) as {
       data?: { earningsForecastValues?: unknown; earningsDate?: { nextReportDate?: string } };

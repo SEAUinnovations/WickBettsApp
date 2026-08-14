@@ -99,32 +99,28 @@ export default function ProfileScreen() {
   }, [getToken, updateNotificationPrefs]);
 
   /**
-   * Turning a toggle ON only means something if the device actually has a
-   * registered push token. Registration normally happens once, silently,
-   * right after sign-in — but if the OS permission prompt was dismissed or
-   * denied at that point, nothing ever retries it, so flipping a toggle ON
-   * later in Settings looked like it worked while no push could ever
-   * actually arrive. Re-request permission (and register the token if still
-   * missing) every time a toggle is turned on, and tell the user plainly if
-   * it can't be delivered instead of leaving the switch on silently.
+   * These toggles now back BOTH delivery channels — push (device token) and
+   * email (server-side, via the same notifySignals/notifyNews columns; see
+   * emailNotifications.ts on the API). Push registration is attempted
+   * best-effort so a device with a live token gets both, but a denied OS
+   * permission or an unsupported platform (web has no push at all) must
+   * never block saving the preference — email alerts still need to go out
+   * regardless. This used to hard-block the toggle on 'denied', which meant
+   * a user who declined the push prompt once could never get email alerts
+   * either. Now it only informs, never blocks.
    */
-  const confirmPushDeliverable = useCallback(async (): Promise<boolean> => {
+  const confirmPushDeliverable = useCallback(async (): Promise<void> => {
     const result = await ensurePushRegistered();
     if (result === 'denied') {
       Alert.alert(
-        'Notifications are off for this app',
-        'Enable notifications for Wick Betts in your device Settings to receive push alerts.',
+        'Push is off for this app',
+        "You'll still get email alerts. Enable notifications for Wick Betts in your device Settings to also receive push.",
       );
-      return false;
     }
-    // 'unsupported' (web) and 'error' still let the preference save — web
-    // simply can't back it with a device token yet, and a transient error
-    // shouldn't block the user from expressing their preference.
-    return true;
   }, [ensurePushRegistered]);
 
   const handlePushMaster = useCallback(async (value: boolean) => {
-    if (value && !(await confirmPushDeliverable())) return;
+    if (value) void confirmPushDeliverable();
     setPushMaster(value);
     const newSignals = value ? true : false;
     setNotifySignals(newSignals);
@@ -133,14 +129,14 @@ export default function ProfileScreen() {
   }, [notifyNews, savePrefs, confirmPushDeliverable]);
 
   const handleSignalsToggle = useCallback(async (value: boolean) => {
-    if (value && !(await confirmPushDeliverable())) return;
+    if (value) void confirmPushDeliverable();
     setNotifySignals(value);
     if (value) setPushMaster(true);
     await savePrefs({ notifySignals: value });
   }, [savePrefs, confirmPushDeliverable]);
 
   const handleNewsToggle = useCallback(async (value: boolean) => {
-    if (value && !(await confirmPushDeliverable())) return;
+    if (value) void confirmPushDeliverable();
     setNotifyNews(value);
     if (value) setPushMaster(true);
     await savePrefs({ notifyNews: value });
@@ -329,22 +325,22 @@ export default function ProfileScreen() {
       <Card style={styles.settingsCard}>
         <SettingRow
           icon="notifications-outline"
-          title="Push notifications"
-          subtitle="Enable all push alerts"
+          title="Push & email alerts"
+          subtitle="Enable all alerts"
           value={pushMaster}
           onChange={handlePushMaster}
         />
         <SettingRow
           icon="pulse-outline"
           title="New signals"
-          subtitle="When Wick posts a new setup"
+          subtitle="When Wick posts a new setup — push + email"
           value={notifySignals}
           onChange={handleSignalsToggle}
         />
         <SettingRow
           icon="newspaper-outline"
           title="Major news"
-          subtitle="Only market-moving updates"
+          subtitle="Market-moving updates — push + email"
           value={notifyNews}
           onChange={handleNewsToggle}
         />

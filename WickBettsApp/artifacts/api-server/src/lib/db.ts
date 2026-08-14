@@ -56,4 +56,9 @@ export {
   insertTradeReviewSchema,
   type InsertTradeReview,
   type TradeReview,
+  // Community post reactions
+  communityPostReactionsTable,
+  insertCommunityPostReactionSchema,
+  type InsertCommunityPostReaction,
+  type CommunityPostReaction,
 } from "@workspace/db";

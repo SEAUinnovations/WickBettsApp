@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import Stripe from "stripe";
 import { db, usersTable, subscriptionsTable } from "../lib/db.js";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
@@ -12,6 +12,13 @@ const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 const PRICE_SIGNALS = process.env.STRIPE_PRICE_SIGNALS;
 const PRICE_MENTORSHIP = process.env.STRIPE_PRICE_MENTORSHIP;
 const PRICE_MEMBERSHIP = process.env.STRIPE_PRICE_MEMBERSHIP;
+
+// Trade review credits are a fixed $2.50 one-time add-on, not a
+// subscription plan — built with Stripe's inline `price_data` rather than
+// a pre-created Price/Product ID (like PRICE_SIGNALS etc. above) since the
+// amount is fixed and doesn't need catalog management or another env var
+// for ops to configure. See docs/adr/0003-trade-review-ai-provider.md.
+const TRADE_REVIEW_CREDIT_PRICE_CENTS = 250;
 
 type ProductPlan = "signals" | "mentorship" | "membership";
 const ALLOWED_PLANS: ProductPlan[] = ["signals", "mentorship", "membership"];
@@ -142,6 +149,75 @@ router.post("/create-checkout", requireAuth, async (req: Request, res: Response)
     // from the client instead of a generic "something went wrong".
     const isConfigError = message.includes("No active Stripe price found") || message.includes("No such price");
     res.status(isConfigError ? 503 : 500).json({ error: isConfigError ? message : "Failed to create checkout session" });
+  }
+});
+
+// ── POST /api/stripe/trade-review-credit-checkout ─────────────────────────────
+// One-time $2.50 purchase for a single extra Review My Trade credit, used
+// once a member exhausts their 4 free reviews for the rolling week (see
+// routes/tradeReviews.ts). Separate from create-checkout above because this
+// is `mode: "payment"` (a single charge), not `mode: "subscription"`.
+router.post("/trade-review-credit-checkout", requireAuth, async (req: Request, res: Response) => {
+  const stripe = getStripe();
+  if (!stripe) {
+    res.status(503).json({ error: "Stripe is not configured. Add STRIPE_SECRET_KEY to proceed." });
+    return;
+  }
+
+  const user = req.dbUser!;
+  const appOrigin = resolveAppOrigin();
+
+  try {
+    let customerId = user.stripeCustomerId;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: user.email,
+        name: user.name,
+        metadata: { userId: user.id },
+      });
+      customerId = customer.id;
+      await db
+        .update(usersTable)
+        .set({ stripeCustomerId: customerId, updatedAt: new Date() })
+        .where(eq(usersTable.id, user.id));
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      customer: customerId,
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            unit_amount: TRADE_REVIEW_CREDIT_PRICE_CENTS,
+            product_data: {
+              name: "Wick Betts — Extra Trade Review",
+              description: "One additional Review My Trade submission beyond your weekly free 4.",
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      // Set at both the Session and PaymentIntent level: the webhook
+      // handler reads it off `checkout.session.completed`'s session object,
+      // but keeping it on the PaymentIntent too means it's still
+      // recoverable from the Stripe dashboard/API if that event is ever
+      // missed and someone has to reconcile a charge by hand.
+      metadata: { userId: user.id, type: "trade_review_credit" },
+      payment_intent_data: {
+        metadata: { userId: user.id, type: "trade_review_credit" },
+      },
+      success_url: `${appOrigin}/?checkout=success`,
+      cancel_url: `${appOrigin}/?checkout=cancelled`,
+    });
+    if (!session.url) {
+      res.status(500).json({ error: "Stripe did not return a checkout URL" });
+      return;
+    }
+    res.json({ url: session.url });
+  } catch (err) {
+    logger.error(err, "Trade review credit checkout creation failed");
+    res.status(500).json({ error: "Failed to start checkout. Please try again." });
   }
 });
 
@@ -343,6 +419,29 @@ router.post(
             .update(subscriptionsTable)
             .set({ status: "canceled", updatedAt: new Date() } as object)
             .where(eq(subscriptionsTable.stripeSubscriptionId, sub.id));
+          break;
+        }
+        case "checkout.session.completed": {
+          const session = event.data.object as Stripe.Checkout.Session;
+          // Only the trade-review-credit flow uses mode: "payment" with this
+          // metadata shape — subscription checkouts (create-checkout above)
+          // are mode: "subscription" and handled entirely by the
+          // customer.subscription.* cases, so this only fires for credits.
+          if (session.mode === "payment" && session.metadata?.type === "trade_review_credit") {
+            const userId = session.metadata.userId;
+            if (!userId) {
+              logger.warn({ sessionId: session.id }, "Trade review credit checkout completed with no userId in metadata");
+              break;
+            }
+            await db
+              .update(usersTable)
+              .set({
+                extraTradeReviewCredits: sql`${usersTable.extraTradeReviewCredits} + 1`,
+                updatedAt: new Date(),
+              } as object)
+              .where(eq(usersTable.id, userId));
+            logger.info({ userId, sessionId: session.id }, "Trade review credit purchased");
+          }
           break;
         }
         default:

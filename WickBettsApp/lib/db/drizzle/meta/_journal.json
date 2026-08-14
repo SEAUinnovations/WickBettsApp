@@ -57,6 +57,20 @@
       "when": 1786687200000,
       "tag": "0007_trade_reviews",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786687300000,
+      "tag": "0008_trade_review_credits",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786687400000,
+      "tag": "0009_community_post_reactions",
+      "breakpoints": true
     }
   ]
 }
