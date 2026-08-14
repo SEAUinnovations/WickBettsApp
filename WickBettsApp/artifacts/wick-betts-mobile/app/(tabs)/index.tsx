@@ -9,6 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { Card, Header, Metric, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
 import { TickerAutocomplete } from '@/components/TickerAutocomplete';
+import { SubscribePanel } from '@/components/Billing';
 
 function changeColor(pct: number, positive: string, negative: string, neutral: string): string {
   if (pct > 0) return positive;
@@ -26,13 +27,32 @@ export default function HomeScreen() {
   const router = useRouter();
   const colors = useColors();
   const { data: market, loading: marketLoading } = useMarketData();
-  const { user } = useAuth();
+  const { user, subscription } = useAuth();
   const { items: watchlistItems, loading: watchlistLoading, saving: watchlistSaving, error: watchlistError, addItem, removeItem } = useWatchlist();
   const [symbolInput, setSymbolInput] = React.useState('');
   const [noteInput, setNoteInput] = React.useState('');
   const [targetInput, setTargetInput] = React.useState('');
   const username = user?.name ?? 'Member';
   const isAdmin = user?.role === 'admin';
+
+  // The dashboard surfaces paid content (market data, signal teaser) — members
+  // with no subscription at all only get Community and Profile for free;
+  // everything else, including Home, shows an upsell instead of real data.
+  if (subscription === null && !isAdmin) {
+    return (
+      <Screen contentStyle={styles.content}>
+        <Header eyebrow="Wick Betts / Welcome" title={`Hi, ${username}.`} />
+        <View style={[styles.statusBanner, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+          <Ionicons name="lock-closed-outline" size={16} color={colors.primary} />
+          <Text style={[styles.statusText, { color: colors.accent }]}>YOUR DESK IS ONE STEP AWAY</Text>
+        </View>
+        <Text style={[styles.heroBody, { color: colors.mutedForeground, marginBottom: 20 }]}>
+          Subscribe to a plan to unlock the morning brief, live signals, and market data. You can still catch up in Community while you decide.
+        </Text>
+        <SubscribePanel />
+      </Screen>
+    );
+  }
 
   const pushProtected = (href: '/mentorship' | '/(tabs)/signals') => {
     if (!user) {

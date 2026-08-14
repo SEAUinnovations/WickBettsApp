@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -150,14 +151,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [subscription, setSubscription] = useState<AuthSubscription | null>(null);
   const [isLoadingData, setIsLoadingData] = useState(false);
 
+  // Clerk's `getToken` function is not guaranteed to be referentially stable
+  // across renders. Since `getToken` is used as a useCallback/useEffect
+  // dependency both here and in every screen/context that fetches data
+  // (SignalContext, community, news, market...), an unstable identity here
+  // cascades into an infinite render -> refetch -> render loop across the
+  // whole app — which was hammering the backend with repeated requests.
+  // Route today's Clerk getter through a ref so the identity of `getToken`
+  // below never changes, regardless of how often Clerk's hook re-renders.
+  const clerkGetTokenRef = useRef(clerkGetToken);
+  useEffect(() => {
+    clerkGetTokenRef.current = clerkGetToken;
+  });
+
   /** Thin wrapper that catches errors and returns null instead of throwing */
   const getToken = useCallback(async (): Promise<string | null> => {
     try {
-      return await clerkGetToken();
+      return await clerkGetTokenRef.current();
     } catch {
       return null;
     }
-  }, [clerkGetToken]);
+  }, []);
 
   const getTokenWithTimeout = useCallback(async (): Promise<string | null> => {
     const timeout = new Promise<null>((resolve) => {

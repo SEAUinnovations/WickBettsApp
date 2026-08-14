@@ -13,8 +13,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Card, Header, SectionLabel, Tag } from '@/components/WickUI';
+import { LapsedRecovery, SubscribePanel } from '@/components/Billing';
 import { useColors } from '@/hooks/useColors';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, type Plan } from '@/context/AuthContext';
 import { API_BASE } from '@/lib/apiUrl';
 import { useNewsFeed, type NewsArticle } from '@/hooks/useNewsFeed';
 
@@ -104,9 +105,9 @@ function NewsCard({ article, isSaved, onToggleSave }: {
 
 export default function NewsScreen() {
   const router = useRouter();
-  const { user, getToken } = useAuth();
+  const { user, subscription, getToken } = useAuth();
   const colors = useColors();
-  const { articles, loading, error, refresh } = useNewsFeed();
+  const { articles, loading, error, subscriptionRequired, refresh } = useNewsFeed();
   const [saved, setSaved] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const isAdmin = user?.role === 'admin';
@@ -181,7 +182,30 @@ export default function NewsScreen() {
         </Card>
       ) : null}
 
-      {loading && !refreshing && articles.length === 0 ? (
+      {subscriptionRequired ? (
+        <View style={[styles.errorCard, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+          <Ionicons name="lock-closed-outline" size={24} color={colors.primary} />
+          <Text style={[styles.errorTitle, { color: colors.foreground }]}>
+            {subscription?.status === 'past_due' ? 'Payment past due' : 'The newsroom is for members'}
+          </Text>
+          <Text style={[styles.errorText, { color: colors.mutedForeground }]}>
+            {subscription?.status === 'past_due'
+              ? "Your last payment didn't go through. Update your payment method to restore access."
+              : subscription
+              ? 'An active subscription is needed to view live headlines. Re-subscribe below to get back in.'
+              : 'An active subscription unlocks live market headlines curated for the desk.'}
+          </Text>
+          {subscription ? (
+            <LapsedRecovery
+              status={subscription.status}
+              plan={subscription.plan as Plan}
+              hasStripeCustomer={user?.hasStripeCustomer ?? false}
+            />
+          ) : (
+            <SubscribePanel />
+          )}
+        </View>
+      ) : loading && !refreshing && articles.length === 0 ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator color={colors.primary} size="large" />
           <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Pulling the latest headlines…</Text>
@@ -282,6 +306,7 @@ const styles = StyleSheet.create({
   loadingWrap: { alignItems: 'center', paddingVertical: 40, gap: 14 },
   loadingText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
   errorCard: { borderWidth: 1, borderRadius: 16, padding: 20, alignItems: 'center', gap: 10, marginBottom: 20 },
+  errorTitle: { fontSize: 15, fontFamily: 'Inter_700Bold', textAlign: 'center' },
   errorText: { fontSize: 12, fontFamily: 'Inter_400Regular', textAlign: 'center' },
   retryButton: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
   retryText: { fontSize: 13, fontFamily: 'Inter_700Bold' },
