@@ -8,6 +8,7 @@
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
+    "verify:stripe:prod-test": "pnpm --filter @workspace/scripts run verify:stripe:prod-test",
     "railway:build": "PORT=3000 BASE_PATH=/ pnpm --filter @workspace/wick-betts build && pnpm --filter @workspace/api-server build",
     "railway:start": "node artifacts/api-server/dist/index.mjs"
   },

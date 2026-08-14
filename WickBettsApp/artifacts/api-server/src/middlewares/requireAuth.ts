@@ -7,6 +7,14 @@ import { logger } from "../lib/logger.js";
 
 const SUPER_ADMIN_EMAIL = "bettstahlik@gmail.com";
 
+function isClerkConfigured(): boolean {
+  return Boolean(
+    process.env.CLERK_SECRET_KEY?.trim()
+      || process.env.CLERK_SECRET?.trim()
+      || process.env.CLERK_API_KEY?.trim()
+  );
+}
+
 /**
  * Resolve the authenticated user's primary email and display name from Clerk.
  *
@@ -130,6 +138,11 @@ export async function jitProvisionUser(identity: {
  * and all other app-specific columns.
  */
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!isClerkConfigured()) {
+    res.status(401).json({ error: "Authentication is not configured" });
+    return;
+  }
+
   let auth;
   try {
     auth = getAuth(req);

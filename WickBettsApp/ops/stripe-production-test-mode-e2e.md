@@ -17,6 +17,36 @@ Purpose: verify end-to-end purchase and webhook processing for Signals, Mentorsh
 3. Use one tester per plan to avoid cross-plan contamination.
 4. Do not run this during a high-traffic window.
 
+### Key labeling requirement
+
+- Test secret keys must start with `sk_test_`.
+- Test publishable keys must start with `pk_test_`.
+- Live keys (`sk_live_`, `pk_live_`) must remain separate and unchanged during this run.
+
+## Automated readiness gate
+
+Before running manual checkout flows, run:
+
+```bash
+pnpm run verify:stripe:prod-test
+```
+
+This checks:
+
+- `GET /healthz` and `GET /api/healthz` on production domain
+- Railway origin `GET /healthz`
+- `GET /api/news/feed` availability
+- CORS preflight reachability for `POST /api/stripe/create-checkout`
+- unauthenticated checkout route behavior (`401` expected)
+
+Optional overrides:
+
+```bash
+APP_ORIGIN_TO_TEST=https://wickbetts.com \
+RAILWAY_ORIGIN_TO_TEST=https://wickbettsapp-production.up.railway.app \
+pnpm run verify:stripe:prod-test
+```
+
 ## Preflight
 
 1. Confirm deployed frontend includes all three checkout actions.
