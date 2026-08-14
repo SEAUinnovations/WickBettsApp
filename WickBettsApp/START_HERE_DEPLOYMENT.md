@@ -27,10 +27,10 @@ Phase B: Frontend deploy automation
 Phase B.1: Backend CI test coverage
 
 1. Confirm workflow `.github/workflows/backend-test.yml` is present on `main`.
-2. Add auth/runtime test secrets (or variables) for CI:
-   - `CLERK_SECRET_KEY`
-   - `SESSION_SECRET`
-3. Push to `main` and verify backend smoke tests pass.
+2. Add test-mode Stripe verification secrets (or variables) for CI:
+   - `STRIPE_SECRET_KEY_TEST=<sk_test_...>`
+   - `STRIPE_PUBLISHABLE_KEY_TEST=<pk_test_...>`
+3. Push to `main` and verify the backend Stripe readiness gate passes.
 
 Phase C: Cloudflare Pages + DNS
 
