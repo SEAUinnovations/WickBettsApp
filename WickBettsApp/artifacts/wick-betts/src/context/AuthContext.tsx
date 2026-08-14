@@ -10,6 +10,12 @@ import React, {
 import { useAuth as useClerkAuth, useUser } from '@clerk/react';
 import { apiPath } from '../lib/api';
 
+const devAuthMode = (import.meta.env.VITE_DEV_AUTH_MODE as string | undefined)?.trim().toLowerCase();
+const isDevAuthMode = devAuthMode === 'localhost' || devAuthMode === 'dev';
+const devAuthEmail = (import.meta.env.VITE_DEV_AUTH_EMAIL as string | undefined)?.trim() || 'dev@wickbetts.local';
+const devAuthName = (import.meta.env.VITE_DEV_AUTH_NAME as string | undefined)?.trim() || 'Dev User';
+const devAuthRole = (import.meta.env.VITE_DEV_AUTH_ROLE as string | undefined)?.trim().toLowerCase() === 'admin' ? 'admin' : 'member';
+
 export type UserRole = 'member' | 'admin';
 
 export interface AuthUser {
@@ -60,6 +66,14 @@ async function authHeaders(
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  if (isDevAuthMode) {
+    return <DevAuthProvider>{children}</DevAuthProvider>;
+  }
+
+  return <ClerkAuthProvider>{children}</ClerkAuthProvider>;
+}
+
+function ClerkAuthProvider({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, signOut: clerkSignOut, getToken: clerkGetToken } = useClerkAuth();
   const { user: clerkUser } = useUser();
 
@@ -180,6 +194,112 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       openBillingPortal,
     }),
     [getToken, logout, openBillingPortal, isLoading, refresh, startCheckout, subscription, user],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+function DevAuthProvider({ children }: { children: ReactNode }) {
+  const [dbUser, setDbUser] = useState<AuthUser | null>(null);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [isLoadingData, setIsLoadingData] = useState(false);
+
+  const getToken = useCallback(async (): Promise<string | null> => null, []);
+
+  const fetchUserData = useCallback(async () => {
+    setIsLoadingData(true);
+    try {
+      const [meRes, subRes] = await Promise.all([
+        fetch(apiPath('/auth/me')),
+        fetch(apiPath('/stripe/subscription')),
+      ]);
+      if (meRes.ok) {
+        setDbUser((await meRes.json()) as AuthUser);
+      } else {
+        setDbUser({
+          id: 'dev-user',
+          email: devAuthEmail,
+          name: devAuthName,
+          avatarUrl: null,
+          role: devAuthRole,
+          hasStripeCustomer: false,
+          notifySignals: true,
+          notifyNews: false,
+        });
+      }
+      if (subRes.ok) {
+        const subData = (await subRes.json()) as { subscription: Subscription | null };
+        setSubscription(subData.subscription);
+      }
+    } catch {
+      setDbUser({
+        id: 'dev-user',
+        email: devAuthEmail,
+        name: devAuthName,
+        avatarUrl: null,
+        role: devAuthRole,
+        hasStripeCustomer: false,
+        notifySignals: true,
+        notifyNews: false,
+      });
+      setSubscription(null);
+    } finally {
+      setIsLoadingData(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchUserData();
+  }, [fetchUserData]);
+
+  const refresh = useCallback(async () => {
+    await fetchUserData();
+  }, [fetchUserData]);
+
+  const logout = useCallback(async () => {
+    setDbUser(null);
+    setSubscription(null);
+  }, []);
+
+  const startCheckout = useCallback(async (plan: 'signals' | 'mentorship' | 'membership') => {
+    const r = await fetch(apiPath('/stripe/create-checkout'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan }),
+    });
+    if (!r.ok) {
+      const err = (await r.json()) as { error: string };
+      throw new Error(err.error);
+    }
+    const { url } = (await r.json()) as { url: string };
+    window.location.href = url;
+  }, []);
+
+  const openBillingPortal = useCallback(async () => {
+    const r = await fetch(apiPath('/stripe/create-portal'), { method: 'POST' });
+    if (!r.ok) {
+      const err = (await r.json()) as { error: string };
+      throw new Error(err.error);
+    }
+    const { url } = (await r.json()) as { url: string };
+    window.location.href = url;
+  }, []);
+
+  const user = useMemo<AuthUser | null>(() => dbUser, [dbUser]);
+
+  const value = useMemo<AuthState>(
+    () => ({
+      user,
+      subscription,
+      isLoading: isLoadingData,
+      isAuthenticated: !!user,
+      getToken,
+      refresh,
+      logout,
+      startCheckout,
+      openBillingPortal,
+    }),
+    [getToken, logout, openBillingPortal, isLoadingData, refresh, startCheckout, subscription, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

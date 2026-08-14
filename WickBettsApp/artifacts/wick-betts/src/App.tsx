@@ -11,6 +11,8 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { apiPath } from './lib/api';
 
 const clerkPubKey = (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string) ?? '';
+const devAuthMode = (import.meta.env.VITE_DEV_AUTH_MODE as string | undefined)?.trim().toLowerCase();
+const isDevAuthMode = devAuthMode === 'localhost' || devAuthMode === 'dev';
 // Proxy is only active in production (the API server's clerkProxyMiddleware is a
 // no-op in dev). Using it in dev routes Clerk's JS through Express which has no
 // handler for /__clerk, producing 500s and a blank sign-in page.
@@ -344,14 +346,17 @@ const GRACE_PERIOD_DAYS = 5;
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, subscription } = useAuth();
   const [location, setLocation] = useLocation();
+  const isDevAuthMode = (import.meta.env.VITE_DEV_AUTH_MODE as string | undefined)?.trim().toLowerCase() === 'localhost'
+    || (import.meta.env.VITE_DEV_AUTH_MODE as string | undefined)?.trim().toLowerCase() === 'dev';
 
   const shouldRedirect =
     !isLoading && (!isAuthenticated || subscription === null);
 
   useEffect(() => {
+    if (isDevAuthMode) return;
     // Guard on current location to avoid a pushState loop while unmounting
     if (shouldRedirect && location !== '/') setLocation('/');
-  }, [shouldRedirect, location, setLocation]);
+  }, [isDevAuthMode, shouldRedirect, location, setLocation]);
 
   // isLoading covers both Clerk initialization and data fetch in-flight
   if (isLoading) return <div className="loading-screen"><div className="loading-mark">W</div></div>;
@@ -1580,13 +1585,22 @@ function AppRouter() {
 
   // Redirect authenticated members away from landing
   useEffect(() => {
-    if (!isLoading && isAuthenticated && isLanding) {
+    if (!isLoading && isLanding) {
       const params = new URLSearchParams(window.location.search);
-      if (params.get('checkout') !== 'success' && params.get('auth') !== 'success') {
+      const isSuccessCallback = params.get('checkout') === 'success' || params.get('auth') === 'success';
+
+      if (isSuccessCallback) {
+        setLocation('/app/home');
+        return;
+      }
+
+      if (isAuthenticated && isDevAuthMode) return;
+
+      if (isAuthenticated) {
         setLocation('/app/home');
       }
     }
-  }, [isAuthenticated, isLanding, isLoading, setLocation]);
+  }, [isAuthenticated, isLanding, isLoading, isDevAuthMode, setLocation]);
 
   if (!isLoading && isAuthenticated && (isSignIn || isSignUp)) return null;
   if (isSignIn) return <SignInPage />;
@@ -1639,10 +1653,18 @@ function ClerkProviderWithRoutes() {
   );
 }
 
+function DevAuthRoutes() {
+  return (
+    <AuthProvider>
+      <AppRouter />
+    </AuthProvider>
+  );
+}
+
 export default function App() {
   return (
     <WouterRouter base={(import.meta.env.BASE_URL as string).replace(/\/$/, '')}>
-      <ClerkProviderWithRoutes />
+      {isDevAuthMode ? <DevAuthRoutes /> : <ClerkProviderWithRoutes />}
     </WouterRouter>
   );
 }

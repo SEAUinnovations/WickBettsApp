@@ -7,6 +7,7 @@ import { requireAuth } from "../middlewares/requireAuth.js";
 import { pickPrimarySubscription } from "../lib/subscriptionUtils.js";
 
 const router = Router();
+const isDevAuthMode = (process.env.DEV_AUTH_MODE?.trim().toLowerCase() === "localhost") || (process.env.DEV_AUTH_MODE?.trim().toLowerCase() === "dev");
 
 async function resolveClerkMetadata(userId: string): Promise<{
   timezone: string;
@@ -25,6 +26,21 @@ async function resolveClerkMetadata(userId: string): Promise<{
  */
 router.get("/me", requireAuth, (req: Request, res: Response) => {
   const user = req.dbUser!;
+  if (isDevAuthMode) {
+    res.json({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+      role: user.role,
+      hasStripeCustomer: !!user.stripeCustomerId,
+      notifySignals: user.notifySignals ?? true,
+      notifyNews: user.notifyNews ?? false,
+      timezone: null,
+    });
+    return;
+  }
+
   const auth = getAuth(req);
   void resolveClerkMetadata(auth.userId!)
     .then((metadata) => {

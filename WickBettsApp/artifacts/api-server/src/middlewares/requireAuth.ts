@@ -7,6 +7,45 @@ import { logger } from "../lib/logger.js";
 
 const SUPER_ADMIN_EMAIL = "bettstahlik@gmail.com";
 
+function getDevAuthMode(): string {
+  return (process.env.DEV_AUTH_MODE ?? process.env.AUTH_BYPASS_MODE ?? "").trim().toLowerCase();
+}
+
+function isLocalRequest(req: Request): boolean {
+  const host = (req.headers.host ?? "").toLowerCase();
+  const origin = typeof req.headers.origin === "string" ? req.headers.origin.toLowerCase() : "";
+  return host.includes("localhost") || host.startsWith("127.0.0.1") || origin.includes("localhost") || origin.includes("127.0.0.1");
+}
+
+function isDevAuthEnabled(req: Request): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  const mode = getDevAuthMode();
+  return (mode === "localhost" || mode === "dev") && isLocalRequest(req);
+}
+
+async function provisionDevUser(req: Request): Promise<import("@workspace/db").User | null> {
+  const email = process.env.DEV_AUTH_EMAIL?.trim() || "dev@wickbetts.local";
+  const firstName = process.env.DEV_AUTH_FIRST_NAME?.trim() || "Dev";
+  const lastName = process.env.DEV_AUTH_LAST_NAME?.trim() || "User";
+  const username = process.env.DEV_AUTH_USERNAME?.trim() || "";
+  const role = process.env.DEV_AUTH_ROLE?.trim() === "admin" ? "admin" : "member";
+
+  const user = await jitProvisionUser({ email, firstName, lastName, username });
+  if (!user) return null;
+
+  if (role === "admin" && user.role !== "admin") {
+    try {
+      await db.update(usersTable).set({ role: "admin", updatedAt: new Date() }).where(eq(usersTable.id, user.id));
+      return { ...user, role: "admin" as const };
+    } catch (err) {
+      logger.warn(err, "provisionDevUser: could not promote dev user to admin");
+    }
+  }
+
+  logger.info({ email, mode: getDevAuthMode() }, "Dev auth bypass provisioned local test user");
+  return user;
+}
+
 function isClerkConfigured(): boolean {
   return Boolean(
     process.env.CLERK_SECRET_KEY?.trim()
@@ -138,6 +177,24 @@ export async function jitProvisionUser(identity: {
  * and all other app-specific columns.
  */
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (isDevAuthEnabled(req)) {
+    void (async () => {
+      const user = await provisionDevUser(req);
+      if (!user) {
+        res.status(500).json({ error: "Failed to provision dev test user" });
+        return;
+      }
+      req.dbUser = user;
+      next();
+    })().catch((err) => {
+      logger.error(err, "requireAuth: dev auth bypass failed");
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+    return;
+  }
+
   if (!isClerkConfigured()) {
     res.status(401).json({ error: "Authentication is not configured" });
     return;
