@@ -62,4 +62,14 @@ export {
   insertCommunityPostReactionSchema,
   type InsertCommunityPostReaction,
   type CommunityPostReaction,
+  // Member-shared signals + follows
+  communitySignalsTable,
+  communitySignalStatusEnum,
+  insertCommunitySignalSchema,
+  type InsertCommunitySignal,
+  type CommunitySignal,
+  memberFollowsTable,
+  insertMemberFollowSchema,
+  type InsertMemberFollow,
+  type MemberFollow,
 } from "@workspace/db";

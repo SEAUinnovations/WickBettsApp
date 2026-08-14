@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { db, communityPostsTable, communityPostReactionsTable, usersTable, subscriptionsTable } from "../lib/db.js";
+import { db, communityPostsTable, communityPostReactionsTable, communitySignalsTable, memberFollowsTable, usersTable, subscriptionsTable } from "../lib/db.js";
 import { eq, desc, gte, lt, and, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger.js";
@@ -232,6 +232,231 @@ router.post("/", requireAuth, async (req: Request, res: Response) => {
   } catch (err) {
     logger.error(err, "Failed to create community post");
     res.status(500).json({ error: "Failed to create community post" });
+  }
+});
+
+const MAX_SIGNAL_NOTE_LENGTH = 500;
+
+// GET /api/community/signals — member-shared trade ideas, distinct from the
+// admin-curated /api/signals feed (these never appear there — see
+// docs/adr). Returns the full recent set plus the requester's follow list;
+// the Following/All split happens client-side, same pattern as GET / above.
+router.get("/signals", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const rows = await db
+      .select({
+        id: communitySignalsTable.id,
+        authorId: communitySignalsTable.authorId,
+        asset: communitySignalsTable.asset,
+        market: communitySignalsTable.market,
+        direction: communitySignalsTable.direction,
+        entry: communitySignalsTable.entry,
+        target: communitySignalsTable.target,
+        stop: communitySignalsTable.stop,
+        note: communitySignalsTable.note,
+        status: communitySignalsTable.status,
+        createdAt: communitySignalsTable.createdAt,
+        updatedAt: communitySignalsTable.updatedAt,
+        authorName: usersTable.name,
+        avatarUrl: usersTable.avatarUrl,
+      })
+      .from(communitySignalsTable)
+      .leftJoin(usersTable, eq(communitySignalsTable.authorId, usersTable.id))
+      .orderBy(desc(communitySignalsTable.createdAt))
+      .limit(200);
+
+    const followingRows = await db
+      .select({ followingId: memberFollowsTable.followingId })
+      .from(memberFollowsTable)
+      .where(eq(memberFollowsTable.followerId, req.dbUser!.id));
+
+    res.json({ signals: rows, following: followingRows.map((r) => r.followingId) });
+  } catch (err) {
+    logger.error(err, "Failed to fetch community signals");
+    res.status(500).json({ error: "Failed to fetch community signals" });
+  }
+});
+
+// POST /api/community/signals — share your own trade idea (members + admins).
+// Deliberately lean: ticker, market, direction, entry/target, optional stop,
+// and a short thesis note — no options/Greeks detail, keeping this distinct
+// from Wick's curated options plays in the paid /signals feed.
+router.post("/signals", requireAuth, async (req: Request, res: Response) => {
+  const { asset, market, direction, entry, target, stop, note } = req.body as {
+    asset?: string; market?: "Stocks" | "Crypto"; direction?: "Long" | "Short";
+    entry?: string; target?: string; stop?: string; note?: string;
+  };
+
+  if (!asset?.trim() || !entry?.trim() || !target?.trim() || !note?.trim()) {
+    res.status(400).json({ error: "asset, entry, target, and note are required" });
+    return;
+  }
+  if (market != null && market !== "Stocks" && market !== "Crypto") {
+    res.status(400).json({ error: "Invalid market value" });
+    return;
+  }
+  if (direction != null && direction !== "Long" && direction !== "Short") {
+    res.status(400).json({ error: "Invalid direction value" });
+    return;
+  }
+  if (note.trim().length > MAX_SIGNAL_NOTE_LENGTH) {
+    res.status(400).json({ error: `note must be ${MAX_SIGNAL_NOTE_LENGTH} characters or fewer` });
+    return;
+  }
+  const profanityCheck = checkProfanity(note);
+  if (profanityCheck.blocked) {
+    res.status(422).json({ error: "That note was blocked for inappropriate language.", code: "PROFANITY_BLOCKED" });
+    return;
+  }
+
+  const user = req.dbUser!;
+  try {
+    const record = {
+      id: randomUUID(),
+      authorId: user.id,
+      asset: asset.trim().toUpperCase(),
+      market: market ?? "Stocks",
+      direction: direction ?? "Long",
+      entry: entry.trim(),
+      target: target.trim(),
+      stop: stop?.trim() || undefined,
+      note: note.trim(),
+    };
+    await db.insert(communitySignalsTable).values(record);
+    logger.info({ signalId: record.id, authorId: user.id, asset: record.asset }, "Community signal shared");
+    res.status(201).json({
+      signal: {
+        ...record,
+        status: "Open",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        authorName: user.name,
+        avatarUrl: user.avatarUrl,
+      },
+    });
+  } catch (err) {
+    logger.error(err, "Failed to share community signal");
+    res.status(500).json({ error: "Failed to share signal" });
+  }
+});
+
+// PATCH /api/community/signals/:id — author (or admin) can edit fields or
+// toggle status, e.g. { status: "Closed" } once the idea has played out.
+router.patch("/signals/:id", requireAuth, async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const user = req.dbUser!;
+  const body = req.body as {
+    entry?: string; target?: string; stop?: string | null; note?: string; status?: "Open" | "Closed";
+  };
+
+  try {
+    const existing = await db.select().from(communitySignalsTable).where(eq(communitySignalsTable.id, id)).limit(1);
+    const row = existing[0];
+    if (!row) {
+      res.status(404).json({ error: "Signal not found" });
+      return;
+    }
+    if (row.authorId !== user.id && user.role !== "admin") {
+      res.status(403).json({ error: "You can only edit your own shared signals" });
+      return;
+    }
+
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (body.status != null) {
+      if (body.status !== "Open" && body.status !== "Closed") {
+        res.status(400).json({ error: "Invalid status value" });
+        return;
+      }
+      updates.status = body.status;
+    }
+    if (body.entry != null) updates.entry = body.entry.trim();
+    if (body.target != null) updates.target = body.target.trim();
+    if (body.stop !== undefined) updates.stop = body.stop?.trim() || null;
+    if (body.note != null) {
+      const trimmedNote = body.note.trim();
+      if (trimmedNote.length === 0 || trimmedNote.length > MAX_SIGNAL_NOTE_LENGTH) {
+        res.status(400).json({ error: `note must be 1-${MAX_SIGNAL_NOTE_LENGTH} characters` });
+        return;
+      }
+      const profanityCheck = checkProfanity(trimmedNote);
+      if (profanityCheck.blocked) {
+        res.status(422).json({ error: "That note was blocked for inappropriate language.", code: "PROFANITY_BLOCKED" });
+        return;
+      }
+      updates.note = trimmedNote;
+    }
+
+    await db.update(communitySignalsTable).set(updates).where(eq(communitySignalsTable.id, id));
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error(err, "Failed to update community signal");
+    res.status(500).json({ error: "Failed to update signal" });
+  }
+});
+
+// DELETE /api/community/signals/:id — author or admin only.
+router.delete("/signals/:id", requireAuth, async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const user = req.dbUser!;
+  try {
+    const existing = await db
+      .select({ authorId: communitySignalsTable.authorId })
+      .from(communitySignalsTable)
+      .where(eq(communitySignalsTable.id, id))
+      .limit(1);
+    const row = existing[0];
+    if (!row) {
+      res.status(404).json({ error: "Signal not found" });
+      return;
+    }
+    if (row.authorId !== user.id && user.role !== "admin") {
+      res.status(403).json({ error: "You can only delete your own shared signals" });
+      return;
+    }
+    await db.delete(communitySignalsTable).where(eq(communitySignalsTable.id, id));
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error(err, "Failed to delete community signal");
+    res.status(500).json({ error: "Failed to delete signal" });
+  }
+});
+
+// POST /api/community/follow/:userId — toggle following another member.
+// Following is user-to-user, not per-signal: it drives which authors'
+// future shared signals surface in the follower's personalized feed.
+router.post("/follow/:userId", requireAuth, async (req: Request, res: Response) => {
+  const targetId = String(req.params.userId);
+  const user = req.dbUser!;
+
+  if (targetId === user.id) {
+    res.status(400).json({ error: "You can't follow yourself" });
+    return;
+  }
+
+  try {
+    const target = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, targetId)).limit(1);
+    if (target.length === 0) {
+      res.status(404).json({ error: "Member not found" });
+      return;
+    }
+
+    const existing = await db
+      .select({ id: memberFollowsTable.id })
+      .from(memberFollowsTable)
+      .where(and(eq(memberFollowsTable.followerId, user.id), eq(memberFollowsTable.followingId, targetId)))
+      .limit(1);
+
+    if (existing.length > 0) {
+      await db.delete(memberFollowsTable).where(eq(memberFollowsTable.id, existing[0].id));
+      res.json({ ok: true, following: false });
+      return;
+    }
+
+    await db.insert(memberFollowsTable).values({ id: randomUUID(), followerId: user.id, followingId: targetId });
+    res.json({ ok: true, following: true });
+  } catch (err) {
+    logger.error(err, "Failed to toggle follow");
+    res.status(500).json({ error: "Failed to update follow status" });
   }
 });
 

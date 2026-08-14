@@ -60,9 +60,9 @@ exactly how this gap was introduced.
 - The genesis migration and everything after it is written to be safely
   re-runnable, so a future gap like this one degrades to "ran a redundant
   no-op" rather than "crashed the migrator" or "silently skipped."
-- This session's `0006`-`0008` migrations were hand-written (SQL + journal
-  entry) without running `drizzle-kit generate`, because no execution
-  environment was available to run it. They do NOT have companion
+- `0006`-`0011` were all hand-written (SQL + journal entry) without running
+  `drizzle-kit generate`, because no execution environment was available to
+  run it across any of these sessions. They do NOT have companion
   `meta/000X_snapshot.json` files. This means the next real
   `drizzle-kit generate` run will diff against the stale `0003` snapshot
   and may propose re-adding columns/tables that already exist (harmless

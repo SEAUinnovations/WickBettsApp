@@ -1,17 +1,42 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { Card, Header, Screen, SectionLabel, Tag } from '@/components/WickUI';
+import { TickerAutocomplete } from '@/components/TickerAutocomplete';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
 import { API_BASE } from '@/lib/apiUrl';
 
-type Thread = 'Signals' | 'News' | 'Community Chat' | 'Trade Review';
+type Thread = 'Signals' | 'News' | 'Community Chat' | 'Trade Review' | 'Shared Signals';
 type Bias = 'Bullish' | 'Bearish' | 'Neutral';
 type Verdict = 'Agrees' | 'Disagrees' | 'Mixed';
+type SharedMarket = 'Stocks' | 'Crypto';
+type SharedDirection = 'Long' | 'Short';
+type SharedStatus = 'Open' | 'Closed';
+
+// Member-shared trade ideas — distinct from both the admin-curated Signals
+// tab (paid, Wick-authored) and the free-text "Signals" discussion thread
+// above. Any member can post one; other members can follow the author to
+// see their future shares. Never appears outside Community.
+interface SharedSignal {
+  id: string;
+  authorId: string;
+  authorName: string | null;
+  avatarUrl?: string | null;
+  asset: string;
+  market: SharedMarket;
+  direction: SharedDirection;
+  entry: string;
+  target: string;
+  stop?: string | null;
+  note: string;
+  status: SharedStatus;
+  createdAt: string;
+  updatedAt: string;
+}
 
 interface TradeReview {
   id: string;
@@ -78,7 +103,7 @@ export default function CommunityScreen() {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
 
-  const tabs: Thread[] = ['Signals', 'News', 'Community Chat', 'Trade Review'];
+  const tabs: Thread[] = ['Signals', 'News', 'Community Chat', 'Shared Signals', 'Trade Review'];
 
   // Trade Review has its own backing store (separate endpoint/table from
   // the plain-text community posts, since it carries an image + structured
@@ -216,6 +241,174 @@ export default function CommunityScreen() {
   const verdictTone = (v: Verdict): 'green' | 'orange' | 'muted' =>
     v === 'Agrees' ? 'green' : v === 'Disagrees' ? 'orange' : 'muted';
 
+  // Shared Signals — member-posted trade ideas + who-follows-whom. Kept
+  // separate from the plain-text `posts` store since it's structured data
+  // with its own endpoint (see routes/community.ts's /signals + /follow).
+  const [sharedSignals, setSharedSignals] = useState<SharedSignal[]>([]);
+  const [sharedSignalsLoading, setSharedSignalsLoading] = useState(true);
+  const [sharedSignalsError, setSharedSignalsError] = useState<string | null>(null);
+  const [following, setFollowing] = useState<Set<string>>(new Set());
+  const [signalFeedScope, setSignalFeedScope] = useState<'All' | 'Following'>('All');
+  const [csAsset, setCsAsset] = useState('');
+  const [csMarket, setCsMarket] = useState<SharedMarket>('Stocks');
+  const [csDirection, setCsDirection] = useState<SharedDirection>('Long');
+  const [csEntry, setCsEntry] = useState('');
+  const [csTarget, setCsTarget] = useState('');
+  const [csStop, setCsStop] = useState('');
+  const [csNote, setCsNote] = useState('');
+  const [csSubmitting, setCsSubmitting] = useState(false);
+  const [csError, setCsError] = useState<string | null>(null);
+  const [followBusyId, setFollowBusyId] = useState<string | null>(null);
+  const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
+
+  const fetchSharedSignals = useCallback(async () => {
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const res = await fetch(`${API_BASE}/community/signals`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { signals: SharedSignal[]; following: string[] };
+      setSharedSignals(data.signals);
+      setFollowing(new Set(data.following));
+      setSharedSignalsError(null);
+    } catch {
+      setSharedSignalsError('Could not load shared signals. Pull to retry.');
+    } finally {
+      setSharedSignalsLoading(false);
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    void fetchSharedSignals();
+  }, [fetchSharedSignals]);
+
+  const resetComposer = () => {
+    setCsAsset('');
+    setCsEntry('');
+    setCsTarget('');
+    setCsStop('');
+    setCsNote('');
+  };
+
+  const submitSharedSignal = async () => {
+    if (!csAsset.trim() || !csEntry.trim() || !csTarget.trim() || !csNote.trim() || csSubmitting) return;
+    setCsSubmitting(true);
+    setCsError(null);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+      const res = await fetch(`${API_BASE}/community/signals`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          asset: csAsset.trim().toUpperCase(),
+          market: csMarket,
+          direction: csDirection,
+          entry: csEntry.trim(),
+          target: csTarget.trim(),
+          stop: csStop.trim() || undefined,
+          note: csNote.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(err.error ?? 'Failed to share signal');
+      }
+      const data = (await res.json()) as { signal: SharedSignal };
+      setSharedSignals((prev) => [data.signal, ...prev]);
+      resetComposer();
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      setCsError(e instanceof Error ? e.message : 'Failed to share signal');
+    } finally {
+      setCsSubmitting(false);
+    }
+  };
+
+  // Optimistic follow toggle, mirroring toggleReaction's pattern above.
+  const toggleFollow = async (userId: string) => {
+    if (followBusyId) return;
+    const wasFollowing = following.has(userId);
+    setFollowBusyId(userId);
+    setFollowing((prev) => {
+      const next = new Set(prev);
+      if (wasFollowing) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+      const res = await fetch(`${API_BASE}/community/follow/${userId}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      void Haptics.selectionAsync();
+    } catch {
+      // Roll back on failure
+      setFollowing((prev) => {
+        const next = new Set(prev);
+        if (wasFollowing) next.add(userId);
+        else next.delete(userId);
+        return next;
+      });
+    } finally {
+      setFollowBusyId(null);
+    }
+  };
+
+  const toggleSignalStatus = async (signal: SharedSignal) => {
+    if (statusBusyId) return;
+    const nextStatus: SharedStatus = signal.status === 'Open' ? 'Closed' : 'Open';
+    setStatusBusyId(signal.id);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+      const res = await fetch(`${API_BASE}/community/signals/${signal.id}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setSharedSignals((prev) => prev.map((s) => (s.id === signal.id ? { ...s, status: nextStatus } : s)));
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      Alert.alert('Could not update', 'Try again.');
+    } finally {
+      setStatusBusyId(null);
+    }
+  };
+
+  const deleteSharedSignal = async (signal: SharedSignal) => {
+    const doDelete = async () => {
+      try {
+        const token = await getToken();
+        if (!token) throw new Error('Not authenticated');
+        const res = await fetch(`${API_BASE}/community/signals/${signal.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setSharedSignals((prev) => prev.filter((s) => s.id !== signal.id));
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {
+        Alert.alert('Could not delete', 'Try again.');
+      }
+    };
+    const label = `Delete your ${signal.asset} shared signal?`;
+    if (Platform.OS === 'web') {
+      if (window.confirm(label)) void doDelete();
+      return;
+    }
+    Alert.alert('Delete signal', `${label} This can't be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => void doDelete() },
+    ]);
+  };
+
   const [allowedReactions, setAllowedReactions] = useState<string[]>(DEFAULT_REACTIONS);
 
   const fetchPosts = useCallback(async (isRefresh = false) => {
@@ -343,7 +536,7 @@ export default function CommunityScreen() {
     <Screen contentStyle={styles.content}>
       <Header eyebrow="Wick Betts / Members only" title="Community" action="Alerts" onAction={() => router.push('/news')} />
       <Text style={[styles.description, { color: colors.mutedForeground }]}>
-        Three rooms. No noise. Keep the conversation useful.
+        One community. No noise. Keep the conversation useful.
       </Text>
 
       {isAdmin ? (
@@ -385,7 +578,205 @@ export default function CommunityScreen() {
         <Tag tone="green">Members only</Tag>
       </View>
 
-      {thread === 'Trade Review' ? (
+      {thread === 'Shared Signals' ? (
+        <>
+          {/* Following / All scope pills */}
+          <View style={styles.signalScopeRow}>
+            {(['All', 'Following'] as const).map((scope) => (
+              <Pressable
+                key={scope}
+                onPress={() => setSignalFeedScope(scope)}
+                style={[
+                  styles.scopePill,
+                  {
+                    backgroundColor: signalFeedScope === scope ? colors.primary : colors.card,
+                    borderColor: signalFeedScope === scope ? colors.primary : colors.border,
+                  },
+                ]}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.scopePillText, { color: signalFeedScope === scope ? colors.primaryForeground : colors.mutedForeground }]}>
+                  {scope === 'Following' ? `Following (${following.size})` : 'All'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Shared signals feed */}
+          <ScrollView
+            style={styles.messageList}
+            refreshControl={
+              <RefreshControl refreshing={false} onRefresh={() => fetchSharedSignals()} tintColor={colors.primary} />
+            }
+            showsVerticalScrollIndicator={false}
+          >
+            {sharedSignalsLoading ? (
+              <ActivityIndicator color={colors.primary} style={styles.spinner} />
+            ) : sharedSignalsError ? (
+              <Text style={[styles.errorText, { color: colors.mutedForeground }]}>{sharedSignalsError}</Text>
+            ) : (() => {
+              const visible = sharedSignals.filter(
+                (s) => signalFeedScope === 'All' || following.has(s.authorId) || s.authorId === user?.id,
+              );
+              if (visible.length === 0) {
+                return (
+                  <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                    {signalFeedScope === 'Following'
+                      ? "You're not following anyone yet — switch to All to find members to follow."
+                      : 'No shared signals yet. Be the first to post one below.'}
+                  </Text>
+                );
+              }
+              return visible.map((s) => {
+                const isOwn = s.authorId === user?.id;
+                const isFollowing = following.has(s.authorId);
+                return (
+                  <Card key={s.id} style={styles.messageCard}>
+                    <View style={styles.messageTop}>
+                      {s.avatarUrl ? (
+                        <Image source={{ uri: s.avatarUrl }} style={styles.avatar} accessibilityLabel={s.authorName ?? 'Member avatar'} />
+                      ) : (
+                        <View style={[styles.avatar, { backgroundColor: colors.secondary }]}>
+                          <Text style={[styles.avatarText, { color: colors.accent }]}>{initials(s.authorName)}</Text>
+                        </View>
+                      )}
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text style={[styles.author, { color: colors.foreground }]}>{s.authorName ?? 'Member'}</Text>
+                        <Text style={[styles.time, { color: colors.mutedForeground }]}>{formatTime(s.createdAt)}</Text>
+                      </View>
+                      {!isOwn ? (
+                        <Pressable
+                          onPress={() => void toggleFollow(s.authorId)}
+                          disabled={followBusyId === s.authorId}
+                          style={[
+                            styles.followButton,
+                            {
+                              borderColor: isFollowing ? colors.border : colors.primary,
+                              backgroundColor: isFollowing ? colors.muted : 'transparent',
+                            },
+                          ]}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.followButtonText, { color: isFollowing ? colors.mutedForeground : colors.primary }]}>
+                            {isFollowing ? 'Following' : 'Follow'}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+
+                    <View style={styles.signalTagsRow}>
+                      <Text style={[styles.signalAssetText, { color: colors.foreground }]}>{s.asset}</Text>
+                      <Tag tone={s.direction === 'Long' ? 'green' : 'orange'}>{s.direction}</Tag>
+                      <Tag tone="muted">{s.market}</Tag>
+                      <Tag tone={s.status === 'Open' ? 'green' : 'muted'}>{s.status}</Tag>
+                    </View>
+
+                    <View style={[styles.signalLevels, { borderTopColor: colors.border }]}>
+                      <View><Text style={[styles.levelLabel, { color: colors.mutedForeground }]}>Entry</Text><Text style={[styles.levelValue, { color: colors.foreground }]}>{s.entry}</Text></View>
+                      <View><Text style={[styles.levelLabel, { color: colors.mutedForeground }]}>Target</Text><Text style={[styles.levelValue, { color: colors.accent }]}>{s.target}</Text></View>
+                      {s.stop ? (
+                        <View><Text style={[styles.levelLabel, { color: colors.mutedForeground }]}>Stop</Text><Text style={[styles.levelValue, { color: colors.destructive }]}>{s.stop}</Text></View>
+                      ) : null}
+                    </View>
+
+                    <Text style={[styles.messageText, { color: colors.mutedForeground }]}>{s.note}</Text>
+
+                    {isOwn ? (
+                      <View style={styles.ownSignalActions}>
+                        <Pressable
+                          onPress={() => void toggleSignalStatus(s)}
+                          disabled={statusBusyId === s.id}
+                          style={[styles.smallActionButton, { borderColor: colors.border }]}
+                          accessibilityRole="button"
+                        >
+                          <Ionicons name={s.status === 'Open' ? 'checkmark-circle-outline' : 'refresh-outline'} size={13} color={colors.primary} />
+                          <Text style={[styles.smallActionText, { color: colors.primary }]}>{s.status === 'Open' ? 'Mark closed' : 'Reopen'}</Text>
+                        </Pressable>
+                        <Pressable onPress={() => void deleteSharedSignal(s)} style={[styles.smallActionButton, { borderColor: colors.border }]} accessibilityRole="button">
+                          <Ionicons name="trash-outline" size={13} color={colors.destructive} />
+                          <Text style={[styles.smallActionText, { color: colors.destructive }]}>Delete</Text>
+                        </Pressable>
+                      </View>
+                    ) : isAdmin ? (
+                      <View style={styles.ownSignalActions}>
+                        <Pressable onPress={() => void deleteSharedSignal(s)} style={[styles.smallActionButton, { borderColor: colors.border }]} accessibilityRole="button">
+                          <Ionicons name="trash-outline" size={13} color={colors.destructive} />
+                          <Text style={[styles.smallActionText, { color: colors.destructive }]}>Remove</Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
+                  </Card>
+                );
+              });
+            })()}
+          </ScrollView>
+
+          {/* Share composer */}
+          <View style={[styles.reviewComposer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.field}>
+              <TickerAutocomplete value={csAsset} onChangeText={setCsAsset} placeholder="Ticker, e.g. NVDA" testID="shared-signal-ticker" />
+            </View>
+            <View style={styles.biasRow}>
+              {(['Stocks', 'Crypto'] as SharedMarket[]).map((m) => (
+                <Pressable
+                  key={m}
+                  onPress={() => setCsMarket(m)}
+                  style={[styles.biasChip, { backgroundColor: csMarket === m ? colors.primary : colors.background, borderColor: colors.border }]}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.biasChipText, { color: csMarket === m ? colors.primaryForeground : colors.mutedForeground }]}>{m}</Text>
+                </Pressable>
+              ))}
+              {(['Long', 'Short'] as SharedDirection[]).map((d) => (
+                <Pressable
+                  key={d}
+                  onPress={() => setCsDirection(d)}
+                  style={[styles.biasChip, { backgroundColor: csDirection === d ? colors.primary : colors.background, borderColor: colors.border }]}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.biasChipText, { color: csDirection === d ? colors.primaryForeground : colors.mutedForeground }]}>{d}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.signalInputRow}>
+              <TextInput value={csEntry} onChangeText={setCsEntry} placeholder="Entry" placeholderTextColor={colors.mutedForeground} style={[styles.signalSmallInput, { color: colors.foreground, borderColor: colors.border }]} />
+              <TextInput value={csTarget} onChangeText={setCsTarget} placeholder="Target" placeholderTextColor={colors.mutedForeground} style={[styles.signalSmallInput, { color: colors.foreground, borderColor: colors.border }]} />
+              <TextInput value={csStop} onChangeText={setCsStop} placeholder="Stop (optional)" placeholderTextColor={colors.mutedForeground} style={[styles.signalSmallInput, { color: colors.foreground, borderColor: colors.border }]} />
+            </View>
+            <TextInput
+              value={csNote}
+              onChangeText={setCsNote}
+              placeholder="Why are you in this trade?"
+              placeholderTextColor={colors.mutedForeground}
+              style={[styles.reviewInput, { color: colors.foreground, borderColor: colors.border }]}
+              multiline
+              editable={!csSubmitting}
+            />
+            {csError ? <Text style={[styles.errorText, { color: colors.destructive, marginTop: 0 }]}>{csError}</Text> : null}
+            <Pressable
+              onPress={() => void submitSharedSignal()}
+              disabled={!csAsset.trim() || !csEntry.trim() || !csTarget.trim() || !csNote.trim() || csSubmitting}
+              style={[
+                styles.reviewSubmitButton,
+                { backgroundColor: csAsset.trim() && csEntry.trim() && csTarget.trim() && csNote.trim() && !csSubmitting ? colors.primary : colors.muted },
+              ]}
+              accessibilityRole="button"
+            >
+              {csSubmitting ? (
+                <ActivityIndicator size="small" color={colors.mutedForeground} />
+              ) : (
+                <>
+                  <Ionicons name="share-social-outline" size={15} color={csAsset.trim() && csNote.trim() ? colors.primaryForeground : colors.mutedForeground} />
+                  <Text style={[styles.reviewSubmitText, { color: csAsset.trim() && csNote.trim() ? colors.primaryForeground : colors.mutedForeground }]}>Share to community</Text>
+                </>
+              )}
+            </Pressable>
+            <Text style={[styles.reviewDisclaimer, { color: colors.mutedForeground }]}>
+              Member-shared ideas, not reviewed by Wick Betts. Educational only, not financial advice.
+            </Text>
+          </View>
+        </>
+      ) : thread === 'Trade Review' ? (
         <>
           {/* Trade Review feed */}
           <ScrollView
@@ -721,4 +1112,20 @@ const styles = StyleSheet.create({
   reviewSubmitButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, minHeight: 44, borderRadius: 12 },
   reviewSubmitText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
   reviewDisclaimer: { fontSize: 9, lineHeight: 13, fontFamily: 'Inter_400Regular', textAlign: 'center' },
+  signalScopeRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  scopePill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 },
+  scopePillText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
+  followButton: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
+  followButtonText: { fontSize: 10, fontFamily: 'Inter_700Bold' },
+  signalTagsRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 7, marginTop: 12 },
+  signalAssetText: { fontSize: 14, fontFamily: 'Inter_700Bold', marginRight: 2 },
+  signalLevels: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, marginTop: 12, paddingTop: 12 },
+  levelLabel: { fontSize: 10, fontFamily: 'Inter_500Medium', marginBottom: 4 },
+  levelValue: { fontSize: 13, fontFamily: 'Inter_700Bold' },
+  ownSignalActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  smallActionButton: { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7 },
+  smallActionText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
+  field: { marginBottom: 2 },
+  signalInputRow: { flexDirection: 'row', gap: 8 },
+  signalSmallInput: { flex: 1, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 9, fontSize: 12, fontFamily: 'Inter_400Regular' },
 });

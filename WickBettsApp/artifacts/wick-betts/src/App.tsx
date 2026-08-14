@@ -8,6 +8,7 @@ import {
   Settings, ShieldCheck, SlidersHorizontal, Sparkles, Star, Swords, Target, TrendingUp, Trophy,
   UserRound, WalletCards, X, Chrome, Zap,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { ClerkProvider, SignIn, SignUp } from '@clerk/react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { apiPath } from './lib/api';
@@ -1022,6 +1023,760 @@ function CommunityPage() {
       )}
     </section>
   </div>;
+}
+
+// ── Learning: types & progress storage ──────────────────────────────────────────
+type LearningLevel = 'Beginner' | 'Intermediate' | 'Advanced' | 'Expert';
+const LEARNING_LEVELS: LearningLevel[] = ['Beginner', 'Intermediate', 'Advanced', 'Expert'];
+
+interface LearningModule {
+  id: string;
+  level: LearningLevel;
+  kind: 'lesson' | 'game';
+  title: string;
+  tagline: string;
+  minutes: number;
+  xp: number;
+  icon: LucideIcon;
+  body?: () => React.ReactNode;
+}
+
+interface LearningProgress {
+  completedModules: string[];
+  xp: number;
+  streakDays: number;
+  lastVisit: string | null;
+  candleGame: { bestScore: number; bestStreak: number; plays: number };
+  triviaGame: { bestScore: number; plays: number };
+}
+
+const LEARNING_STORAGE_PREFIX = 'wb-learning-progress';
+
+function blankLearningProgress(): LearningProgress {
+  return {
+    completedModules: [],
+    xp: 0,
+    streakDays: 0,
+    lastVisit: null,
+    candleGame: { bestScore: 0, bestStreak: 0, plays: 0 },
+    triviaGame: { bestScore: 0, plays: 0 },
+  };
+}
+
+function loadLearningProgress(userId: string | undefined): LearningProgress {
+  const fallback = blankLearningProgress();
+  if (!userId || typeof window === 'undefined') return fallback;
+  try {
+    const raw = window.localStorage.getItem(`${LEARNING_STORAGE_PREFIX}:${userId}`);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<LearningProgress>;
+    return {
+      ...fallback,
+      ...parsed,
+      candleGame: { ...fallback.candleGame, ...parsed.candleGame },
+      triviaGame: { ...fallback.triviaGame, ...parsed.triviaGame },
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveLearningProgress(userId: string | undefined, progress: LearningProgress) {
+  if (!userId || typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(`${LEARNING_STORAGE_PREFIX}:${userId}`, JSON.stringify(progress));
+  } catch {
+    // Storage may be unavailable (private mode, quota) — progress just will not persist.
+  }
+}
+
+const XP_PER_LEVEL = 200;
+function levelFromXp(xp: number): { level: number; intoLevel: number; forNext: number } {
+  const level = 1 + Math.floor(xp / XP_PER_LEVEL);
+  const intoLevel = xp % XP_PER_LEVEL;
+  return { level, intoLevel, forNext: XP_PER_LEVEL };
+}
+
+function shuffleArr<T>(arr: T[]): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = copy[i]; copy[i] = copy[j]; copy[j] = tmp;
+  }
+  return copy;
+}
+function sampleArr<T>(arr: T[], n: number): T[] { return shuffleArr(arr).slice(0, Math.min(n, arr.length)); }
+
+// ── Learning: candlestick data + glyph renderer ──────────────────────────────────
+interface CandleSpec { bodyTop: number; bodyBottom: number; wickTop: number; wickBottom: number; bullish: boolean }
+interface CandlePattern {
+  id: string;
+  name: string;
+  bias: 'Bullish' | 'Bearish' | 'Neutral';
+  role: string;
+  meaning: string;
+  candles: CandleSpec[];
+}
+
+const CANDLE_PATTERNS: CandlePattern[] = [
+  { id: 'doji', name: 'Doji', bias: 'Neutral', role: 'Indecision', meaning: "Open and close land almost on top of each other. Neither side won the session — often a pause before the next move, especially after a strong trend.", candles: [{ bodyTop: 48, bodyBottom: 52, wickTop: 8, wickBottom: 92, bullish: true }] },
+  { id: 'hammer', name: 'Hammer', bias: 'Bullish', role: 'Reversal (after a downtrend)', meaning: "A small body sits near the top with a long lower wick. Sellers pushed price down hard, but buyers stepped in and drove it back up — a possible bottom.", candles: [{ bodyTop: 14, bodyBottom: 34, wickTop: 8, wickBottom: 90, bullish: true }] },
+  { id: 'inverted-hammer', name: 'Inverted Hammer', bias: 'Bullish', role: 'Reversal (after a downtrend)', meaning: "A small body sits near the bottom with a long upper wick. Buyers tested higher ground — the next candle needs to confirm before you trust it.", candles: [{ bodyTop: 66, bodyBottom: 86, wickTop: 10, wickBottom: 92, bullish: true }] },
+  { id: 'hanging-man', name: 'Hanging Man', bias: 'Bearish', role: 'Reversal (after an uptrend)', meaning: "The same shape as a Hammer — small body up top, long lower wick — but it shows up after an uptrend, warning that sellers are starting to probe the lows.", candles: [{ bodyTop: 14, bodyBottom: 34, wickTop: 8, wickBottom: 90, bullish: false }] },
+  { id: 'shooting-star', name: 'Shooting Star', bias: 'Bearish', role: 'Reversal (after an uptrend)', meaning: "A small body near the bottom with a long upper wick after an uptrend. Buyers reached for new highs and got firmly rejected.", candles: [{ bodyTop: 66, bodyBottom: 86, wickTop: 10, wickBottom: 92, bullish: false }] },
+  { id: 'spinning-top', name: 'Spinning Top', bias: 'Neutral', role: 'Indecision', meaning: "A small body with wicks of similar length on both sides — a tug-of-war between buyers and sellers that ended in a draw.", candles: [{ bodyTop: 42, bodyBottom: 58, wickTop: 15, wickBottom: 85, bullish: true }] },
+  { id: 'marubozu-bull', name: 'Bullish Marubozu', bias: 'Bullish', role: 'Continuation / strong conviction', meaning: "A candle with almost no wicks at all — buyers were in full control from the open to the close. Strong conviction, often a continuation signal.", candles: [{ bodyTop: 8, bodyBottom: 92, wickTop: 8, wickBottom: 92, bullish: true }] },
+  { id: 'marubozu-bear', name: 'Bearish Marubozu', bias: 'Bearish', role: 'Continuation / strong conviction', meaning: "The mirror image of a Bullish Marubozu — sellers ran the session start to finish with barely a wick to show for it.", candles: [{ bodyTop: 8, bodyBottom: 92, wickTop: 8, wickBottom: 92, bullish: false }] },
+  { id: 'bull-engulf', name: 'Bullish Engulfing', bias: 'Bullish', role: 'Reversal (2-candle)', meaning: "A small down candle gets completely swallowed by a much bigger up candle. Buyers overwhelmed the prior selling — a classic bottoming signal.", candles: [{ bodyTop: 40, bodyBottom: 58, wickTop: 34, wickBottom: 64, bullish: false }, { bodyTop: 16, bodyBottom: 80, wickTop: 10, wickBottom: 86, bullish: true }] },
+  { id: 'bear-engulf', name: 'Bearish Engulfing', bias: 'Bearish', role: 'Reversal (2-candle)', meaning: "A small up candle gets completely swallowed by a much bigger down candle — sellers just seized control of the session.", candles: [{ bodyTop: 40, bodyBottom: 58, wickTop: 34, wickBottom: 64, bullish: true }, { bodyTop: 16, bodyBottom: 80, wickTop: 10, wickBottom: 86, bullish: false }] },
+  { id: 'piercing-line', name: 'Piercing Line', bias: 'Bullish', role: 'Reversal (2-candle)', meaning: "A down candle is followed by an up candle that opens below the prior low but closes back above the prior candle's midpoint — a strong bounce.", candles: [{ bodyTop: 20, bodyBottom: 55, wickTop: 14, wickBottom: 60, bullish: false }, { bodyTop: 22, bodyBottom: 72, wickTop: 16, wickBottom: 78, bullish: true }] },
+  { id: 'dark-cloud', name: 'Dark Cloud Cover', bias: 'Bearish', role: 'Reversal (2-candle)', meaning: "An up candle is followed by a down candle that opens above the prior high but closes back below its midpoint — momentum stalling hard.", candles: [{ bodyTop: 45, bodyBottom: 80, wickTop: 40, wickBottom: 86, bullish: true }, { bodyTop: 28, bodyBottom: 78, wickTop: 22, wickBottom: 84, bullish: false }] },
+  { id: 'morning-star', name: 'Morning Star', bias: 'Bullish', role: 'Reversal (3-candle)', meaning: "A strong sell-off, a small pause candle, then a strong rally that closes well back into the first candle's range — a textbook bottom.", candles: [{ bodyTop: 14, bodyBottom: 74, wickTop: 8, wickBottom: 80, bullish: false }, { bodyTop: 76, bodyBottom: 84, wickTop: 70, wickBottom: 90, bullish: true }, { bodyTop: 20, bodyBottom: 70, wickTop: 14, wickBottom: 76, bullish: true }] },
+  { id: 'evening-star', name: 'Evening Star', bias: 'Bearish', role: 'Reversal (3-candle)', meaning: "A strong rally, a small pause candle, then a strong sell-off that closes well back into the first candle's range — the mirror of a Morning Star.", candles: [{ bodyTop: 20, bodyBottom: 80, wickTop: 14, wickBottom: 86, bullish: true }, { bodyTop: 12, bodyBottom: 20, wickTop: 6, wickBottom: 26, bullish: false }, { bodyTop: 24, bodyBottom: 84, wickTop: 18, wickBottom: 90, bullish: false }] },
+  { id: 'three-soldiers', name: 'Three White Soldiers', bias: 'Bullish', role: 'Continuation / reversal (3-candle)', meaning: "Three strong up candles in a row, each closing near its high with small wicks. Steady, broad buying pressure.", candles: [{ bodyTop: 60, bodyBottom: 86, wickTop: 56, wickBottom: 90, bullish: true }, { bodyTop: 38, bodyBottom: 64, wickTop: 34, wickBottom: 68, bullish: true }, { bodyTop: 16, bodyBottom: 42, wickTop: 12, wickBottom: 46, bullish: true }] },
+  { id: 'three-crows', name: 'Three Black Crows', bias: 'Bearish', role: 'Continuation / reversal (3-candle)', meaning: "Three strong down candles in a row, each closing near its low with small wicks — the mirror of Three White Soldiers.", candles: [{ bodyTop: 14, bodyBottom: 40, wickTop: 10, wickBottom: 44, bullish: false }, { bodyTop: 36, bodyBottom: 62, wickTop: 32, wickBottom: 66, bullish: false }, { bodyTop: 58, bodyBottom: 84, wickTop: 54, wickBottom: 88, bullish: false }] },
+];
+
+function CandleGlyph({ candles, height = 92 }: { candles: CandleSpec[]; height?: number }) {
+  const w = 26; const gap = 12;
+  const totalW = candles.length * w + (candles.length - 1) * gap;
+  return (
+    <svg viewBox={`0 0 ${totalW} 100`} width={totalW} height={height} style={{ display: 'block' }}>
+      {candles.map((c, i) => {
+        const cx = i * (w + gap) + w / 2;
+        const color = c.bullish ? '#7AE2AA' : '#FB7185';
+        const bodyH = Math.max(3, c.bodyBottom - c.bodyTop);
+        return (
+          <g key={i}>
+            <line x1={cx} y1={c.wickTop} x2={cx} y2={c.wickBottom} stroke={color} strokeWidth={2.5} strokeLinecap="round" />
+            <rect x={cx - w / 2} y={c.bodyTop} width={w} height={bodyH} fill={color} rx={2.5} />
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// ── Learning: trivia data ─────────────────────────────────────────────────────────
+interface TriviaQuestion { id: string; question: string; options: string[]; correct: string }
+const TRIVIA_QUESTIONS: TriviaQuestion[] = [
+  { id: 'q1', question: 'What does the S&P 500 track?', options: ['500 large U.S. companies', '30 major U.S. companies', 'All Nasdaq tech stocks', 'Global bond yields'], correct: '500 large U.S. companies' },
+  { id: 'q2', question: "A futures contract is best described as…", options: ['An agreement to buy or sell an asset at a set price on a future date', 'A share of ownership in a company', 'A loan between two brokers', 'A type of savings account'], correct: 'An agreement to buy or sell an asset at a set price on a future date' },
+  { id: 'q3', question: 'Which type of stock typically comes with voting rights?', options: ['Common stock', 'Preferred stock', 'Treasury stock', 'Index stock'], correct: 'Common stock' },
+  { id: 'q4', question: 'Roughly how many hours a week does the crypto market trade?', options: ['168 (24/7)', '40', '80', '120'], correct: '168 (24/7)' },
+  { id: 'q5', question: "On a candlestick, what does the wick (shadow) represent?", options: ['The high and low price reached during the session', 'The trading volume', 'The average price over 10 days', 'The bid-ask spread'], correct: 'The high and low price reached during the session' },
+  { id: 'q6', question: "A Hammer candlestick appearing after a downtrend typically signals…", options: ['A possible bullish reversal', 'A guaranteed breakout', 'A dividend payment', 'Increased leverage'], correct: 'A possible bullish reversal' },
+  { id: 'q7', question: "A Bearish Engulfing pattern forms when…", options: ["A large down candle's body completely covers the prior up candle's body", 'Three green candles appear in a row', 'Volume drops to zero', 'Price gaps up on earnings'], correct: "A large down candle's body completely covers the prior up candle's body" },
+  { id: 'q8', question: 'SMA stands for…', options: ['Simple Moving Average', 'Stock Market Analysis', 'Standard Margin Account', 'Sector Momentum Alert'], correct: 'Simple Moving Average' },
+  { id: 'q9', question: 'A 20-period SMA is calculated by…', options: ["Averaging the last 20 closing prices", "Adding today's high and low", 'Multiplying volume by price', 'Averaging the last 20 trading years'], correct: 'Averaging the last 20 closing prices' },
+  { id: 'q10', question: 'A "Golden Cross" refers to…', options: ['A shorter-term SMA crossing above a longer-term SMA', 'A stock hitting an all-time high', 'A company issuing new shares', 'A candlestick with no wicks'], correct: 'A shorter-term SMA crossing above a longer-term SMA' },
+  { id: 'q11', question: 'RSI readings above 70 are typically considered…', options: ['Overbought', 'Oversold', 'Neutral', 'Illiquid'], correct: 'Overbought' },
+  { id: 'q12', question: 'In risk management, a stop-loss is…', options: ['A predefined price where you exit to limit a loss', 'A bonus paid by your broker', 'A type of dividend', 'A signal to add more size'], correct: 'A predefined price where you exit to limit a loss' },
+  { id: 'q13', question: 'The Buttonwood Agreement, which led to the founding of the NYSE, is dated to…', options: ['1792', '1602', '1929', '1971'], correct: '1792' },
+  { id: 'q14', question: 'The Amsterdam Stock Exchange, created in 1602, is widely considered…', options: ["The world's first modern stock exchange", 'The first U.S. commodities market', 'The first crypto exchange', 'A 20th-century invention'], correct: "The world's first modern stock exchange" },
+  { id: 'q15', question: 'Which U.S. regulator was created in 1934 in response to the 1929 crash?', options: ['The SEC', 'The FDIC', 'The NYSE', 'FINRA'], correct: 'The SEC' },
+  { id: 'q16', question: 'In February 1970, who became the first African American member and floor broker of the NYSE?', options: ['Joseph L. Searles III', 'John W. Rogers Jr.', 'Chris Gardner', 'Jeremiah Hamilton'], correct: 'Joseph L. Searles III' },
+  { id: 'q17', question: 'Daniels & Bell, founded in 1971, was notable as…', options: ['The first Black-owned investment firm with a seat on the NYSE', 'The first crypto exchange', 'The oldest bank in New York', 'The first index fund provider'], correct: 'The first Black-owned investment firm with a seat on the NYSE' },
+  { id: 'q18', question: 'John W. Rogers Jr. founded which firm in 1983?', options: ['Ariel Investments', 'Daniels & Bell', 'Gardner Rich & Co.', 'Vanguard'], correct: 'Ariel Investments' },
+  { id: 'q19', question: "A 'liquidity zone' generally refers to…", options: ['A cluster of resting stop-losses and pending orders', 'A stock with no trading volume', 'A type of dividend account', 'A candlestick pattern'], correct: 'A cluster of resting stop-losses and pending orders' },
+  { id: 'q20', question: 'Why does WickBetts emphasize patience above almost everything else?', options: ['Because discipline, not speed, is what keeps an edge profitable over time', 'Because slower trades pay lower commissions', 'Because patience guarantees profit', 'Because markets are only open one hour a day'], correct: 'Because discipline, not speed, is what keeps an edge profitable over time' },
+];
+
+// ── Learning: presentational helpers ─────────────────────────────────────────────
+function LessonHeading({ children }: { children: React.ReactNode }) {
+  return <h3 className="lesson-h3">{children}</h3>;
+}
+function Callout({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className="lesson-callout"><span className="eyebrow">{label}</span><p>{children}</p></div>;
+}
+function DefinitionCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return <div className="definition-card"><strong>{title}</strong><p>{children}</p></div>;
+}
+
+// ── Learning: module bodies ────────────────────────────────────────────────────────
+function bodyWelcome(): React.ReactNode {
+  return (
+    <>
+      <p>WickBetts is a trading community built to turn beginners into disciplined, patient traders — what the desk calls <strong>stock market snipers</strong>: people who wait for a clean setup instead of firing at everything that moves.</p>
+      <LessonHeading>Why learn to trade at all?</LessonHeading>
+      <p>Debt, bills, and the general expense of life have a way of piling up. Trading is a skill — not a shortcut — that can move you one step closer to financial freedom, if you treat it like one.</p>
+      <Callout label="The one non-negotiable">
+        <strong>Patience.</strong> This is not a get-rich-quick scheme — although you can get rich quickly, it is the patient mindset underneath that actually keeps you profitable over time. Every module after this one assumes you have internalized that.
+      </Callout>
+      <LessonHeading>What this academy covers</LessonHeading>
+      <ul className="lesson-list">
+        <li>The core fundamentals across all four markets WickBetts trades</li>
+        <li>How to read a chart before you ever place a trade</li>
+        <li>A personal risk framework you can actually stick to</li>
+        <li>The discipline to grow from a demo account to real capital without blowing it up</li>
+      </ul>
+    </>
+  );
+}
+
+function bodyMarkets101(): React.ReactNode {
+  return (
+    <>
+      <p>Before you trade anything, know what you are trading. WickBetts covers four core markets — here is what each one actually is.</p>
+      <div className="definition-grid">
+        <DefinitionCard title="Indices">An index tracks the performance of a group of stocks to represent a market or sector. The <strong>S&amp;P 500</strong> tracks 500 large U.S. companies, the <strong>Dow Jones</strong> tracks 30 major U.S. companies, and the <strong>Nasdaq</strong> is weighted toward tech.</DefinitionCard>
+        <DefinitionCard title="Futures">Financial contracts to buy or sell an asset at a predetermined price on a future date — commodity futures (oil, gold, wheat) and financial futures (the S&amp;P 500, interest rates, currencies). Used for hedging <em>and</em> speculation. Leverage amplifies gains <strong>and</strong> losses.</DefinitionCard>
+        <DefinitionCard title="Stocks">Stocks represent ownership in a company. Common stock carries voting rights plus dividends; preferred stock gets dividend priority but limited voting. Profit comes from price appreciation and dividends — risk comes from company performance, the economy, and sentiment.</DefinitionCard>
+        <DefinitionCard title="Crypto">Digital currencies secured by blockchain technology — Bitcoin, Ethereum, Solana. Highly volatile (10%+ daily swings are not rare), not tied to a company or government, and tradable 24/7 for investment, payments, or DeFi.</DefinitionCard>
+      </div>
+    </>
+  );
+}
+
+function bodyDemoToLive(): React.ReactNode {
+  return (
+    <>
+      <p>The best place to start is a platform like TradingView, where you can open a demo (paper trading) account and get real exposure to the market with zero real-money risk.</p>
+      <LessonHeading>Set a realistic starting amount</LessonHeading>
+      <p>Pick a demo balance you would actually be comfortable trading in real life. This is where you develop a strategy that fits your own style — trade against every asset class you just learned about and watch how price and P&amp;L actually move.</p>
+      <Callout label="A readiness checkpoint, not a promise">
+        One rough benchmark: try to grow the account by roughly $3k without ever giving back more than $2k along the way. It is not a guarantee of anything — it is a simple, illustrative way to prove to yourself that you can be net profitable <em>and</em> control your drawdowns before a single dollar of real capital is on the line.
+      </Callout>
+      <p>Only after that discipline shows up consistently in a demo does it make sense to size up into a live or prop-firm account.</p>
+    </>
+  );
+}
+
+function bodyReadingTheChart(): React.ReactNode {
+  return (
+    <>
+      <p>Understanding the chart is the first thing to do before placing any trade — before an indicator, before a candlestick pattern, before anything else.</p>
+      <div className="definition-grid">
+        <DefinitionCard title="Trend">Is price bullish (climbing) or bearish (falling)? Everything else you do should agree with the answer, not fight it.</DefinitionCard>
+        <DefinitionCard title="Volume">Is there a lot of it? If so, figure out when, where, and why — volume is the market telling you how much conviction is behind a move.</DefinitionCard>
+        <DefinitionCard title="Timeframe">Start from the Daily (D) chart to find the higher-timeframe trend first, then drop into lower timeframes to time an entry.</DefinitionCard>
+        <DefinitionCard title="Support &amp; Resistance">Support is a price floor where buying has stepped in before; resistance is a price ceiling where selling has capped price before. Price tends to react at both.</DefinitionCard>
+      </div>
+      <LessonHeading>Liquidity zones — a preview</LessonHeading>
+      <p>A liquidity zone is an area packed with resting stop-losses and pending orders. Price is frequently drawn toward these zones before reversing — the <em>Liquidity &amp; Market Structure</em> module in the Advanced track goes much deeper on this.</p>
+    </>
+  );
+}
+
+function bodyCandlestickEncyclopedia(): React.ReactNode {
+  return (
+    <>
+      <p>Every candle is a small story: the <strong>body</strong> is the range between the open and close, the <strong>color</strong> shows whether it closed up or down, and the <strong>wicks</strong> (or shadows) show the high and low the price actually reached — and got rejected from — during that session.</p>
+      <div className="candle-grid">
+        {CANDLE_PATTERNS.map((p) => (
+          <div className="candle-card" key={p.id}>
+            <div className="candle-card-stage"><CandleGlyph candles={p.candles} /></div>
+            <div className="candle-card-body">
+              <div className="candle-card-head">
+                <strong>{p.name}</strong>
+                <span className={`bias-pill bias-${p.bias.toLowerCase()}`}>{p.bias}</span>
+              </div>
+              <span className="candle-role">{p.role}</span>
+              <p>{p.meaning}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function bodyIndicatorsToolkit(): React.ReactNode {
+  return (
+    <>
+      <p>An indicator turns raw price into something easier to read. The one every trader learns first is the <strong>Simple Moving Average (SMA)</strong>.</p>
+      <Callout label="The formula">
+        SMA(n) = (P<sub>1</sub> + P<sub>2</sub> + … + P<sub>n</sub>) ÷ n — the average of the last <em>n</em> closing prices.
+      </Callout>
+      <LessonHeading>Worked example</LessonHeading>
+      <p>Five daily closes: $48, $50, $49, $52, $53. A 5-period SMA is (48+50+49+52+53) ÷ 5 = <strong>$50.40</strong>. Tomorrow, the oldest price drops off and the newest one is added — the average "moves."</p>
+      <LessonHeading>What SMA is actually used for</LessonHeading>
+      <ul className="lesson-list">
+        <li>Reading trend direction — price holding above a rising SMA leans bullish</li>
+        <li>Acting as dynamic support or resistance</li>
+        <li>Smoothing out noisy day-to-day price action</li>
+        <li>Crossover signals — a shorter SMA crossing above a longer one (e.g. 50 over 200) is a <strong>Golden Cross</strong>; crossing below is a <strong>Death Cross</strong></li>
+      </ul>
+      <LessonHeading>The rest of the toolkit</LessonHeading>
+      <div className="definition-grid">
+        <DefinitionCard title="EMA">An Exponential Moving Average weights recent prices more heavily than an SMA, so it reacts faster to new moves.</DefinitionCard>
+        <DefinitionCard title="RSI">Relative Strength Index — a 0–100 momentum gauge. Above 70 is generally considered overbought, below 30 oversold.</DefinitionCard>
+        <DefinitionCard title="MACD">Moving Average Convergence Divergence — tracks the relationship between two EMAs to gauge trend and momentum together.</DefinitionCard>
+        <DefinitionCard title="Volume">Confirms conviction. A move on rising volume carries more weight than the same move on a quiet tape.</DefinitionCard>
+      </div>
+      <p className="muted tiny">Indicators lag price — they describe what already happened. They work best stacked on top of the chart-reading and candlestick skills from earlier modules, not used alone.</p>
+    </>
+  );
+}
+
+function bodyRiskAndPsychology(): React.ReactNode {
+  return (
+    <>
+      <p>An edge is only worth anything if you survive long enough to use it. That is what risk management is for.</p>
+      <div className="definition-grid">
+        <DefinitionCard title="Position sizing">A common starting range is risking a small, fixed slice of your account per trade — often cited around 0.5–2% — so no single loss can do lasting damage.</DefinitionCard>
+        <DefinitionCard title="Define your stop first">Decide your invalidation level — the price that proves the idea wrong — before you enter, not after.</DefinitionCard>
+        <DefinitionCard title="Risk / reward">Compare the distance to your target against the distance to your stop. A trade only makes sense if the reward justifies the risk.</DefinitionCard>
+        <DefinitionCard title="Journal everything">Write down the setup, the reasoning, and the result. Patterns in your own behavior are the fastest thing you can learn from.</DefinitionCard>
+      </div>
+      <Callout label="Back to Module 1">
+        Patience is not a slogan — it is the thing that keeps you from moving your stop, doubling down after a loss, or chasing a candle you already missed. Every rule above only works if patience is doing the enforcing.
+      </Callout>
+      <p>This is also exactly what <strong>trade reviews</strong> are for — bring real setups to the Community threads or a mentorship call and get a second pair of eyes before the pattern repeats.</p>
+    </>
+  );
+}
+
+function bodyLiquidityAndStructure(): React.ReactNode {
+  return (
+    <>
+      <p>Price does not move randomly toward round numbers — it is frequently drawn toward liquidity: the resting stop-losses and pending orders clustered above old highs and below old lows.</p>
+      <LessonHeading>Reading structure</LessonHeading>
+      <ul className="lesson-list">
+        <li><strong>Uptrend structure</strong> — a series of higher highs and higher lows</li>
+        <li><strong>Downtrend structure</strong> — a series of lower highs and lower lows</li>
+        <li><strong>Break of Structure (BOS)</strong> — price breaks the most recent swing high/low in the direction of the trend, confirming it is still intact</li>
+        <li><strong>Change of Character (CHoCH)</strong> — price breaks structure against the prevailing trend, an early warning the trend may be turning</li>
+      </ul>
+      <LessonHeading>Why "obvious" levels get run first</LessonHeading>
+      <p>The support and resistance everyone can see are exactly where the stop orders pile up. A quick move through that level to grab liquidity — a stop hunt — before reversing is one of the most common reasons a level almost holds and then does not.</p>
+    </>
+  );
+}
+
+function bodyTradingThroughHistory(): React.ReactNode {
+  return (
+    <>
+      <p>Markets are older than most people assume — and the shape of today's trading desk was built one innovation at a time.</p>
+      <div className="timeline">
+        <div className="timeline-row"><span className="timeline-year">1602</span><p>The Dutch East India Company issues tradable shares on the <strong>Amsterdam Stock Exchange</strong> — widely considered the world's first modern stock exchange.</p></div>
+        <div className="timeline-row"><span className="timeline-year">1792</span><p>Twenty-four brokers sign the <strong>Buttonwood Agreement</strong> under a buttonwood tree on Wall Street, laying the groundwork for the New York Stock Exchange.</p></div>
+        <div className="timeline-row"><span className="timeline-year">1800s</span><p>The telegraph and ticker tape speed up how fast price information travels — the first real edge was often just getting the news first.</p></div>
+        <div className="timeline-row"><span className="timeline-year">1934</span><p>The <strong>SEC</strong> is created in the aftermath of the 1929 crash to regulate markets and protect investors.</p></div>
+        <div className="timeline-row"><span className="timeline-year">1971</span><p><strong>Nasdaq</strong> launches as the world's first electronic stock market.</p></div>
+        <div className="timeline-row"><span className="timeline-year">1973</span><p>The Chicago Board Options Exchange (CBOE) opens, formalizing modern options trading.</p></div>
+        <div className="timeline-row"><span className="timeline-year">2009</span><p>Bitcoin's genesis block is mined, kicking off the crypto markets from scratch.</p></div>
+        <div className="timeline-row"><span className="timeline-year">Today</span><p>Retail traders carry every market on this timeline in their pocket. The access changed completely — the need for discipline never did.</p></div>
+      </div>
+    </>
+  );
+}
+
+function bodyTrailblazers(): React.ReactNode {
+  return (
+    <>
+      <p>Wall Street was not built to let everyone in. These traders and investors forced the door open anyway — and changed who gets to sit at the desk.</p>
+      <div className="bio-grid">
+        <div className="bio-card"><strong>Jeremiah G. Hamilton</strong><span className="bio-meta">Broker · d. 1875</span><p>Operating almost entirely outside the era's brokerage establishment, Hamilton built a fortune trading stocks, bonds, and shipping insurance in mid-19th-century New York — reportedly leaving an estate worth around $2 million at his death, making him widely regarded as America's first Black millionaire.</p></div>
+        <div className="bio-card"><strong>Joseph L. Searles III</strong><span className="bio-meta">NYSE floor broker · 1970</span><p>In February 1970, Searles became the first African American member and floor broker of the New York Stock Exchange, breaking a barrier that had stood since the exchange's 1792 founding.</p></div>
+        <div className="bio-card"><strong>Travers J. Bell Jr. &amp; Willie L. Daniels</strong><span className="bio-meta">Daniels &amp; Bell · 1971</span><p>Co-founded Daniels &amp; Bell, the first Black-owned investment firm to hold a seat on the New York Stock Exchange.</p></div>
+        <div className="bio-card"><strong>John W. Rogers Jr.</strong><span className="bio-meta">Ariel Investments · 1983</span><p>At 24, Rogers started Ariel Investments with $200,000 raised from family and friends — the first Black-owned mutual fund company in the U.S. It has since grown into the largest minority-run asset manager in the country.</p></div>
+        <div className="bio-card"><strong>Mellody Hobson</strong><span className="bio-meta">Co-CEO, Ariel Investments</span><p>One of the most prominent Black women in American finance, Hobson has spent her career pushing financial literacy into the mainstream while helping lead Ariel Investments and chairing Starbucks' board.</p></div>
+        <div className="bio-card"><strong>Chris Gardner</strong><span className="bio-meta">Founder, Gardner Rich &amp; Co.</span><p>After a period of homelessness, Gardner built a career as a stockbroker and went on to found his own brokerage firm — a story that later became widely known through <em>The Pursuit of Happyness</em>.</p></div>
+      </div>
+      <p className="muted tiny">This is a starting point, not a complete history — there are many more stories worth reading beyond this module.</p>
+    </>
+  );
+}
+
+// ── Learning: module registry ──────────────────────────────────────────────────────
+const LEARNING_MODULES: LearningModule[] = [
+  { id: 'welcome', level: 'Beginner', kind: 'lesson', title: 'Welcome to WickBetts', tagline: 'What this academy is, and the one trait that matters more than any indicator.', minutes: 4, xp: 40, icon: GraduationCap, body: bodyWelcome },
+  { id: 'markets-101', level: 'Beginner', kind: 'lesson', title: 'The Four Markets', tagline: 'Indices, futures, stocks, and crypto — what each one actually is.', minutes: 7, xp: 50, icon: Layers, body: bodyMarkets101 },
+  { id: 'demo-to-live', level: 'Beginner', kind: 'lesson', title: 'From Demo to Live', tagline: "Where to practice, how much to risk first, and the checkpoint that tells you you're ready.", minutes: 5, xp: 40, icon: Rocket, body: bodyDemoToLive },
+  { id: 'reading-the-chart', level: 'Intermediate', kind: 'lesson', title: 'Reading the Chart', tagline: 'Trend, volume, timeframes, support & resistance — before every trade.', minutes: 8, xp: 60, icon: TrendingUp, body: bodyReadingTheChart },
+  { id: 'candlestick-encyclopedia', level: 'Intermediate', kind: 'lesson', title: 'The Candlestick Encyclopedia', tagline: 'Every candle tells a story — learn to read all of them.', minutes: 12, xp: 80, icon: CandlestickChart, body: bodyCandlestickEncyclopedia },
+  { id: 'candle-arcade', level: 'Intermediate', kind: 'game', title: 'Candle ID Arcade', tagline: 'Speed-round: name the pattern before the streak breaks.', minutes: 5, xp: 0, icon: Gamepad2 },
+  { id: 'indicators-toolkit', level: 'Advanced', kind: 'lesson', title: 'Indicators 101: SMA & Friends', tagline: 'The Simple Moving Average — the math, the meaning, and the crossover signals.', minutes: 9, xp: 70, icon: Percent, body: bodyIndicatorsToolkit },
+  { id: 'risk-and-psychology', level: 'Advanced', kind: 'lesson', title: "Risk & the Trader's Mindset", tagline: 'Position sizing, stops, and the patience that keeps an edge alive.', minutes: 8, xp: 60, icon: ShieldCheck, body: bodyRiskAndPsychology },
+  { id: 'liquidity-and-structure', level: 'Advanced', kind: 'lesson', title: 'Liquidity & Market Structure', tagline: 'Why price hunts obvious stops, and how to read structure like the desk does.', minutes: 7, xp: 60, icon: Target, body: bodyLiquidityAndStructure },
+  { id: 'trading-through-history', level: 'Expert', kind: 'lesson', title: 'A Short History of Trading', tagline: 'From Amsterdam warehouses to algorithms — how markets got here.', minutes: 8, xp: 70, icon: BookMarked, body: bodyTradingThroughHistory },
+  { id: 'trailblazers', level: 'Expert', kind: 'lesson', title: 'Trailblazers: Great Black Traders & Investors', tagline: "The people who broke into rooms that weren't built for them.", minutes: 10, xp: 80, icon: Crown, body: bodyTrailblazers },
+  { id: 'trivia-arena', level: 'Expert', kind: 'game', title: 'Trivia Arena', tagline: 'Mixed rapid-fire questions across every module.', minutes: 6, xp: 0, icon: Swords },
+];
+
+// ── Learning: page ──────────────────────────────────────────────────────────────────
+function LearningPage() {
+  const { user } = useAuth();
+  const userId = user?.id;
+  const [progress, setProgress] = useState<LearningProgress>(() => loadLearningProgress(userId));
+  const [activeLevel, setActiveLevel] = useState<LearningLevel>('Beginner');
+  const [view, setView] = useState<'overview' | 'module'>('overview');
+  const [activeModuleId, setActiveModuleId] = useState<string | null>(null);
+
+  useEffect(() => { setProgress(loadLearningProgress(userId)); }, [userId]);
+  useEffect(() => { saveLearningProgress(userId, progress); }, [userId, progress]);
+
+  // Daily streak — bump once per calendar day, reset if a day was skipped.
+  useEffect(() => {
+    const today = new Date().toDateString();
+    setProgress((prev) => {
+      if (prev.lastVisit === today) return prev;
+      const yesterday = new Date(Date.now() - 86400000).toDateString();
+      const nextStreak = prev.lastVisit === yesterday ? prev.streakDays + 1 : 1;
+      return { ...prev, lastVisit: today, streakDays: nextStreak };
+    });
+  }, []);
+
+  const { level, intoLevel, forNext } = levelFromXp(progress.xp);
+  const activeModule = LEARNING_MODULES.find((m) => m.id === activeModuleId) ?? null;
+  const modulesInLevel = LEARNING_MODULES.filter((m) => m.level === activeLevel);
+  const totalModules = LEARNING_MODULES.length;
+  const completedCount = progress.completedModules.length;
+
+  const completeModule = (id: string) => {
+    setProgress((prev) => {
+      if (prev.completedModules.includes(id)) return prev;
+      const mod = LEARNING_MODULES.find((m) => m.id === id);
+      return { ...prev, completedModules: [...prev.completedModules, id], xp: prev.xp + (mod?.xp ?? 0) };
+    });
+  };
+
+  const openModule = (id: string) => { setActiveModuleId(id); setView('module'); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const backToOverview = () => { setView('overview'); setActiveModuleId(null); };
+
+  const levelCompletion = (lvl: LearningLevel) => {
+    const inLevel = LEARNING_MODULES.filter((m) => m.level === lvl);
+    const done = inLevel.filter((m) => progress.completedModules.includes(m.id)).length;
+    return { done, total: inLevel.length };
+  };
+
+  return (
+    <div className="page">
+      <PageHeading
+        eyebrow="The academy"
+        title="Learning."
+        description="Beginner to expert, gamified. Read the fundamentals, master candlesticks, and prove it in the arcade."
+      />
+
+      <div className="learning-stats surface animate-in">
+        <div className="learning-stat">
+          <span className="eyebrow">Level</span>
+          <div className="learning-level-badge"><Star size={13} /> {level}</div>
+        </div>
+        <div className="learning-stat learning-stat--wide">
+          <span className="eyebrow">XP to next level</span>
+          <div className="xp-bar"><div className="xp-bar-fill" style={{ width: `${Math.round((intoLevel / forNext) * 100)}%` }} /></div>
+          <span className="tiny muted">{intoLevel} / {forNext} XP</span>
+        </div>
+        <div className="learning-stat">
+          <span className="eyebrow">Streak</span>
+          <div className="learning-level-badge"><Flame size={13} /> {progress.streakDays}d</div>
+        </div>
+        <div className="learning-stat">
+          <span className="eyebrow">Modules</span>
+          <div className="learning-level-badge"><Trophy size={13} /> {completedCount}/{totalModules}</div>
+        </div>
+      </div>
+
+      {view === 'overview' ? (
+        <>
+          <div className="filter-bar" style={{ marginTop: 28 }}>
+            {LEARNING_LEVELS.map((lvl) => {
+              const { done, total } = levelCompletion(lvl);
+              return (
+                <button
+                  key={lvl}
+                  className={`filter-chip ${activeLevel === lvl ? 'selected' : ''}`}
+                  onClick={() => setActiveLevel(lvl)}
+                  data-testid={`filter-learning-level-${lvl.toLowerCase()}`}
+                >
+                  {lvl} <span className="tiny" style={{ opacity: 0.7 }}>· {done}/{total}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="module-grid animate-in delay-1">
+            {modulesInLevel.map((mod) => {
+              const Icon = mod.icon;
+              const done = progress.completedModules.includes(mod.id);
+              return (
+                <button key={mod.id} className="module-card" onClick={() => openModule(mod.id)} data-testid={`card-module-${mod.id}`}>
+                  <div className={`module-icon ${mod.kind === 'game' ? 'module-icon--game' : ''}`}><Icon size={18} /></div>
+                  <span className="eyebrow">{mod.kind === 'game' ? 'Arcade game' : `${mod.level} module`}</span>
+                  <h3>{mod.title}</h3>
+                  <p>{mod.tagline}</p>
+                  <div className="module-meta">
+                    {mod.kind === 'game'
+                      ? <span>Best score: {mod.id === 'candle-arcade' ? progress.candleGame.bestScore : progress.triviaGame.bestScore}</span>
+                      : <span><Clock3 size={11} /> {mod.minutes} min · +{mod.xp} XP</span>}
+                    {done && <span className="status-pill status-active"><Check size={10} /> Done</span>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <section className="surface-dark learning-perks animate-in delay-2">
+            <span className="eyebrow light">Included with every membership</span>
+            <h3>You already have all of this.</h3>
+            <div className="perks-row">
+              <div className="perk"><MessageCircle size={16} /><div><strong>Community access</strong><p>Trade ideas and discussion across the Signals, News, and Community Chat threads.</p></div></div>
+              <div className="perk"><GraduationCap size={16} /><div><strong>The full Learning tab</strong><p>Every module and both arcade games on this page, from beginner to expert.</p></div></div>
+              <div className="perk"><ShieldCheck size={16} /><div><strong>Trade reviews</strong><p>Bring real setups to Community or a mentorship call and get them looked at by the desk.</p></div></div>
+            </div>
+          </section>
+        </>
+      ) : activeModule?.kind === 'game' ? (
+        <div className="animate-in">
+          <button className="button button-outline" style={{ marginBottom: 20 }} onClick={backToOverview} data-testid="button-back-to-path"><ChevronLeft size={13} /> Back to path</button>
+          {activeModule.id === 'candle-arcade'
+            ? <CandleArcadeGame progress={progress} setProgress={setProgress} />
+            : <TriviaArenaGame progress={progress} setProgress={setProgress} />}
+        </div>
+      ) : activeModule ? (
+        <LessonView
+          module={activeModule}
+          completed={progress.completedModules.includes(activeModule.id)}
+          onComplete={() => completeModule(activeModule.id)}
+          onBack={backToOverview}
+          onNext={() => {
+            const siblings = LEARNING_MODULES.filter((m) => m.level === activeModule.level);
+            const idx = siblings.findIndex((m) => m.id === activeModule.id);
+            const next = siblings[idx + 1];
+            if (next) openModule(next.id); else backToOverview();
+          }}
+        />
+      ) : null}
+
+      <p className="table-note" style={{ marginTop: 24 }}>Educational content only — not investment advice. Progress and scores are saved on this device.</p>
+    </div>
+  );
+}
+
+function LessonView({ module, completed, onComplete, onBack, onNext }: { module: LearningModule; completed: boolean; onComplete: () => void; onBack: () => void; onNext: () => void }) {
+  const Icon = module.icon;
+  return (
+    <div className="surface lesson-view animate-in">
+      <button className="button button-outline" style={{ marginBottom: 20 }} onClick={onBack} data-testid="button-back-to-path"><ChevronLeft size={13} /> Back to path</button>
+      <div className="lesson-head">
+        <div className="module-icon"><Icon size={20} /></div>
+        <div>
+          <span className="eyebrow">{module.level} module</span>
+          <h2>{module.title}</h2>
+          <span className="muted tiny"><Clock3 size={11} /> {module.minutes} min read · +{module.xp} XP</span>
+        </div>
+      </div>
+      <div className="lesson-body">{module.body?.()}</div>
+      <div className="lesson-actions">
+        {completed
+          ? <span className="status-pill status-active"><Check size={11} /> Completed</span>
+          : <button className="button button-primary" onClick={onComplete} data-testid="button-complete-lesson">Mark complete <Check size={13} /></button>}
+        <button className="button button-outline" onClick={onNext} data-testid="button-next-lesson">Next lesson <ArrowRight size={13} /></button>
+      </div>
+    </div>
+  );
+}
+
+// ── Learning: Candle ID Arcade game ──────────────────────────────────────────────
+const CANDLE_GAME_ROUNDS = 8;
+
+function CandleArcadeGame({ progress, setProgress }: { progress: LearningProgress; setProgress: React.Dispatch<React.SetStateAction<LearningProgress>> }) {
+  const [order, setOrder] = useState<CandlePattern[]>(() => sampleArr(CANDLE_PATTERNS, CANDLE_GAME_ROUNDS));
+  const [round, setRound] = useState(0);
+  const [options, setOptions] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [score, setScore] = useState(0);
+  const [streak, setStreak] = useState(0);
+  const [bestStreakThisRun, setBestStreakThisRun] = useState(0);
+  const [finished, setFinished] = useState(false);
+
+  const current = order[round];
+
+  useEffect(() => {
+    if (!current) return;
+    const distractors = sampleArr(CANDLE_PATTERNS.filter((p) => p.id !== current.id), 3).map((p) => p.name);
+    setOptions(shuffleArr([current.name, ...distractors]));
+    setSelected(null);
+  }, [round]);
+
+  const pick = (name: string) => {
+    if (selected || !current) return;
+    setSelected(name);
+    const correct = name === current.name;
+    if (correct) {
+      setScore((s) => s + 1);
+      setStreak((s) => {
+        const next = s + 1;
+        setBestStreakThisRun((b) => Math.max(b, next));
+        return next;
+      });
+    } else {
+      setStreak(0);
+    }
+  };
+
+  const finishRound = (finalScore: number, finalBestStreak: number) => {
+    const xpEarned = finalScore * 10 + finalBestStreak * 5;
+    setProgress((prev) => ({
+      ...prev,
+      xp: prev.xp + xpEarned,
+      candleGame: {
+        bestScore: Math.max(prev.candleGame.bestScore, finalScore),
+        bestStreak: Math.max(prev.candleGame.bestStreak, finalBestStreak),
+        plays: prev.candleGame.plays + 1,
+      },
+    }));
+  };
+
+  const next = () => {
+    if (round + 1 >= order.length) {
+      finishRound(score, bestStreakThisRun);
+      setFinished(true);
+      return;
+    }
+    setRound((r) => r + 1);
+  };
+
+  const playAgain = () => {
+    setOrder(sampleArr(CANDLE_PATTERNS, CANDLE_GAME_ROUNDS));
+    setRound(0); setScore(0); setStreak(0); setBestStreakThisRun(0); setFinished(false); setSelected(null);
+  };
+
+  if (finished) {
+    const xpEarned = score * 10 + bestStreakThisRun * 5;
+    return (
+      <div className="surface game-recap animate-in">
+        <Trophy size={26} />
+        <h3>Round complete.</h3>
+        <p>You scored <strong>{score}/{order.length}</strong> with a best streak of <strong>{bestStreakThisRun}</strong>.</p>
+        <div className="status-pill status-active" style={{ marginTop: 6 }}><Zap size={11} /> +{xpEarned} XP earned</div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+          <button className="button button-primary" onClick={playAgain} data-testid="button-play-again-candle"><RotateCcw size={13} /> Play again</button>
+        </div>
+        <p className="muted tiny" style={{ marginTop: 16 }}>Personal best: {Math.max(progress.candleGame.bestScore, score)}/{order.length} · Best streak {Math.max(progress.candleGame.bestStreak, bestStreakThisRun)}</p>
+      </div>
+    );
+  }
+
+  if (!current) return null;
+
+  return (
+    <div className="surface game-panel animate-in">
+      <div className="game-topbar">
+        <span className="eyebrow">Round {round + 1}/{order.length}</span>
+        <span className="game-stat"><Trophy size={12} /> {score}</span>
+        <span className="game-stat"><Flame size={12} /> {streak}</span>
+      </div>
+      <div className="game-candle-stage"><CandleGlyph candles={current.candles} height={130} /></div>
+      <p className="muted tiny" style={{ textAlign: 'center', marginBottom: 18 }}>What pattern is this?</p>
+      <div className="game-options">
+        {options.map((opt) => {
+          const isCorrect = opt === current.name;
+          const isSelected = opt === selected;
+          const cls = selected ? (isCorrect ? 'game-option correct' : isSelected ? 'game-option wrong' : 'game-option') : 'game-option';
+          return (
+            <button key={opt} className={cls} onClick={() => pick(opt)} disabled={!!selected} data-testid={`option-candle-${opt.toLowerCase().replace(/\s+/g, '-')}`}>
+              {opt}
+            </button>
+          );
+        })}
+      </div>
+      {selected && (
+        <div style={{ marginTop: 18 }}>
+          <p className="muted tiny">{current.meaning}</p>
+          <button className="button button-dark" style={{ marginTop: 12 }} onClick={next} data-testid="button-next-round">
+            {round + 1 >= order.length ? 'See results' : 'Next round'} <ArrowRight size={13} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Learning: Trivia Arena game ──────────────────────────────────────────────────
+const TRIVIA_ROUNDS = 8;
+
+function TriviaArenaGame({ progress, setProgress }: { progress: LearningProgress; setProgress: React.Dispatch<React.SetStateAction<LearningProgress>> }) {
+  const [order, setOrder] = useState<TriviaQuestion[]>(() => sampleArr(TRIVIA_QUESTIONS, TRIVIA_ROUNDS));
+  const [round, setRound] = useState(0);
+  const [options, setOptions] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [score, setScore] = useState(0);
+  const [finished, setFinished] = useState(false);
+
+  const current = order[round];
+
+  useEffect(() => {
+    if (!current) return;
+    setOptions(shuffleArr(current.options));
+    setSelected(null);
+  }, [round]);
+
+  const pick = (opt: string) => {
+    if (selected || !current) return;
+    setSelected(opt);
+    if (opt === current.correct) setScore((s) => s + 1);
+  };
+
+  const finishRound = (finalScore: number) => {
+    const xpEarned = finalScore * 12;
+    setProgress((prev) => ({
+      ...prev,
+      xp: prev.xp + xpEarned,
+      triviaGame: { bestScore: Math.max(prev.triviaGame.bestScore, finalScore), plays: prev.triviaGame.plays + 1 },
+    }));
+  };
+
+  const next = () => {
+    if (round + 1 >= order.length) {
+      finishRound(score);
+      setFinished(true);
+      return;
+    }
+    setRound((r) => r + 1);
+  };
+
+  const playAgain = () => {
+    setOrder(sampleArr(TRIVIA_QUESTIONS, TRIVIA_ROUNDS));
+    setRound(0); setScore(0); setFinished(false); setSelected(null);
+  };
+
+  if (finished) {
+    const xpEarned = score * 12;
+    return (
+      <div className="surface game-recap animate-in">
+        <Swords size={26} />
+        <h3>Arena cleared.</h3>
+        <p>You scored <strong>{score}/{order.length}</strong>.</p>
+        <div className="status-pill status-active" style={{ marginTop: 6 }}><Zap size={11} /> +{xpEarned} XP earned</div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+          <button className="button button-primary" onClick={playAgain} data-testid="button-play-again-trivia"><RotateCcw size={13} /> Play again</button>
+        </div>
+        <p className="muted tiny" style={{ marginTop: 16 }}>Personal best: {Math.max(progress.triviaGame.bestScore, score)}/{order.length}</p>
+      </div>
+    );
+  }
+
+  if (!current) return null;
+
+  return (
+    <div className="surface game-panel animate-in">
+      <div className="game-topbar">
+        <span className="eyebrow">Question {round + 1}/{order.length}</span>
+        <span className="game-stat"><Trophy size={12} /> {score}</span>
+      </div>
+      <h3 className="trivia-question">{current.question}</h3>
+      <div className="game-options game-options--stack">
+        {options.map((opt) => {
+          const isCorrect = opt === current.correct;
+          const isSelected = opt === selected;
+          const cls = selected ? (isCorrect ? 'game-option correct' : isSelected ? 'game-option wrong' : 'game-option') : 'game-option';
+          return (
+            <button key={opt} className={cls} onClick={() => pick(opt)} disabled={!!selected} data-testid={`option-trivia-${opt.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>
+              {opt}
+            </button>
+          );
+        })}
+      </div>
+      {selected && (
+        <button className="button button-dark" style={{ marginTop: 18 }} onClick={next} data-testid="button-next-trivia">
+          {round + 1 >= order.length ? 'See results' : 'Next question'} <ArrowRight size={13} />
+        </button>
+      )}
+    </div>
+  );
 }
 
 // ── Mentorship ─────────────────────────────────────────────────────────────────
