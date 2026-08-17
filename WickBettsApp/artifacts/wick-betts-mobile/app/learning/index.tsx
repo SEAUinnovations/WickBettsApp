@@ -10,9 +10,11 @@ import { useAuth } from '@/context/AuthContext';
 import {
   LEARNING_LEVELS,
   LEARNING_MODULES,
+  SPECIALIZATIONS,
   TRACK_BONUS_XP,
   levelFromXp,
   type LearningLevel,
+  type Specialization,
 } from '@/lib/learningData';
 import { blankLearningProgress, loadLearningProgress, saveLearningProgress, type LearningProgress } from '@/lib/learningStorage';
 
@@ -129,12 +131,19 @@ export default function LearningScreen() {
   }
 
   const { level, intoLevel, forNext } = levelFromXp(progress.xp);
-  const modulesInLevel = LEARNING_MODULES.filter((m) => m.level === activeLevel);
-  const totalModules = LEARNING_MODULES.length;
-  const completedCount = progress.completedModules.length;
+
+  // Untagged modules are foundational and always show. Tagged modules (lessons
+  // AND games) only show under their own specialization, or when "All" is active.
+  const matchesSpecialization = (m: (typeof LEARNING_MODULES)[number]) =>
+    !m.specialization || progress.preferredSpecialization === 'all' || m.specialization === progress.preferredSpecialization;
+
+  const visibleModules = LEARNING_MODULES.filter(matchesSpecialization);
+  const modulesInLevel = visibleModules.filter((m) => m.level === activeLevel);
+  const totalModules = visibleModules.length;
+  const completedCount = progress.completedModules.filter((id) => visibleModules.some((m) => m.id === id)).length;
 
   const levelCompletion = (lvl: LearningLevel) => {
-    const inLevel = LEARNING_MODULES.filter((m) => m.level === lvl);
+    const inLevel = visibleModules.filter((m) => m.level === lvl);
     const done = inLevel.filter((m) => progress.completedModules.includes(m.id)).length;
     return { done, total: inLevel.length };
   };
@@ -145,12 +154,25 @@ export default function LearningScreen() {
     setActiveLevel(lvl);
   };
 
+  const activeSpecialization = progress.preferredSpecialization;
+  const selectSpecialization = (spec: Specialization | 'all') => {
+    if (spec === activeSpecialization) return;
+    void Haptics.selectionAsync();
+    setProgress((prev) => ({ ...prev, preferredSpecialization: spec }));
+  };
+
   const openModule = (id: string) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (id === 'candle-arcade') {
       router.push('/learning/candle-arcade');
     } else if (id === 'trivia-arena') {
       router.push('/learning/trivia-arena');
+    } else if (id === 'trade-bias-simulator') {
+      router.push('/learning/trade-bias-simulator');
+    } else if (id === 'options-strike-lab') {
+      router.push('/learning/options-strike-lab');
+    } else if (id === 'funded-combine-prep') {
+      router.push('/learning/funded-combine-prep');
     } else {
       router.push({ pathname: '/learning/lesson', params: { id } });
     }
@@ -243,6 +265,43 @@ export default function LearningScreen() {
         })}
       </ScrollView>
 
+      <SectionLabel>Specialize</SectionLabel>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.specRow}>
+        <Pressable
+          onPress={() => selectSpecialization('all')}
+          style={[
+            styles.specPill,
+            { backgroundColor: activeSpecialization === 'all' ? colors.primary : colors.secondary, borderColor: activeSpecialization === 'all' ? colors.primary : colors.border },
+          ]}
+          accessibilityRole="button"
+        >
+          <Ionicons name="apps-outline" size={13} color={activeSpecialization === 'all' ? colors.primaryForeground : colors.mutedForeground} />
+          <Text style={[styles.specPillText, { color: activeSpecialization === 'all' ? colors.primaryForeground : colors.foreground }]}>All</Text>
+        </Pressable>
+        {SPECIALIZATIONS.map((spec) => {
+          const active = activeSpecialization === spec.id;
+          return (
+            <Pressable
+              key={spec.id}
+              onPress={() => selectSpecialization(spec.id)}
+              style={[
+                styles.specPill,
+                { backgroundColor: active ? colors.primary : colors.secondary, borderColor: active ? colors.primary : colors.border },
+              ]}
+              accessibilityRole="button"
+            >
+              <Ionicons name={spec.icon} size={13} color={active ? colors.primaryForeground : colors.mutedForeground} />
+              <Text style={[styles.specPillText, { color: active ? colors.primaryForeground : colors.foreground }]}>{spec.label}</Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+      {activeSpecialization !== 'all' ? (
+        <Text style={[styles.specTagline, { color: colors.mutedForeground }]}>
+          {SPECIALIZATIONS.find((s) => s.id === activeSpecialization)?.tagline}
+        </Text>
+      ) : null}
+
       <View style={styles.moduleList}>
         {modulesInLevel.map((mod) => {
           const done = progress.completedModules.includes(mod.id);
@@ -251,7 +310,13 @@ export default function LearningScreen() {
             ? `Best score: ${progress.candleGame.bestScore}/8`
             : mod.id === 'trivia-arena'
               ? `Best score: ${progress.triviaGame.bestScore}/8`
-              : null;
+              : mod.id === 'trade-bias-simulator'
+                ? `Best score: ${progress.tradeSimGame.bestScore}/8`
+                : mod.id === 'options-strike-lab'
+                  ? `Best score: ${progress.optionsGame.bestScore}/8`
+                  : mod.id === 'funded-combine-prep'
+                    ? `Best peak: $${progress.fundedGame.bestEquity.toLocaleString()} · Ready ${progress.fundedGame.timesReady}×`
+                    : null;
           return (
             <Card key={mod.id} style={styles.moduleCard} onPress={() => openModule(mod.id)}>
               <View style={styles.moduleRow}>
@@ -261,6 +326,7 @@ export default function LearningScreen() {
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={[styles.moduleEyebrow, { color: colors.mutedForeground }]}>
                     {isGame ? 'ARCADE GAME' : `${mod.level.toUpperCase()} MODULE`}
+                    {mod.specialization ? ` · ${SPECIALIZATIONS.find((s) => s.id === mod.specialization)?.label.toUpperCase()}` : ''}
                   </Text>
                   <Text style={[styles.moduleTitle, { color: colors.foreground }]}>{mod.title}</Text>
                   <Text style={[styles.moduleTagline, { color: colors.mutedForeground }]}>{mod.tagline}</Text>
@@ -342,6 +408,10 @@ const styles = StyleSheet.create({
   trackRow: { gap: 8, paddingRight: 8, marginBottom: 16 },
   trackPill: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
   trackPillText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  specRow: { gap: 8, paddingRight: 8, marginBottom: 8 },
+  specPill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
+  specPillText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  specTagline: { fontSize: 11, lineHeight: 15, fontFamily: 'Inter_400Regular', marginBottom: 16 },
   moduleList: { gap: 10, marginBottom: 22 },
   moduleCard: {},
   moduleRow: { flexDirection: 'row', alignItems: 'center' },

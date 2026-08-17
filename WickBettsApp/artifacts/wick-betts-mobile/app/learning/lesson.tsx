@@ -167,6 +167,22 @@ function LessonBlockView({ block }: { block: LessonBlock }) {
       );
     case 'note':
       return <Text style={[styles.note, { color: colors.mutedForeground }]}>{block.text}</Text>;
+    case 'scenario':
+      return (
+        <View style={[styles.scenario, { backgroundColor: colors.card, borderColor: colors.primary }]}>
+          <View style={styles.scenarioHead}>
+            <Ionicons name="flask-outline" size={14} color={colors.primary} />
+            <Text style={[styles.scenarioEyebrow, { color: colors.primary }]}>REAL-WORLD SCENARIO</Text>
+          </View>
+          <Text style={[styles.scenarioTitle, { color: colors.foreground }]}>{block.title}</Text>
+          <Text style={[styles.scenarioLabel, { color: colors.mutedForeground }]}>THE SETUP</Text>
+          <Text style={[styles.scenarioText, { color: colors.mutedForeground }]}>{block.setup}</Text>
+          <Text style={[styles.scenarioLabel, { color: colors.mutedForeground }]}>WHAT HAPPENED</Text>
+          <Text style={[styles.scenarioText, { color: colors.mutedForeground }]}>{block.whatHappened}</Text>
+          <Text style={[styles.scenarioLabel, { color: colors.accent }]}>THE TAKEAWAY</Text>
+          <Text style={[styles.scenarioTakeaway, { color: colors.foreground }]}>{block.takeaway}</Text>
+        </View>
+      );
     case 'list':
       return (
         <View style={styles.list}>
@@ -266,6 +282,13 @@ const styles = StyleSheet.create({
   calloutLabel: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1, marginBottom: 6 },
   calloutText: { fontSize: 13, lineHeight: 19, fontFamily: 'Inter_400Regular' },
   note: { fontSize: 11, lineHeight: 16, fontFamily: 'Inter_400Regular', fontStyle: 'italic' },
+  scenario: { borderWidth: 1, borderRadius: 14, padding: 14 },
+  scenarioHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  scenarioEyebrow: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
+  scenarioTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', marginBottom: 10 },
+  scenarioLabel: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 0.8, marginBottom: 4, marginTop: 8 },
+  scenarioText: { fontSize: 12, lineHeight: 18, fontFamily: 'Inter_400Regular' },
+  scenarioTakeaway: { fontSize: 12, lineHeight: 18, fontFamily: 'Inter_600SemiBold' },
   list: { gap: 8 },
   listRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   listDot: { width: 5, height: 5, borderRadius: 3, marginTop: 7 },

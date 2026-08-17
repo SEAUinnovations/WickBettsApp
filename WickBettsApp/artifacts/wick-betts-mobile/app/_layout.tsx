@@ -98,6 +98,9 @@ function RootLayoutNav() {
       <Stack.Screen name="learning/lesson" options={{ headerShown: false }} />
       <Stack.Screen name="learning/candle-arcade" options={{ headerShown: false }} />
       <Stack.Screen name="learning/trivia-arena" options={{ headerShown: false }} />
+      <Stack.Screen name="learning/trade-bias-simulator" options={{ headerShown: false }} />
+      <Stack.Screen name="learning/options-strike-lab" options={{ headerShown: false }} />
+      <Stack.Screen name="learning/funded-combine-prep" options={{ headerShown: false }} />
       <Stack.Screen name="admin" options={{ headerShown: false }} />
       <Stack.Screen name="admin/users" options={{ headerShown: false }} />
     </Stack>
