@@ -23,10 +23,10 @@ import { useAuth } from '@/context/AuthContext';
 import { useSignals, type OptionType, type Signal, type SignalDirection, type SignalInput, type SignalMarket, type SignalStatus, type SignalStyle } from '@/context/SignalContext';
 
 const STATUS_OPTIONS: SignalStatus[] = ['Active', 'Watching', 'Closed', 'Stopped'];
-const STYLE_OPTIONS: SignalStyle[] = ['Swing', 'Buy & Hold', 'LEAPS'];
+const STYLE_OPTIONS: SignalStyle[] = ['Day Trade', 'Swing', 'Buy & Hold', 'LEAPS'];
 
 type FormState = {
-  asset: string; market: SignalMarket; direction: SignalDirection; status: SignalStatus; style: SignalStyle;
+  asset: string; sector: string; market: SignalMarket; direction: SignalDirection; status: SignalStatus; style: SignalStyle;
   timeframe: string; entry: string; target: string; stop: string; risk: string; analysis: string;
   isOption: boolean; optionType: OptionType; contract: string; expiration: string; strike: string;
   premium: string; bid: string; ask: string; impliedVolatility: string;
@@ -34,7 +34,7 @@ type FormState = {
 };
 
 const initialForm: FormState = {
-  asset: '', market: 'Stocks', direction: 'Long', status: 'Active', style: 'Swing',
+  asset: '', sector: '', market: 'Stocks', direction: 'Long', status: 'Active', style: 'Swing',
   timeframe: '', entry: '', target: '', stop: '', risk: 'Medium', analysis: '',
   isOption: true, optionType: 'Call', contract: '', expiration: '', strike: '',
   premium: '', bid: '', ask: '', impliedVolatility: '', delta: '', gamma: '',
@@ -52,6 +52,7 @@ function monthsOut(n: number): string {
 function formFromSignal(s: Signal): FormState {
   return {
     asset: s.asset,
+    sector: s.sector ?? '',
     market: s.market,
     direction: s.direction,
     status: s.status,
@@ -230,6 +231,7 @@ export default function AdminScreen() {
 
   const buildPayload = (): SignalInput => ({
     asset: form.asset.trim().toUpperCase(),
+    sector: form.sector.trim() || undefined,
     market: form.market, direction: form.direction, status: form.status, style: form.style,
     entry: form.entry.trim(), target: form.target.trim(),
     stop: form.style === 'Buy & Hold' ? undefined : form.stop.trim(),
@@ -388,7 +390,9 @@ export default function AdminScreen() {
             ? 'Long-term spot position — entry + target only, no hard stop-loss.'
             : form.style === 'LEAPS'
             ? 'Long-dated options contract (6mo+). Pick a quick expiry below or set one manually in Contract details.'
-            : 'Short-hold setup with a full entry / target / stop.'}
+            : form.style === 'Day Trade'
+            ? 'Same-session setup — expected to resolve intraday. Full entry / target / stop, tight timeframe.'
+            : 'Short-hold setup (days/weeks) with a full entry / target / stop.'}
         </Text>
         {form.style === 'LEAPS' ? (
           <View style={styles.segmentRow}>
@@ -400,7 +404,7 @@ export default function AdminScreen() {
 
         {/* Signal type */}
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Signal type</Text>
-        {form.style === 'Swing' ? (
+        {form.style === 'Swing' || form.style === 'Day Trade' ? (
           <View style={styles.segmentRow}>
             <Segment active={form.isOption} label="Options contract" onPress={() => update('isOption', true)} />
             <Segment active={!form.isOption} label="Spot / equity" onPress={() => update('isOption', false)} />
@@ -425,6 +429,7 @@ export default function AdminScreen() {
             testID="admin-asset-input"
           />
         </View>
+        <Field label="Sector (optional)" value={form.sector} onChangeText={(v) => update('sector', v)} placeholder="e.g. Technology" />
         <View style={styles.twoCol}>
           <SelectField label="Market" value={form.market} options={['Stocks','Crypto']} onChange={(v) => update('market', v as SignalMarket)} />
           <SelectField label="Direction" value={form.direction} options={['Long','Short']} onChange={(v) => update('direction', v as SignalDirection)} />
@@ -515,7 +520,7 @@ export default function AdminScreen() {
                   <View style={styles.signalRowTitle}>
                     <Text style={[styles.signalAsset, { color: colors.foreground }]}>{s.asset}</Text>
                     {s.isOption ? <Tag>{s.optionType ?? 'OPTION'}</Tag> : null}
-                    {s.style && s.style !== 'Swing' ? <Tag tone="orange">{s.style}</Tag> : null}
+                    <Tag tone="orange">{s.style || 'Swing'}</Tag>
                     {s.source === 'auto' ? (
                       <View style={[styles.autoBadge, { borderColor: colors.border, backgroundColor: colors.muted }]}>
                         <Ionicons name="flash-outline" size={10} color={colors.mutedForeground} />
@@ -527,7 +532,7 @@ export default function AdminScreen() {
                     ) : null}
                   </View>
                   <Text style={[styles.signalMeta, { color: colors.mutedForeground }]}>
-                    {s.market} · {s.direction} · {s.postedAt}
+                    {s.market}{s.sector ? ` · ${s.sector}` : ''} · {s.direction} · {s.postedAt}
                   </Text>
                   {s.newsAlert && s.newsAlertNote ? (
                     <Text style={[styles.newsAlertNote, { color: '#E2C25A' }]}>{s.newsAlertNote}</Text>

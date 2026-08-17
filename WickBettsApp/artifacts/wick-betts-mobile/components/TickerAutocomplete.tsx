@@ -5,14 +5,20 @@ import { useTickerDirectory } from '@/hooks/useTickerDirectory';
 
 const GROUP_LABELS: Record<string, string> = {
   indices: 'Indices',
-  megacap: 'Mega-cap',
-  sectors: 'Sectors',
-  finance: 'Finance',
+  technology: 'Technology',
+  'consumer-discretionary': 'Consumer Discretionary',
+  'communication-services': 'Communication Services',
+  financials: 'Financials',
+  sectors: 'Sector ETFs',
   macro: 'Macro',
   crypto: 'Crypto',
 };
 
-const GROUP_ORDER = ['indices', 'megacap', 'sectors', 'finance', 'macro', 'crypto'];
+// Real per-stock sector labels (technology/consumer-discretionary/
+// communication-services/financials) instead of a generic "Mega-cap"
+// catch-all — this is what actually shows up when an admin searches a
+// ticker while publishing a signal.
+const GROUP_ORDER = ['indices', 'technology', 'consumer-discretionary', 'communication-services', 'financials', 'sectors', 'macro', 'crypto'];
 const MAX_PER_GROUP = 6;
 
 function formatPrice(price: number | null): string {

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Linking,
   Platform,
   Pressable,
@@ -28,6 +29,7 @@ function categoryTone(cat: string): ToneType {
   switch (cat) {
     case 'Crypto': return 'orange';
     case 'Macro': return 'purple';
+    case 'Analyst': return 'purple';
     case 'Earnings': return 'green';
     case 'Tech': return 'purple';
     default: return 'muted';
@@ -54,6 +56,7 @@ function NewsCard({ article, isSaved, onToggleSave }: {
 }) {
   const colors = useColors();
   const tone = categoryTone(article.category);
+  const [imageFailed, setImageFailed] = useState(false);
 
   const openLink = () => {
     if (article.url) void Linking.openURL(article.url);
@@ -61,6 +64,16 @@ function NewsCard({ article, isSaved, onToggleSave }: {
 
   return (
     <Card style={styles.postCard}>
+      {article.imageUrl && !imageFailed ? (
+        <Pressable onPress={openLink}>
+          <Image
+            source={{ uri: article.imageUrl }}
+            style={[styles.postImage, { backgroundColor: colors.secondary }]}
+            resizeMode="cover"
+            onError={() => setImageFailed(true)}
+          />
+        </Pressable>
+      ) : null}
       <View style={styles.postTop}>
         <Tag tone={tone}>{article.category.toUpperCase()}</Tag>
         <Text style={[styles.time, { color: colors.mutedForeground }]}>
@@ -211,7 +224,7 @@ export default function NewsScreen() {
       <View style={styles.masthead}>
         <Text style={[styles.mastheadTitle, { color: colors.foreground }]}>Live from{'\n'}the market.</Text>
         <Text style={[styles.mastheadBody, { color: colors.mutedForeground }]}>
-          Real headlines from WSJ and MarketWatch — refreshed every 15 minutes during market hours.
+          Verified headlines from WSJ and MarketWatch, filtered to real market news — earnings, guidance, deals, macro, and analyst calls. Refreshed every 15 minutes during market hours.
         </Text>
       </View>
 
@@ -369,6 +382,7 @@ const styles = StyleSheet.create({
   retryButton: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
   retryText: { fontSize: 13, fontFamily: 'Inter_700Bold' },
   postCard: { marginBottom: 12 },
+  postImage: { width: '100%', height: 150, borderRadius: 12, marginBottom: 12 },
   postTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 },
   time: { fontSize: 10, fontFamily: 'Inter_400Regular' },
   postTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', lineHeight: 20, marginBottom: 7 },

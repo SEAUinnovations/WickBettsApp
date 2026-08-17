@@ -7,7 +7,7 @@ export interface TickerEntry {
   changePercent: number | null;
 }
 
-/** Sector/group key (e.g. "indices", "megacap") -> symbol -> ticker info. */
+/** Sector/group key (e.g. "indices", "technology") -> symbol -> ticker info. */
 export type TickerSections = Record<string, Record<string, TickerEntry>>;
 
 /**

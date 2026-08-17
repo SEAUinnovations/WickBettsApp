@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { and, eq, gte, inArray } from "drizzle-orm";
 import { db, signalsTable } from "../lib/db.js";
 import { logger } from "../lib/logger.js";
-import { buildStockCandidateList } from "./stockUniverse.js";
+import { buildStockCandidateList, type RankedCandidate } from "./stockUniverse.js";
 import { fetchStockDailyBars, fetchCryptoDailyBars } from "./marketHistory.js";
 import { screenSymbol, type ScreenResult } from "./technicalAnalysis.js";
 import { blackScholes, pickExpiration, pickStrike, formatExpirationLabel, formatExpirationCode } from "./optionsModel.js";
@@ -40,11 +40,11 @@ import { getMacroConfluence, type MacroConfluence } from "./macroConfluence.js";
  */
 
 const CRYPTO_UNIVERSE = [
-  { symbol: "BTC", coingeckoId: "bitcoin" },
-  { symbol: "ETH", coingeckoId: "ethereum" },
-  { symbol: "SOL", coingeckoId: "solana" },
-  { symbol: "XRP", coingeckoId: "ripple" },
-  { symbol: "DOGE", coingeckoId: "dogecoin" },
+  { symbol: "BTC", coingeckoId: "bitcoin", sector: "Store of Value" },
+  { symbol: "ETH", coingeckoId: "ethereum", sector: "Smart Contract Platform" },
+  { symbol: "SOL", coingeckoId: "solana", sector: "Smart Contract Platform" },
+  { symbol: "XRP", coingeckoId: "ripple", sector: "Payments" },
+  { symbol: "DOGE", coingeckoId: "dogecoin", sector: "Meme / Payments" },
 ];
 
 const MIN_SIGNALS_PER_RUN = 1;
@@ -58,6 +58,7 @@ interface Candidate {
   symbol: string;
   market: "Stocks" | "Crypto";
   screen: ScreenResult;
+  sector: string | null;
 }
 
 type SignalStyle = "Swing" | "Buy & Hold" | "LEAPS";
@@ -101,6 +102,38 @@ async function getRecentAutoAssets(): Promise<Set<string>> {
   } catch (err) {
     logger.warn({ err }, "Could not load recent auto-signal assets for dedup — proceeding without dedup this run");
     return new Set();
+  }
+}
+
+/**
+ * Defense-in-depth re-check performed immediately before each insert, on top
+ * of the up-front `getRecentAutoAssets` snapshot taken at the start of the
+ * run. The snapshot can go stale mid-run — each chosen candidate awaits a
+ * news-alert lookup and (for stocks) an options pricing pass before its
+ * insert — so this re-verifies against the database at the actual moment of
+ * insert rather than trusting a set computed possibly seconds/minutes
+ * earlier. This is what actually prevents a duplicate row from landing, not
+ * just a duplicate symbol within a single run's selection.
+ */
+async function hasRecentAutoSignal(symbol: string): Promise<boolean> {
+  const cutoff = new Date(Date.now() - DEDUP_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  try {
+    const rows = await db
+      .select({ id: signalsTable.id })
+      .from(signalsTable)
+      .where(
+        and(
+          eq(signalsTable.asset, symbol),
+          eq(signalsTable.source, "auto"),
+          inArray(signalsTable.status, ["Active", "Watching"]),
+          gte(signalsTable.createdAt, cutoff),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  } catch (err) {
+    logger.warn({ err, symbol }, "Could not run pre-insert dedup check — proceeding, up-front dedup still applies");
+    return false;
   }
 }
 
@@ -293,6 +326,7 @@ async function buildStockOptionSignal(
   return {
     id: randomUUID(),
     asset: c.symbol,
+    sector: c.sector,
     market: "Stocks" as const,
     direction: c.screen.direction,
     status: "Watching" as const,
@@ -354,6 +388,7 @@ function buildStockBuyHoldSignal(
   return {
     id: randomUUID(),
     asset: c.symbol,
+    sector: c.sector,
     market: "Stocks" as const,
     direction: c.screen.direction,
     status: "Watching" as const,
@@ -416,6 +451,7 @@ function buildCryptoSpotSignal(
   return {
     id: randomUUID(),
     asset: c.symbol,
+    sector: c.sector,
     market: "Crypto" as const,
     direction: c.screen.direction,
     status: "Watching" as const,
@@ -465,10 +501,17 @@ const FOMC_WINDOW_PENALTY = 1;
 export async function runSignalScan(): Promise<void> {
   logger.info("Auto signal scan starting");
   try {
-    const [stockSymbols, confluence] = await Promise.all([
+    const [stockCandidates, confluence] = await Promise.all([
       buildStockCandidateList(STOCK_UNIVERSE_LIMIT),
       getMacroConfluence(),
     ]);
+    // Sector lookups keyed off the same screener pass that built the
+    // candidate list, so every stock candidate can be labeled without a
+    // second network round-trip; crypto sectors are the static category on
+    // CRYPTO_UNIVERSE itself.
+    const stockSectorBySymbol = new Map(stockCandidates.map((c) => [c.symbol, c.sector]));
+    const cryptoSectorBySymbol = new Map(CRYPTO_UNIVERSE.map((c) => [c.symbol, c.sector]));
+    const stockSymbols = stockCandidates.map((c) => c.symbol);
 
     const [stockResults, cryptoResults] = await Promise.all([
       batchScreen(
@@ -484,8 +527,8 @@ export async function runSignalScan(): Promise<void> {
     ]);
 
     const allCandidates: Candidate[] = [
-      ...stockResults.map((r) => ({ symbol: r.symbol, market: "Stocks" as const, screen: r.screen })),
-      ...cryptoResults.map((r) => ({ symbol: r.symbol, market: "Crypto" as const, screen: r.screen })),
+      ...stockResults.map((r) => ({ symbol: r.symbol, market: "Stocks" as const, screen: r.screen, sector: stockSectorBySymbol.get(r.symbol) ?? null })),
+      ...cryptoResults.map((r) => ({ symbol: r.symbol, market: "Crypto" as const, screen: r.screen, sector: cryptoSectorBySymbol.get(r.symbol) ?? null })),
     ];
 
     if (allCandidates.length === 0) {
@@ -526,9 +569,14 @@ export async function runSignalScan(): Promise<void> {
     };
 
     const recentAssets = await getRecentAutoAssets();
-    const fresh = allCandidates.filter((c) => !recentAssets.has(c.symbol));
-    // If dedup would wipe out the whole pool, ignore it rather than produce nothing.
-    const pool = fresh.length > 0 ? fresh : allCandidates;
+    // Deliberately no "fall back to the full undeduped pool" branch here —
+    // that used to be the actual cause of duplicate signals: whenever every
+    // qualifying candidate already had a recent Watching/Active auto signal,
+    // the old code discarded the dedup filter entirely and happily re-added
+    // a second signal for a ticker that already had one live. Producing
+    // fewer (or zero) signals this run is correct; duplicating an existing
+    // one is not.
+    const pool = allCandidates.filter((c) => !recentAssets.has(c.symbol));
 
     const strict = pool.filter((c) => c.screen.strictMatch).sort((a, b) => rankScore(b) - rankScore(a));
     const rest = pool.filter((c) => !c.screen.strictMatch).sort((a, b) => rankScore(b) - rankScore(a));
@@ -550,6 +598,13 @@ export async function runSignalScan(): Promise<void> {
 
     const inserted: string[] = [];
     for (const c of chosen) {
+      // Re-verify right before insert — see hasRecentAutoSignal's doc
+      // comment for why the up-front `recentAssets` snapshot alone isn't
+      // sufficient.
+      if (await hasRecentAutoSignal(c.symbol)) {
+        logger.info({ symbol: c.symbol }, "Skipped auto signal insert — a recent Watching/Active signal already exists for this asset");
+        continue;
+      }
       const windowEnd = new Date();
       windowEnd.setUTCDate(windowEnd.getUTCDate() + (c.market === "Stocks" ? 14 : SPOT_HOLD_DAYS));
       const newsAlert = await getNewsAlert(c.symbol, c.market, new Date(), windowEnd);

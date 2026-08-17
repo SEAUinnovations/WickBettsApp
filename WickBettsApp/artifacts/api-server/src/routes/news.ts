@@ -18,6 +18,7 @@ interface NewsArticle {
   publishedAt: string;
   category: string;
   summary: string;
+  imageUrl: string | null;
 }
 
 interface NewsArticleOverride {
@@ -52,43 +53,125 @@ let lastScheduledSlot: string | null = null;
 // return empty bodies) — verified by direct fetch before swapping. These
 // Dow Jones-family feeds are current and don't require an API key. Five
 // sources gives real redundancy: RSS scraping only needs one to succeed.
+//
+// `strict: true` sources pull from general "top stories" / "business"
+// verticals that mix in personal-finance advice columns and lifestyle
+// pieces alongside real market news (verified by direct fetch — MarketWatch
+// Top Stories in particular carries the "Moneyist" advice column), so they
+// get the full market-keyword relevance filter on top of the junk-pattern
+// filter. `strict: false` sources are narrow, wire-style headline feeds
+// (MarketWatch Real-time Headlines, MarketPulse) that are market/macro/
+// analyst content by construction — same junk filter, but not required to
+// also match a market keyword, since real headlines there are sometimes
+// too terse (e.g. "Dollar jumps 0.5% to 0.8890 francs") to hit every term.
 const RSS_SOURCES = [
   {
     url: "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
     name: "WSJ Markets",
     defaultCategory: "Markets",
+    strict: true,
   },
   {
-    url: "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
-    name: "WSJ World News",
+    url: "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml",
+    name: "WSJ Business",
     defaultCategory: "Markets",
+    strict: true,
   },
   {
     url: "https://feeds.content.dowjones.io/public/rss/mw_topstories",
     name: "MarketWatch",
     defaultCategory: "Markets",
+    strict: true,
   },
   {
     url: "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines",
     name: "MarketWatch",
     defaultCategory: "Markets",
+    strict: false,
   },
   {
     url: "https://feeds.content.dowjones.io/public/rss/mw_marketpulse",
     name: "MarketWatch",
     defaultCategory: "Markets",
+    strict: false,
   },
 ];
 
 function guessCategory(title: string): string {
   const t = title.toLowerCase();
+  if (/analyst|price target|started at (buy|sell|hold|neutral|outperform|underperform)|initiat(ed|es) (at|coverage)|upgrades?|downgrades?|rated (buy|sell|hold|overweight|underweight)/.test(t)) return "Analyst";
   if (/bitcoin|crypto|ethereum|btc|eth|defi|blockchain/.test(t)) return "Crypto";
-  if (/fed|inflation|rates?|cpi|fomc|powell|treasury/.test(t)) return "Macro";
+  if (/fed|inflation|rates?|cpi|fomc|powell|treasury|jobless|payrolls|\bpmi\b|\bgdp\b/.test(t)) return "Macro";
   if (/earnings?|revenue|guidance|eps|profit|loss/.test(t)) return "Earnings";
   if (/oil|energy|gold|commodity|crude/.test(t)) return "Commodities";
   if (/\bnvda\b|nvidia|chip|semiconductor|ai\b|artificial intelligence/.test(t)) return "Tech";
   if (/bank|finance|jpmorgan|goldman|credit/.test(t)) return "Finance";
   return "Markets";
+}
+
+// Bylines known to write personal-finance advice columns (e.g. MarketWatch's
+// "Moneyist") rather than market/business news — excluded regardless of
+// which feed they show up in. Verified directly against live feed output:
+// every "My son/husband/friend..." advice piece in MarketWatch Top Stories
+// carried this byline.
+const JUNK_BYLINES = new Set(["Quentin Fottrell"]);
+
+// Headline/summary patterns that reliably signal a personal-advice-column,
+// lifestyle, or unrelated-to-markets piece, even without a matching byline.
+const JUNK_PATTERNS: RegExp[] = [
+  /\bmy (son|daughter|husband|wife|mother|father|friend|parents?|brother|sister)\b/i,
+  /\bis (that|this) fair\??/i,
+  /\bcan (she|he|they|i|we) (stop|afford)\b/i,
+  /\bmediterranean diet\b|\bbest diet\b/i,
+  /\bdementia\b/i,
+  /\baffordable care act\b|\baca subsidy\b|\bhealth insurance subsidy\b/i,
+  /\bmedicaid\b/i,
+];
+
+// Requiring at least one of these on "strict" sources keeps genuine
+// market/business content — earnings, guidance, deals, macro data, analyst
+// calls, sector news — and drops unrelated lifestyle/personal-finance
+// pieces that slip into general "top stories" and "business" verticals.
+const MARKET_KEYWORDS =
+  /\b(stock|stocks|share|shares|equit(y|ies)|market|markets|nasdaq|s&p|dow jones|russell|ftse|nikkei|stoxx|earnings|revenue|profit|guidance|forecast|outlook|analyst|rating|upgrade|downgrade|price target|ipo|merger|acquisition|acquire|buyout|takeover|\bdeal\b|\bfed\b|federal reserve|rate cut|rate hike|interest rate|inflation|\bcpi\b|\bpmi\b|\bgdp\b|jobless|payrolls|treasury|\byield\b|\bbond\b|crypto|bitcoin|ethereum|\boil\b|crude|\bgold\b|\bsilver\b|commodit(y|ies)|\bsector\b|\bceo\b|chief executive|dividend|buyback|trading|wall street|\betf\b|hedge fund|quarterly|fiscal|\bchip\b|semiconductor|tariff|layoffs?|\brecall\b|lawsuit|antitrust|regulator|\bsec\b|\bftc\b|banks?|\brally\b|sell-?off|volatility|investors?|portfolio|\btrade\b)/i;
+
+function isJunkArticle(headline: string, summary: string, byline: string): boolean {
+  if (byline && JUNK_BYLINES.has(byline.trim())) return true;
+  const text = `${headline} ${summary}`;
+  return JUNK_PATTERNS.some((re) => re.test(text));
+}
+
+function isMarketRelevant(headline: string, summary: string): boolean {
+  return MARKET_KEYWORDS.test(`${headline} ${summary}`);
+}
+
+/**
+ * Extracts a preview image URL from an RSS item's <media:content>,
+ * <media:thumbnail>, or <enclosure> tag, when present. Not every feed
+ * includes one — MarketWatch's wire-headline feeds (Real-time Headlines,
+ * MarketPulse) never do, which is expected and fine; the article just
+ * renders without a thumbnail.
+ */
+function xmlImage(item: Record<string, unknown>): string | null {
+  const candidates = [item["media:content"], item["media:thumbnail"], item["enclosure"]];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const nodes = Array.isArray(raw) ? raw : [raw];
+    for (const node of nodes) {
+      if (typeof node !== "object" || node === null) continue;
+      const obj = node as Record<string, unknown>;
+      const url = typeof obj["url"] === "string" ? obj["url"] : "";
+      const type = typeof obj["type"] === "string" ? obj["type"] : "";
+      const medium = typeof obj["medium"] === "string" ? obj["medium"] : "";
+      if (!url) continue;
+      if (type && !type.startsWith("image")) continue;
+      if (medium && medium !== "image") continue;
+      if (type.startsWith("image") || medium === "image" || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(url)) {
+        return url;
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -139,33 +222,42 @@ async function fetchRss(source: typeof RSS_SOURCES[0]): Promise<NewsArticle[]> {
     ? [channel["entry"]]
     : [];
 
-  return rawItems
-    .slice(0, 20)
-    .map((item) => {
-      const it = item as Record<string, unknown>;
-      const title = xmlText(it["title"]);
-      const link = xmlText(it["link"]) || xmlText(it["guid"]);
-      const pubDate = xmlText(it["pubDate"] ?? it["published"] ?? it["updated"]);
-      const desc = xmlText(it["description"] ?? it["summary"] ?? it["content"]);
-      // Strip HTML tags/entities from description
-      const summary = desc
-        .replace(/<!\[CDATA\[|\]\]>/g, "")
-        .replace(/<[^>]*>/g, "")
-        .replace(/&nbsp;/g, " ")
-        .replace(/&amp;/g, "&")
-        .slice(0, 200)
-        .trim();
-      return {
-        id: link || title,
-        headline: title,
-        source: source.name,
-        url: link,
-        publishedAt: pubDate,
-        category: guessCategory(title),
-        summary: summary || title,
-      };
-    })
-    .filter((article) => article.headline.trim().length > 0);
+  const candidates = rawItems.slice(0, 20).map((item) => {
+    const it = item as Record<string, unknown>;
+    const title = xmlText(it["title"]);
+    const link = xmlText(it["link"]) || xmlText(it["guid"]);
+    const pubDate = xmlText(it["pubDate"] ?? it["published"] ?? it["updated"]);
+    const desc = xmlText(it["description"] ?? it["summary"] ?? it["content"]);
+    const byline = xmlText(it["dc:creator"] ?? it["author"]);
+    // Strip HTML tags/entities from description
+    const summary = desc
+      .replace(/<!\[CDATA\[|\]\]>/g, "")
+      .replace(/<[^>]*>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .slice(0, 200)
+      .trim();
+    const article: NewsArticle = {
+      id: link || title,
+      headline: title,
+      source: source.name,
+      url: link,
+      publishedAt: pubDate,
+      category: guessCategory(title),
+      summary: summary || title,
+      imageUrl: xmlImage(it),
+    };
+    return { article, byline };
+  });
+
+  // Verified/real-source only: drop personal-finance advice columns and
+  // lifestyle pieces everywhere, and on "mixed" feeds additionally require a
+  // real market/business keyword match — see the RSS_SOURCES comment above.
+  return candidates
+    .filter(({ article }) => article.headline.trim().length > 0)
+    .filter(({ article, byline }) => !isJunkArticle(article.headline, article.summary, byline))
+    .filter(({ article }) => !source.strict || isMarketRelevant(article.headline, article.summary))
+    .map(({ article }) => article);
 }
 
 async function refreshCache(): Promise<NewsArticle[]> {

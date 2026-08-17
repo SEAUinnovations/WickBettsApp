@@ -11,6 +11,7 @@ export interface NewsArticle {
   publishedAt: string;
   category: string;
   summary: string;
+  imageUrl: string | null;
 }
 
 export function useNewsFeed() {

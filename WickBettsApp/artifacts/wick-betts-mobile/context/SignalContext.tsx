@@ -16,13 +16,17 @@ export type SignalMarket = 'Stocks' | 'Crypto';
 export type SignalDirection = 'Long' | 'Short';
 export type SignalStatus = 'Active' | 'Watching' | 'Closed' | 'Stopped';
 export type OptionType = 'Call' | 'Put';
-/** Trading horizon: 'Swing' (short-hold, original behavior), 'Buy & Hold'
- *  (long-term spot position, no stop), 'LEAPS' (long-dated options, 6mo+). */
-export type SignalStyle = 'Swing' | 'Buy & Hold' | 'LEAPS';
+/** Trading horizon: 'Day Trade' (same-session/intraday, manual-only — the
+ *  auto scanner runs on daily bars and never has the resolution to call
+ *  one), 'Swing' (short-hold, days/weeks), 'Buy & Hold' (long-term spot
+ *  position, no stop), 'LEAPS' (long-dated options, 6mo+). */
+export type SignalStyle = 'Day Trade' | 'Swing' | 'Buy & Hold' | 'LEAPS';
 
 export interface Signal {
   id: string;
   asset: string;
+  /** GICS-style sector for stocks (e.g. "Technology"), or a short crypto category (e.g. "Smart Contract Platform"). */
+  sector?: string;
   market: SignalMarket;
   direction: SignalDirection;
   status: SignalStatus;
@@ -59,6 +63,7 @@ export interface Signal {
 interface ApiSignal {
   id: string;
   asset: string;
+  sector?: string | null;
   market: string;
   direction: string;
   status: string;
@@ -129,6 +134,7 @@ function mapApiSignal(s: ApiSignal): Signal {
   return {
     id: s.id,
     asset: s.asset,
+    sector: s.sector ?? undefined,
     market: s.market as SignalMarket,
     direction: s.direction as SignalDirection,
     status: s.status as SignalStatus,

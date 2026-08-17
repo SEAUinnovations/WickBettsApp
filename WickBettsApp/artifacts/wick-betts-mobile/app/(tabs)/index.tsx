@@ -299,13 +299,17 @@ export default function HomeScreen() {
 
 // Each key matches a `group` value the API tags quotes with (see
 // routes/market.ts EQUITY_TICKERS/CRYPTO_TICKERS). "sectors" holds the 11
-// SPDR sector ETFs — a real sector heatmap — the rest give the "different
-// sectors/views" switcher something else to show.
+// SPDR sector ETFs — a real sector heatmap. Individual mega-cap stocks are
+// grouped by their own real sector (technology/consumer-discretionary/
+// communication-services) rather than a generic "Mega-cap" bucket, so this
+// switcher doubles as an accurate per-stock sector view too.
 const HEAT_GROUPS: { key: string; label: string }[] = [
-  { key: 'sectors', label: 'Sectors' },
+  { key: 'sectors', label: 'Sector ETFs' },
   { key: 'indices', label: 'Indices' },
-  { key: 'megacap', label: 'Mega-cap' },
-  { key: 'finance', label: 'Finance' },
+  { key: 'technology', label: 'Technology' },
+  { key: 'consumer-discretionary', label: 'Cons. Discretionary' },
+  { key: 'communication-services', label: 'Communications' },
+  { key: 'financials', label: 'Financials' },
   { key: 'macro', label: 'Macro' },
   { key: 'crypto', label: 'Crypto' },
 ];

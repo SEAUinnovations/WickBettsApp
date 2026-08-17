@@ -7,16 +7,24 @@ export const marketEnum = pgEnum("market", ["Stocks", "Crypto"]);
 export const directionEnum = pgEnum("direction", ["Long", "Short"]);
 export const signalStatusEnum = pgEnum("signal_status", ["Active", "Watching", "Closed", "Stopped"]);
 export const optionTypeEnum = pgEnum("option_type", ["Call", "Put"]);
-// Trading style/horizon for the setup. "Swing" is the original short-hold
-// behavior (days/weeks, always has a stop). "Buy & Hold" is a long-term spot
-// position (stocks or crypto) with an entry + target but deliberately no
-// stop — the thesis plays out over a long horizon, not a hard invalidation
-// price. "LEAPS" is a long-dated options contract (6/8/12+ months out).
-export const signalStyleEnum = pgEnum("signal_style", ["Swing", "Buy & Hold", "LEAPS"]);
+// Trading style/horizon for the setup — this is what tells a member the time
+// expectancy of a trade at a glance. "Day Trade" is same-session/intraday
+// (manual only — the auto scanner runs on daily bars, so it never has the
+// resolution to call a genuine intraday setup and will never emit this
+// style). "Swing" is the original short-hold behavior (days/weeks, always
+// has a stop). "Buy & Hold" is a long-term spot position (stocks or crypto)
+// with an entry + target but deliberately no stop — the thesis plays out
+// over a long horizon, not a hard invalidation price. "LEAPS" is a
+// long-dated options contract (6/8/12+ months out).
+export const signalStyleEnum = pgEnum("signal_style", ["Day Trade", "Swing", "Buy & Hold", "LEAPS"]);
 
 export const signalsTable = pgTable("signals", {
   id: text("id").primaryKey(),
   asset: text("asset").notNull(),
+  // GICS-style sector (e.g. "Technology", "Financials") for stocks, or a
+  // short category label for crypto (e.g. "Smart Contract Platform").
+  // Nullable — best-effort enrichment, not every data source returns one.
+  sector: text("sector"),
   market: marketEnum("market").notNull(),
   direction: directionEnum("direction").notNull(),
   status: signalStatusEnum("status").notNull().default("Active"),

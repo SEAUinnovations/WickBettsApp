@@ -9,7 +9,28 @@ import { useColors } from '@/hooks/useColors';
 import { useAuth, type Plan } from '@/context/AuthContext';
 import { useSignals, type Signal, type SignalStatus } from '@/context/SignalContext';
 
-type Filter = 'All' | 'Stocks' | 'Crypto' | 'Options' | 'Buy & Hold' | 'LEAPS' | 'Active' | 'Closed';
+type Filter = 'All' | 'Stocks' | 'Crypto' | 'Options' | 'Day Trade' | 'Swing' | 'Buy & Hold' | 'LEAPS' | 'Active' | 'Closed';
+
+// A signal's style is the time-expectancy label a member actually needs at a
+// glance — "how long should I expect to be in this trade" — so every style
+// gets a distinct tone here rather than only flagging the non-default ones.
+function styleTone(style: string): 'purple' | 'green' | 'orange' | 'muted' {
+  switch (style) {
+    case 'Day Trade': return 'orange';
+    case 'LEAPS': return 'purple';
+    case 'Buy & Hold': return 'green';
+    default: return 'muted'; // Swing
+  }
+}
+
+function styleDurationHint(style: string): string {
+  switch (style) {
+    case 'Day Trade': return 'Same session — intraday';
+    case 'LEAPS': return '6mo+ out';
+    case 'Buy & Hold': return 'Long-term hold';
+    default: return 'Days to weeks'; // Swing
+  }
+}
 
 // Tapping a signal's status pill (admin only) advances it one step around
 // this cycle — most usefully Watching -> Active, the moment an
@@ -159,7 +180,7 @@ export default function SignalsScreen() {
       ) : null}
       <SectionLabel>Signal history</SectionLabel>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
-        {(['All', 'Stocks', 'Crypto', 'Options', 'Buy & Hold', 'LEAPS', 'Active', 'Closed'] as Filter[]).map((item) => (
+        {(['All', 'Stocks', 'Crypto', 'Options', 'Day Trade', 'Swing', 'Buy & Hold', 'LEAPS', 'Active', 'Closed'] as Filter[]).map((item) => (
           <Pressable
             key={item}
             onPress={() => setFilter(item)}
@@ -233,7 +254,7 @@ function SignalCard({
           <View style={styles.titleLine}>
             <Text style={[styles.assetName, { color: colors.foreground }]}>{signal.asset}</Text>
             {signal.isOption ? <Tag>OPTION</Tag> : null}
-            {signal.style && signal.style !== 'Swing' ? <Tag tone="orange">{signal.style}</Tag> : null}
+            <Tag tone={styleTone(signal.style)}>{signal.style || 'Swing'}</Tag>
             {isAdmin && onAdvanceStatus ? (
               <Pressable
                 onPress={onAdvanceStatus}
@@ -253,7 +274,10 @@ function SignalCard({
             ) : null}
           </View>
           <Text style={[styles.meta, { color: colors.mutedForeground }]}>
-            {signal.market} · {signal.timeframe} · {signal.direction}
+            {signal.market}{signal.sector ? ` · ${signal.sector}` : ''} · {signal.direction}
+          </Text>
+          <Text style={[styles.durationHint, { color: colors.mutedForeground }]}>
+            {styleDurationHint(signal.style)} · {signal.timeframe}
           </Text>
         </View>
         {isAdmin && onRemove ? (
@@ -372,6 +396,7 @@ const styles = StyleSheet.create({
   titleLine: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   assetName: { fontSize: 15, fontFamily: 'Inter_700Bold' },
   meta: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 4 },
+  durationHint: { fontSize: 10, fontFamily: 'Inter_500Medium', marginTop: 3 },
   removeIcon: { paddingHorizontal: 6, paddingVertical: 2, marginRight: 4 },
   adminHint: { fontSize: 9, fontFamily: 'Inter_400Regular', marginTop: 10, fontStyle: 'italic' },
   contract: { borderRadius: 12, padding: 12, marginTop: 15 },

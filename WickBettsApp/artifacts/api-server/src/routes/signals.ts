@@ -55,7 +55,7 @@ router.get("/", requireAuth, requireActiveSubscription, async (_req, res) => {
   res.json({ signals });
 });
 
-const VALID_STYLES = ["Swing", "Buy & Hold", "LEAPS"] as const;
+const VALID_STYLES = ["Day Trade", "Swing", "Buy & Hold", "LEAPS"] as const;
 type SignalStyle = (typeof VALID_STYLES)[number];
 
 // POST /api/signals — publish a signal (admin only)
@@ -63,7 +63,7 @@ router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) 
   const body = req.body as {
     status?: "Active" | "Watching" | "Closed" | "Stopped" | null;
     style?: SignalStyle | null;
-    asset?: string | null; market?: "Stocks" | "Crypto" | null; direction?: "Long" | "Short" | null;
+    asset?: string | null; sector?: string | null; market?: "Stocks" | "Crypto" | null; direction?: "Long" | "Short" | null;
     entry?: string | null; target?: string | null; stop?: string | null; timeframe?: string | null;
     risk?: string | null; analysis?: string | null; isOption?: boolean | null;
     optionType?: "Call" | "Put" | null; contract?: string | null; expiration?: string | null;
@@ -100,6 +100,7 @@ router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) 
     const signal = {
       id: randomUUID(),
       asset: body.asset!,
+      sector: body.sector?.trim() || undefined,
       market: body.market ?? "Stocks",
       direction: body.direction ?? "Long",
       status: body.status ?? undefined,
@@ -155,7 +156,7 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   const body = req.body as {
     status?: "Active" | "Watching" | "Closed" | "Stopped" | null;
     style?: SignalStyle | null;
-    asset?: string | null; market?: "Stocks" | "Crypto" | null; direction?: "Long" | "Short" | null;
+    asset?: string | null; sector?: string | null; market?: "Stocks" | "Crypto" | null; direction?: "Long" | "Short" | null;
     entry?: string | null; target?: string | null; stop?: string | null; timeframe?: string | null;
     risk?: string | null; analysis?: string | null; isOption?: boolean | null;
     optionType?: "Call" | "Put" | null; contract?: string | null; expiration?: string | null;
@@ -200,7 +201,7 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   const updates: Record<string, unknown> = {};
   const include = (key: string, val: unknown) => { if (val !== undefined) updates[key] = val; };
 
-  include("status", body.status); include("style", body.style); include("asset", body.asset); include("market", body.market);
+  include("status", body.status); include("style", body.style); include("asset", body.asset); include("sector", body.sector); include("market", body.market);
   include("direction", body.direction); include("entry", body.entry); include("target", body.target);
   include("stop", body.stop); include("timeframe", body.timeframe); include("risk", body.risk);
   include("analysis", body.analysis); include("isOption", body.isOption);

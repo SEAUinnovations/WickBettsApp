@@ -110,7 +110,8 @@ function ErrorLine({ message }: { message: string }) {
 
 /**
  * Plan selection for members with no subscription — matches the web landing /
- * profile plan cards (Signals $250, Mentorship $500).
+ * profile plan cards (Membership $50, Signals $200, Mentorship $500) and the
+ * pricing compare table on the front page (see app/index.tsx).
  */
 export function SubscribePanel() {
   const { loading, error, runCheckout } = useBillingActions();
@@ -120,13 +121,22 @@ export function SubscribePanel() {
       <Text style={styles.stripeNote}>Secure checkout opens in Stripe.</Text>
       <Text style={styles.finalSaleNote}>All sales are final — no refunds. See Legal for the full billing policy.</Text>
       <ActionButton
+        onPress={() => void runCheckout('membership')}
+        icon="sparkles-outline"
+        busy={loading === 'membership'}
+        disabled={loading !== null}
+        testID="subscribe-membership"
+      >
+        Subscribe · Membership $50
+      </ActionButton>
+      <ActionButton
         onPress={() => void runCheckout('signals')}
         icon="pulse-outline"
         busy={loading === 'signals'}
         disabled={loading !== null}
         testID="subscribe-signals"
       >
-        Subscribe · Signals $250
+        Subscribe · Signals $200
       </ActionButton>
       <ActionButton
         onPress={() => void runCheckout('mentorship')}
@@ -136,15 +146,6 @@ export function SubscribePanel() {
         testID="subscribe-mentorship"
       >
         Subscribe · Mentorship $500
-      </ActionButton>
-      <ActionButton
-        onPress={() => void runCheckout('membership')}
-        icon="sparkles-outline"
-        busy={loading === 'membership'}
-        disabled={loading !== null}
-        testID="subscribe-membership"
-      >
-        Subscribe · Membership
       </ActionButton>
       <ErrorLine message={error} />
     </View>

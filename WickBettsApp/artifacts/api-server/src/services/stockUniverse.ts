@@ -98,6 +98,12 @@ export interface ScreenerRow {
   symbol: string;
   price: number;
   volume: number;
+  // The Nasdaq screener API returns a per-row GICS-style sector string
+  // (e.g. "Technology", "Health Care") alongside the price/volume fields —
+  // captured here so the signal scanner can label every candidate with its
+  // real sector instead of leaving it blank. Best-effort: null if the field
+  // is missing/empty for a given row.
+  sector: string | null;
 }
 
 function parseMoney(s: string | undefined): number {
@@ -119,6 +125,7 @@ async function fetchExchangeScreener(exchange: "NASDAQ" | "NYSE"): Promise<Scree
         symbol: (r.symbol ?? "").trim().toUpperCase(),
         price: parseMoney(r.lastsale),
         volume: parseMoney(r.volume),
+        sector: (r.sector ?? "").trim() || null,
       }))
       .filter((r) => r.symbol && r.price > 0);
   } catch (err) {
@@ -127,11 +134,19 @@ async function fetchExchangeScreener(exchange: "NASDAQ" | "NYSE"): Promise<Scree
   }
 }
 
+export interface RankedCandidate {
+  symbol: string;
+  sector: string | null;
+}
+
 /**
  * Builds the ranked candidate list: price > $90, not in S&P 500 / Nasdaq-100,
- * sorted by volume descending, capped to `limit`.
+ * sorted by volume descending, capped to `limit`. Each entry carries its
+ * sector (from the live screener data, when available) so downstream
+ * consumers — the signal scanner — can label every candidate correctly
+ * without a second lookup.
  */
-export async function buildStockCandidateList(limit = 60): Promise<string[]> {
+export async function buildStockCandidateList(limit = 60): Promise<RankedCandidate[]> {
   const [nasdaqRows, nyseRows] = await Promise.all([
     fetchExchangeScreener("NASDAQ"),
     fetchExchangeScreener("NYSE"),
@@ -152,11 +167,11 @@ export async function buildStockCandidateList(limit = 60): Promise<string[]> {
 
   // De-dupe (a symbol could theoretically show up on both exchange calls)
   const seen = new Set<string>();
-  const ranked: string[] = [];
+  const ranked: RankedCandidate[] = [];
   for (const row of filtered) {
     if (seen.has(row.symbol)) continue;
     seen.add(row.symbol);
-    ranked.push(row.symbol);
+    ranked.push({ symbol: row.symbol, sector: row.sector });
     if (ranked.length >= limit) break;
   }
   return ranked;
