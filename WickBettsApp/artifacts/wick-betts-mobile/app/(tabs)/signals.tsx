@@ -147,7 +147,9 @@ export default function SignalsScreen() {
             )}
           </View>
         </Card>
-      ) : error ? (
+      ) : error && signals.length === 0 ? (
+        // Nothing to fall back on — a real blocking error, not just a stale
+        // cache. Show the full card with a retry action.
         <Card style={styles.gateCard}>
           <Ionicons name="cloud-offline-outline" size={28} color={colors.mutedForeground} />
           <Text style={[styles.gateTitle, { color: colors.foreground }]}>Could not load signals</Text>
@@ -156,6 +158,17 @@ export default function SignalsScreen() {
             <Text style={[styles.retryText, { color: colors.primary }]}>Try again</Text>
           </Pressable>
         </Card>
+      ) : error ? (
+        // The live fetch failed, but we still have a cached copy to show —
+        // a small inline notice reads better here than a full-page error
+        // card sitting on top of a perfectly scrollable signal list.
+        <View style={[styles.staleNotice, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+          <Ionicons name="cloud-offline-outline" size={16} color={colors.mutedForeground} />
+          <Text style={[styles.staleNoticeText, { color: colors.mutedForeground }]}>Showing saved signals — couldn't refresh.</Text>
+          <Pressable onPress={() => void refresh()} hitSlop={8}>
+            <Text style={[styles.staleNoticeRetry, { color: colors.primary }]}>Retry</Text>
+          </Pressable>
+        </View>
       ) : null}
       <View style={[styles.intro, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
         <View style={styles.introIcon}>
@@ -436,4 +449,7 @@ const styles = StyleSheet.create({
   gateText: { fontSize: 12, lineHeight: 18, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingHorizontal: 12 },
   retryButton: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 18, paddingVertical: 9, marginTop: 4 },
   retryText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
+  staleNotice: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 },
+  staleNoticeText: { flex: 1, fontSize: 11, fontFamily: 'Inter_500Medium' },
+  staleNoticeRetry: { fontSize: 11, fontFamily: 'Inter_700Bold' },
 });

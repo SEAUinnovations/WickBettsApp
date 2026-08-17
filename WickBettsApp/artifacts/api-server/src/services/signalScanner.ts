@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { and, eq, gte, inArray } from "drizzle-orm";
+import { and, eq, gte, lt, inArray } from "drizzle-orm";
 import { db, signalsTable } from "../lib/db.js";
 import { logger } from "../lib/logger.js";
 import { buildStockCandidateList, type RankedCandidate } from "./stockUniverse.js";
@@ -53,6 +53,13 @@ const STOCK_UNIVERSE_LIMIT = 60;
 const FETCH_BATCH_SIZE = 10;
 const DEDUP_WINDOW_DAYS = 14;
 const SPOT_HOLD_DAYS = 10; // assumed holding window for crypto/spot star-flag checks
+// A "Watching" signal that never gets promoted to Active within a week has,
+// in practice, never triggered — the setup didn't play out. Left alone these
+// pile up and clutter the Signals tab, so they're auto-removed rather than
+// kept around like a resolved Active/Closed/Stopped trade (those stay
+// forever for transparency — see the "Past signals remain visible" note on
+// the Signals tab; an untriggered watch isn't a trade that needs a record).
+const WATCHING_EXPIRY_DAYS = 7;
 
 interface Candidate {
   symbol: string;
@@ -632,6 +639,30 @@ export async function runSignalScan(): Promise<void> {
   }
 }
 
+/**
+ * Deletes any signal still sitting in "Watching" after WATCHING_EXPIRY_DAYS —
+ * manual or auto, it doesn't matter which; a setup nobody promoted to Active
+ * in a week is just clutter on the Signals tab at that point. Active/Closed/
+ * Stopped signals are never touched here, regardless of age.
+ */
+export async function expireStaleWatchingSignals(): Promise<void> {
+  const cutoff = new Date(Date.now() - WATCHING_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+  try {
+    const removed = await db
+      .delete(signalsTable)
+      .where(and(eq(signalsTable.status, "Watching"), lt(signalsTable.createdAt, cutoff)))
+      .returning({ id: signalsTable.id, asset: signalsTable.asset });
+    if (removed.length > 0) {
+      logger.info(
+        { count: removed.length, assets: removed.map((r) => r.asset) },
+        "Auto-removed stale Watching signals older than a week",
+      );
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to expire stale Watching signals");
+  }
+}
+
 const RUN_INTERVAL_MS = 2 * 24 * 60 * 60 * 1000; // every 2 days
 let schedulerStarted = false;
 
@@ -641,12 +672,16 @@ export function startSignalScanScheduler(): void {
 
   // Run once shortly after boot so the Signals tab has real data immediately
   // instead of waiting up to 2 days for the first scheduled pass, then every
-  // 2 days after that.
+  // 2 days after that. The Watching-signal cleanup rides the same cadence —
+  // no need for its own timer, and every-2-days is frequent enough to keep a
+  // 7-day expiry from ever drifting more than a couple of days late.
   setTimeout(() => {
     void runSignalScan();
+    void expireStaleWatchingSignals();
   }, 20_000);
   setInterval(() => {
     void runSignalScan();
+    void expireStaleWatchingSignals();
   }, RUN_INTERVAL_MS);
 }
 

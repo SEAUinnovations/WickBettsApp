@@ -365,6 +365,11 @@ export default function ProfileScreen() {
           <Text style={[styles.accountText, { color: colors.foreground }]}>Legal &amp; disclosures</Text>
           <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
         </Pressable>
+        <Pressable onPress={() => router.push('/contact' as never)} style={styles.accountRow} accessibilityRole="button" testID="contact-us">
+          <Ionicons name="help-circle-outline" size={19} color={colors.accent} />
+          <Text style={[styles.accountText, { color: colors.foreground }]}>Contact us</Text>
+          <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+        </Pressable>
         {isAdmin ? (
           <Pressable
             onPress={() => router.push('/admin')}
@@ -385,6 +390,18 @@ export default function ProfileScreen() {
           >
             <Ionicons name="people-outline" size={19} color={colors.primary} />
             <Text style={[styles.accountText, { color: colors.foreground }]}>Manage users</Text>
+            <Tag>ADMIN</Tag>
+            <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+          </Pressable>
+        ) : null}
+        {isAdmin ? (
+          <Pressable
+            onPress={() => router.push('/admin/tickets')}
+            style={styles.accountRow}
+            accessibilityRole="button"
+          >
+            <Ionicons name="chatbox-ellipses-outline" size={19} color={colors.primary} />
+            <Text style={[styles.accountText, { color: colors.foreground }]}>Support tickets</Text>
             <Tag>ADMIN</Tag>
             <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
           </Pressable>

@@ -251,6 +251,58 @@ export async function sendMentorshipCancellation(email: string, session: Mentors
   }
 }
 
+const SUPPORT_INBOX = "seauinnovations@gmail.com";
+
+/**
+ * Fired the moment a member submits a technical-support ticket from the
+ * "Contact us" screen (routes/support.ts POST /tickets). Always notifies the
+ * fixed support inbox, not a per-user recipient — the ticket itself is also
+ * persisted in `support_tickets` regardless of whether this send succeeds, so
+ * a missed/bounced email never loses the report (see admin/tickets.tsx).
+ * Returns whether the send actually went out, so the route can record
+ * emailSentAt accurately instead of always assuming success.
+ */
+export async function sendSupportTicketEmail(ticket: {
+  id: string;
+  userEmail: string;
+  subject: string;
+  message: string;
+}): Promise<boolean> {
+  if (!isConfigured()) {
+    logger.warn({ ticketId: ticket.id }, "RESEND_API_KEY is not configured — support ticket email skipped (ticket is still saved).");
+    return false;
+  }
+  try {
+    const subject = `[Wick Betts Support] ${ticket.subject}`;
+    const bodyHtml = `<p>New technical-support ticket from <strong>${escapeHtml(ticket.userEmail)}</strong>.</p><p style="white-space:pre-wrap;">${escapeHtml(ticket.message)}</p><p style="color:#6b7684;font-size:12px;">Ticket ID: ${escapeHtml(ticket.id)}</p>`;
+    const text = `New technical-support ticket from ${ticket.userEmail}\n\n${ticket.message}\n\nTicket ID: ${ticket.id}`;
+    const res = await fetch(RESEND_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: FROM_ADDRESS,
+        to: [SUPPORT_INBOX],
+        reply_to: ticket.userEmail,
+        subject,
+        html: bodyHtml,
+        text,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.error({ status: res.status, body, ticketId: ticket.id }, "Support ticket email send failed");
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.error({ err, ticketId: ticket.id }, "Support ticket email request threw");
+    return false;
+  }
+}
+
 /** Direct single-recipient send, used outside the fan-out paths (e.g. future
  *  account-level notices). Kept small and generic so it doesn't need its own
  *  ADR entry — same transport as the two fan-out helpers above. */

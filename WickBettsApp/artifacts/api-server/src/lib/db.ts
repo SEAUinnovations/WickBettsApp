@@ -72,4 +72,10 @@ export {
   insertMemberFollowSchema,
   type InsertMemberFollow,
   type MemberFollow,
+  // Support tickets ("Contact us")
+  supportTicketsTable,
+  ticketStatusEnum,
+  insertSupportTicketSchema,
+  type InsertSupportTicket,
+  type SupportTicket,
 } from "@workspace/db";

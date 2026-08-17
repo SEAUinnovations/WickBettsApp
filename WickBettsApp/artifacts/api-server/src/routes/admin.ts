@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
-import { db, usersTable, subscriptionsTable } from "../lib/db.js";
-import { eq } from "drizzle-orm";
+import { db, usersTable, subscriptionsTable, supportTicketsTable } from "../lib/db.js";
+import { eq, desc } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import OpenAI from "openai";
 import { requireAuth, requireAdmin, isBootstrapAdmin } from "../middlewares/requireAuth.js";
@@ -167,6 +167,36 @@ Return ONLY the JSON object, no explanation or markdown code block.`;
     logger.error(err, "OpenAI vision call failed");
     res.status(502).json({ error: "AI screenshot scan failed. Check your OpenAI API key and try again." });
   }
+});
+
+// GET /api/admin/tickets — every submitted technical-support ticket, most
+// recent first, so an open issue never scrolls out of view behind old
+// resolved ones.
+router.get("/tickets", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const tickets = await db.select().from(supportTicketsTable).orderBy(desc(supportTicketsTable.createdAt));
+    res.json({ tickets });
+  } catch (err) {
+    logger.error(err, "Failed to fetch support tickets");
+    res.status(500).json({ error: "Could not load support tickets." });
+  }
+});
+
+// PATCH /api/admin/tickets/:id — mark a ticket open/resolved
+router.patch("/tickets/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const { status } = req.body as { status?: "open" | "resolved" };
+  if (status !== "open" && status !== "resolved") {
+    res.status(400).json({ error: "status must be 'open' or 'resolved'" });
+    return;
+  }
+  const existing = await db.select().from(supportTicketsTable).where(eq(supportTicketsTable.id, id)).limit(1);
+  if (!existing.length) {
+    res.status(404).json({ error: "Ticket not found" });
+    return;
+  }
+  await db.update(supportTicketsTable).set({ status, updatedAt: new Date() }).where(eq(supportTicketsTable.id, id));
+  res.json({ ok: true, id, status });
 });
 
 export default router;
