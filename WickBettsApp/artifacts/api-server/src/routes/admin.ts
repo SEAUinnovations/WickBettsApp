@@ -1,11 +1,12 @@
 import { Router, type Request, type Response } from "express";
-import { db, usersTable, subscriptionsTable, supportTicketsTable } from "../lib/db.js";
+import { db, usersTable, subscriptionsTable, supportTicketsTable, mentorshipBookingsTable } from "../lib/db.js";
 import { eq, desc } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import OpenAI from "openai";
 import { requireAuth, requireAdmin, isBootstrapAdmin } from "../middlewares/requireAuth.js";
 import { pickPrimarySubscription } from "../lib/subscriptionUtils.js";
 import { aiRateLimit } from "../middlewares/rateLimit.js";
+import { sendMentorshipRequestConfirmed, sendMentorshipDeclined } from "../utils/emailNotifications.js";
 
 const router = Router();
 
@@ -197,6 +198,84 @@ router.patch("/tickets/:id", requireAuth, requireAdmin, async (req: Request, res
   }
   await db.update(supportTicketsTable).set({ status, updatedAt: new Date() }).where(eq(supportTicketsTable.id, id));
   res.json({ ok: true, id, status });
+});
+
+// GET /api/admin/mentorship-requests — every mentorship booking request,
+// most recent first, joined with the requester's email/name so the admin
+// panel doesn't need a second lookup per row.
+router.get("/mentorship-requests", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const rows = await db
+      .select({
+        id: mentorshipBookingsTable.id,
+        userEmail: usersTable.email,
+        userName: usersTable.name,
+        day: mentorshipBookingsTable.day,
+        sessionDate: mentorshipBookingsTable.sessionDate,
+        slot: mentorshipBookingsTable.slot,
+        status: mentorshipBookingsTable.status,
+        createdAt: mentorshipBookingsTable.createdAt,
+      })
+      .from(mentorshipBookingsTable)
+      .innerJoin(usersTable, eq(usersTable.id, mentorshipBookingsTable.userId))
+      .orderBy(desc(mentorshipBookingsTable.createdAt));
+    res.json({ requests: rows });
+  } catch (err) {
+    logger.error(err, "Failed to fetch mentorship requests");
+    res.status(500).json({ error: "Could not load mentorship requests." });
+  }
+});
+
+// PATCH /api/admin/mentorship-requests/:id — confirm or decline a pending
+// request. Only acts on requests still in "pending" — a request that was
+// already decided (or that the member has since cancelled) is left alone.
+router.patch("/mentorship-requests/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const { status } = req.body as { status?: "confirmed" | "declined" };
+  if (status !== "confirmed" && status !== "declined") {
+    res.status(400).json({ error: "status must be 'confirmed' or 'declined'" });
+    return;
+  }
+
+  try {
+    const rows = await db
+      .select({
+        id: mentorshipBookingsTable.id,
+        status: mentorshipBookingsTable.status,
+        sessionDate: mentorshipBookingsTable.sessionDate,
+        slot: mentorshipBookingsTable.slot,
+        userEmail: usersTable.email,
+      })
+      .from(mentorshipBookingsTable)
+      .innerJoin(usersTable, eq(usersTable.id, mentorshipBookingsTable.userId))
+      .where(eq(mentorshipBookingsTable.id, id))
+      .limit(1);
+    const request = rows[0];
+    if (!request) {
+      res.status(404).json({ error: "Request not found" });
+      return;
+    }
+    if (request.status !== "pending") {
+      res.status(400).json({ error: `This request is already ${request.status}, not pending.` });
+      return;
+    }
+
+    await db.update(mentorshipBookingsTable).set({ status, updatedAt: new Date() }).where(eq(mentorshipBookingsTable.id, id));
+    logger.info({ requestId: id, status }, "Mentorship request decision recorded");
+    res.json({ ok: true, id, status });
+
+    // Fire-and-forget — the decision is already saved above regardless of
+    // whether this send succeeds.
+    const session = { sessionDate: request.sessionDate, slot: request.slot };
+    if (status === "confirmed") {
+      void sendMentorshipRequestConfirmed(request.userEmail, session);
+    } else {
+      void sendMentorshipDeclined(request.userEmail, session);
+    }
+  } catch (err) {
+    logger.error(err, "Failed to update mentorship request");
+    res.status(500).json({ error: "Failed to update mentorship request" });
+  }
 });
 
 export default router;

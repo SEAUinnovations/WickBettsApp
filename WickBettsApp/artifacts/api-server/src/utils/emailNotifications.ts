@@ -251,7 +251,91 @@ export async function sendMentorshipCancellation(email: string, session: Mentors
   }
 }
 
+/**
+ * Fired right after a member requests a slot (routes/mentorship.ts POST
+ * /bookings) — the booking lands as "pending", not "confirmed", so this is
+ * deliberately softer language than sendMentorshipBookingConfirmation: it
+ * sets the expectation that an admin still needs to confirm the time before
+ * it's actually on the calendar.
+ */
+export async function sendMentorshipRequestReceived(email: string, session: MentorshipSessionSummary): Promise<void> {
+  try {
+    const when = `${formatSessionDate(session.sessionDate)} at ${session.slot} Central`;
+    const subject = `Request received: ${when}`;
+    const bodyHtml = `<p>Your request for a one-hour mentorship session on <strong>${escapeHtml(when)}</strong> has been received and is awaiting confirmation.</p><p>We'll email you as soon as it's confirmed — usually within a day. That time slot is now held for you in the meantime.</p>`;
+    const text = `Your mentorship session request for ${when} has been received and is awaiting confirmation.\nWe'll email you as soon as it's confirmed. That time slot is now held for you in the meantime.`;
+    const html = wrapHtml(subject, bodyHtml, "View request", "/mentorship");
+    await sendBatch([{ to: email, subject, html, text }]);
+  } catch (err) {
+    logger.error({ err }, "Mentorship request-received email failed");
+  }
+}
+
+/** Fired when an admin confirms a pending request (routes/admin.ts PATCH /mentorship-requests/:id). */
+export async function sendMentorshipRequestConfirmed(email: string, session: MentorshipSessionSummary): Promise<void> {
+  return sendMentorshipBookingConfirmation(email, session);
+}
+
+/** Fired when an admin declines a pending request (routes/admin.ts PATCH /mentorship-requests/:id). */
+export async function sendMentorshipDeclined(email: string, session: MentorshipSessionSummary): Promise<void> {
+  try {
+    const when = `${formatSessionDate(session.sessionDate)} at ${session.slot} Central`;
+    const subject = `Couldn't confirm: ${when}`;
+    const bodyHtml = `<p>Unfortunately your requested mentorship session for <strong>${escapeHtml(when)}</strong> couldn't be confirmed.</p><p>That time slot is now open again — head back to the Mentorship tab to pick another time.</p>`;
+    const text = `Your requested mentorship session for ${when} couldn't be confirmed.\nHead back to the Mentorship tab to pick another time.`;
+    const html = wrapHtml(subject, bodyHtml, "Pick another time", "/mentorship");
+    await sendBatch([{ to: email, subject, html, text }]);
+  } catch (err) {
+    logger.error({ err }, "Mentorship declined email failed");
+  }
+}
+
 const SUPPORT_INBOX = "seauinnovations@gmail.com";
+
+/**
+ * Fired alongside sendMentorshipRequestReceived — notifies the admin inbox
+ * that a new mentorship request is waiting for a decision, mirroring
+ * sendSupportTicketEmail's pattern below. Best-effort only: the request
+ * itself is durably saved in mentorship_bookings regardless of whether this
+ * send succeeds, and it's always visible in the admin Mentorship requests
+ * panel either way.
+ */
+export async function sendMentorshipRequestAdminNotice(request: {
+  memberEmail: string;
+  session: MentorshipSessionSummary;
+}): Promise<void> {
+  if (!isConfigured()) {
+    logger.warn({ memberEmail: request.memberEmail }, "RESEND_API_KEY is not configured — mentorship admin-notice email skipped (request is still saved).");
+    return;
+  }
+  try {
+    const when = `${formatSessionDate(request.session.sessionDate)} at ${request.session.slot} Central`;
+    const subject = `[Wick Betts] New mentorship request: ${when}`;
+    const bodyHtml = `<p>New mentorship session request from <strong>${escapeHtml(request.memberEmail)}</strong> for <strong>${escapeHtml(when)}</strong>.</p><p>Confirm or decline it from the admin Mentorship requests panel.</p>`;
+    const text = `New mentorship session request from ${request.memberEmail} for ${when}.\nConfirm or decline it from the admin Mentorship requests panel.`;
+    const res = await fetch(RESEND_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: FROM_ADDRESS,
+        to: [SUPPORT_INBOX],
+        reply_to: request.memberEmail,
+        subject,
+        html: wrapHtml(subject, bodyHtml, "Review request", "/admin/mentorship"),
+        text,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.error({ status: res.status, body }, "Mentorship request admin-notice email failed");
+    }
+  } catch (err) {
+    logger.error({ err }, "Mentorship request admin-notice email threw");
+  }
+}
 
 /**
  * Fired the moment a member submits a technical-support ticket from the

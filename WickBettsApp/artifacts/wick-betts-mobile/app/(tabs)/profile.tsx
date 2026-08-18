@@ -406,6 +406,18 @@ export default function ProfileScreen() {
             <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
           </Pressable>
         ) : null}
+        {isAdmin ? (
+          <Pressable
+            onPress={() => router.push('/admin/mentorship')}
+            style={styles.accountRow}
+            accessibilityRole="button"
+          >
+            <Ionicons name="calendar-outline" size={19} color={colors.primary} />
+            <Text style={[styles.accountText, { color: colors.foreground }]}>Mentorship requests</Text>
+            <Tag>ADMIN</Tag>
+            <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+          </Pressable>
+        ) : null}
         <Pressable
           onPress={handleSignOut}
           disabled={signingOut}

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -7,15 +7,24 @@ import { Card, Header, PrimaryButton, Screen, SectionLabel, Tag } from '@/compon
 import { UpgradeMentorshipButton } from '@/components/Billing';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
-import { useMentorship } from '@/hooks/useMentorship';
+import { useMentorship, type MentorshipBooking } from '@/hooks/useMentorship';
+
+function formatSessionDate(iso: string): string {
+  try {
+    return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  } catch {
+    return iso;
+  }
+}
 
 export default function MentorshipScreen() {
   const router = useRouter();
   const colors = useColors();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const { days, bookings, loading, booking, error, gateBlocked, confirmBooking } = useMentorship(true);
+  const { days, bookings, loading, booking, error, gateBlocked, requestBooking, cancelBooking } = useMentorship(true);
   const [selected, setSelected] = useState<{ day: string; date: string; slot: string } | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   // The server is the source of truth for access (403 MENTORSHIP_REQUIRED
   // unless the member has an active mentorship subscription, or is an
@@ -23,22 +32,38 @@ export default function MentorshipScreen() {
   // trusting a client-only plan check that could be stale or spoofed.
   const isLocked = !isAdmin && gateBlocked;
 
-  const activeBooking = bookings[0] ?? null;
-  const selectedId = selected ? `${selected.day}-${selected.slot}` : activeBooking ? `${activeBooking.day}-${activeBooking.slot}` : null;
-
   const weeklyUsed = bookings.length;
   const weeklyLimit = 2;
 
-  const book = async () => {
-    const target = selected ?? (days[0] ? { day: days[0].day, date: days[0].date, slot: days[0].slots[0] } : null);
-    if (!target) return;
-    const ok = await confirmBooking(target);
+  const request = async () => {
+    if (!selected) return;
+    const ok = await requestBooking(selected);
     if (ok) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Session confirmed', 'Your one-hour mentorship session is on the calendar.');
+      setSelected(null);
+      Alert.alert('Request sent', "Your one-hour session request is awaiting confirmation. We'll email you as soon as it's confirmed.");
     } else if (error) {
-      Alert.alert('Could not book session', error);
+      Alert.alert('Could not request session', error);
     }
+  };
+
+  const cancel = (item: MentorshipBooking) => {
+    const label = item.status === 'confirmed' ? 'Cancel this confirmed session?' : 'Withdraw this pending request?';
+    const run = async () => {
+      setCancellingId(item.id);
+      const ok = await cancelBooking(item.id);
+      setCancellingId(null);
+      if (ok) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      else if (error) Alert.alert('Could not cancel', error);
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm(label)) void run();
+      return;
+    }
+    Alert.alert(label, "This can't be undone.", [
+      { text: 'Keep it', style: 'cancel' },
+      { text: item.status === 'confirmed' ? 'Cancel session' : 'Withdraw request', style: 'destructive', onPress: () => void run() },
+    ]);
   };
 
   const heroBackRow = (
@@ -89,7 +114,7 @@ export default function MentorshipScreen() {
         <View style={[styles.heroOrb, { borderColor: colors.primary }]}><View style={[styles.heroOrbInner, { borderColor: colors.accent }]} /></View>
         <Text style={[styles.heroEyebrow, { color: colors.primary }]}>PRIVATE ACCESS</Text>
         <Text style={[styles.heroTitle, { color: colors.foreground }]}>Make the next{'\n'}conversation count.</Text>
-        <Text style={[styles.heroBody, { color: colors.mutedForeground }]}>Choose an available one-hour session. You have two sessions included every week.</Text>
+        <Text style={[styles.heroBody, { color: colors.mutedForeground }]}>Request an open one-hour session below. An admin confirms every request before it's on the calendar.</Text>
       </View>
       <Card style={styles.usageCard}>
         <View style={styles.usageTop}>
@@ -104,50 +129,94 @@ export default function MentorshipScreen() {
         </View>
         <Text style={[styles.usageText, { color: colors.mutedForeground }]}>Your next allowance begins Monday.</Text>
       </Card>
-      <SectionLabel>Available sessions</SectionLabel>
-      {days.map((day) => (
-        <View key={day.day} style={styles.dayRow}>
-          <View style={styles.dateBlock}>
-            <Text style={[styles.day, { color: colors.mutedForeground }]}>{day.day}</Text>
-            <Text style={[styles.date, { color: colors.foreground }]}>{day.dateLabel}</Text>
-          </View>
-          <View style={styles.slots}>
-            {day.slots.map((slot) => {
-              const id = `${day.day}-${slot}`;
-              const isSelected = selectedId === id;
-              return (
+
+      {bookings.length > 0 ? (
+        <>
+          <SectionLabel>Your requests</SectionLabel>
+          {bookings.map((b) => {
+            const isPending = b.status === 'pending';
+            return (
+              <Card key={b.id} style={styles.requestCard}>
+                <View style={styles.requestTop}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.requestDate, { color: colors.foreground }]}>{formatSessionDate(b.sessionDate)}</Text>
+                    <Text style={[styles.requestSlot, { color: colors.mutedForeground }]}>{b.slot} Central</Text>
+                  </View>
+                  <Tag tone={isPending ? 'orange' : 'green'}>{isPending ? 'Pending' : 'Confirmed'}</Tag>
+                </View>
+                <Text style={[styles.requestNote, { color: colors.mutedForeground }]}>
+                  {isPending ? 'Awaiting admin confirmation — this time is held for you in the meantime.' : "You're on the calendar for this one."}
+                </Text>
                 <Pressable
-                  key={slot}
-                  disabled={booking}
-                  onPress={() => setSelected({ day: day.day, date: day.date, slot })}
-                  style={[styles.slot, { backgroundColor: isSelected ? colors.primary : colors.card, borderColor: isSelected ? colors.primary : colors.border }]}
+                  onPress={() => cancel(b)}
+                  disabled={cancellingId === b.id}
+                  style={[styles.cancelChip, { borderColor: colors.border }, cancellingId === b.id && { opacity: 0.5 }]}
                   accessibilityRole="button"
+                  testID={`cancel-request-${b.id}`}
                 >
-                  <Text style={[styles.slotText, { color: isSelected ? colors.primaryForeground : colors.foreground }]}>{slot}</Text>
-                  <Ionicons name={isSelected ? 'checkmark-circle' : 'time-outline'} size={15} color={isSelected ? colors.primaryForeground : colors.mutedForeground} />
+                  {cancellingId === b.id ? (
+                    <ActivityIndicator size="small" color={colors.destructive} />
+                  ) : (
+                    <>
+                      <Ionicons name="close-circle" size={14} color={colors.destructive} />
+                      <Text style={[styles.cancelChipText, { color: colors.destructive }]}>{isPending ? 'Withdraw request' : 'Cancel session'}</Text>
+                    </>
+                  )}
                 </Pressable>
-              );
-            })}
+              </Card>
+            );
+          })}
+        </>
+      ) : null}
+
+      <SectionLabel>Available sessions</SectionLabel>
+      {days.length === 0 ? (
+        <Card style={styles.emptyCard}>
+          <Ionicons name="calendar-outline" size={22} color={colors.primary} />
+          <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No open times right now</Text>
+          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>Every upcoming slot is currently requested or confirmed. Check back soon as the calendar clears.</Text>
+        </Card>
+      ) : (
+        days.map((day) => (
+          <View key={day.day + day.date} style={styles.dayRow}>
+            <View style={styles.dateBlock}>
+              <Text style={[styles.day, { color: colors.mutedForeground }]}>{day.day}</Text>
+              <Text style={[styles.date, { color: colors.foreground }]}>{day.dateLabel}</Text>
+            </View>
+            <View style={styles.slots}>
+              {day.slots.map((slot) => {
+                const id = `${day.day}-${day.date}-${slot}`;
+                const isSelected = selected && `${selected.day}-${selected.date}-${selected.slot}` === id;
+                return (
+                  <Pressable
+                    key={slot}
+                    disabled={booking}
+                    onPress={() => setSelected({ day: day.day, date: day.date, slot })}
+                    style={[styles.slot, { backgroundColor: isSelected ? colors.primary : colors.card, borderColor: isSelected ? colors.primary : colors.border }]}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.slotText, { color: isSelected ? colors.primaryForeground : colors.foreground }]}>{slot}</Text>
+                    <Ionicons name={isSelected ? 'checkmark-circle' : 'time-outline'} size={15} color={isSelected ? colors.primaryForeground : colors.mutedForeground} />
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
-        </View>
-      ))}
+        ))
+      )}
       {booking ? (
         <View style={[styles.busyButton, { backgroundColor: colors.primary }]}>
           <ActivityIndicator color={colors.primaryForeground} />
         </View>
       ) : (
         <View pointerEvents={selected ? 'auto' : 'none'} style={!selected ? styles.disabled : undefined}>
-          <PrimaryButton
-            onPress={() => void book()}
-            icon={activeBooking && selectedId === `${activeBooking.day}-${activeBooking.slot}` ? 'checkmark' : 'calendar-outline'}
-            testID="confirm-booking"
-          >
-            {activeBooking && selectedId === `${activeBooking.day}-${activeBooking.slot}` ? 'Session booked' : 'Confirm one-hour session'}
+          <PrimaryButton onPress={() => void request()} icon="calendar-outline" testID="confirm-booking">
+            Request one-hour session
           </PrimaryButton>
         </View>
       )}
       {error ? <Text style={[styles.footnote, { color: colors.destructive }]}>{error}</Text> : null}
-      <Text style={[styles.footnote, { color: colors.mutedForeground }]}>Need to make a change? Sessions can be rescheduled up to 24 hours before start time.</Text>
+      <Text style={[styles.footnote, { color: colors.mutedForeground }]}>Every request needs an admin's confirmation before it's an actual scheduled call. You can withdraw a pending request or cancel a confirmed one anytime above.</Text>
     </Screen>
   );
 }
@@ -171,6 +240,16 @@ const styles = StyleSheet.create({
   usageTrack: { height: 6, borderRadius: 3, marginTop: 16, overflow: 'hidden' },
   usageFill: { height: 6, borderRadius: 3 },
   usageText: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 9 },
+  requestCard: { marginBottom: 12 },
+  requestTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
+  requestDate: { fontSize: 15, fontFamily: 'Inter_700Bold' },
+  requestSlot: { fontSize: 12, fontFamily: 'Inter_500Medium', marginTop: 2 },
+  requestNote: { fontSize: 11, lineHeight: 16, fontFamily: 'Inter_400Regular', marginTop: 10 },
+  cancelChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 8, alignSelf: 'flex-start', marginTop: 12 },
+  cancelChipText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
+  emptyCard: { alignItems: 'center', paddingVertical: 28, marginBottom: 14 },
+  emptyTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', marginTop: 10 },
+  emptyText: { fontSize: 11, lineHeight: 16, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 5, paddingHorizontal: 12 },
   dayRow: { flexDirection: 'row', marginBottom: 14 },
   dateBlock: { width: 48, paddingTop: 10 },
   day: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1 },

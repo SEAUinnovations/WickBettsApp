@@ -9,20 +9,27 @@ export interface MentorshipDaySlots {
   slots: string[];
 }
 
+/** 'pending' = requested, awaiting an admin's confirmation. 'confirmed' = on
+ *  the calendar for real. 'declined' / 'cancelled' bookings never come back
+ *  from GET /bookings (only active ones do) but are included here so the
+ *  type stays accurate for anything that reads a booking's status. */
+export type MentorshipBookingStatus = 'pending' | 'confirmed' | 'declined' | 'cancelled';
+
 export interface MentorshipBooking {
   id: string;
   userId: string;
   day: string;
   sessionDate: string;
   slot: string;
-  status: 'confirmed' | 'cancelled';
+  status: MentorshipBookingStatus;
   createdAt?: string;
   updatedAt?: string;
 }
 
 /**
- * Loads the bookable mentorship calendar and the member's confirmed
- * bookings, and persists new bookings to the server. Every request is gated
+ * Loads the bookable mentorship calendar (already filtered to genuinely open
+ * times server-side) and the member's own active — pending or confirmed —
+ * requests, and submits new requests to the server. Every request is gated
  * server-side (403 MENTORSHIP_REQUIRED) — this hook surfaces that state so
  * the screen can render the correct locked/unlocked UI instead of trusting
  * client-only checks.
@@ -75,7 +82,14 @@ export function useMentorship(enabled: boolean) {
     void load();
   }, [load]);
 
-  const confirmBooking = useCallback(
+  /**
+   * Submits a session request. Reloads the full calendar + booking list on
+   * success rather than patching state locally — the slot the member just
+   * requested needs to disappear from `days` (it's occupied now), and a full
+   * reload is the simplest way to guarantee that stays in sync with the
+   * server instead of duplicating its filtering logic on the client.
+   */
+  const requestBooking = useCallback(
     async (payload: { day: string; date: string; slot: string }) => {
       setBooking(true);
       setError(null);
@@ -89,24 +103,51 @@ export function useMentorship(enabled: boolean) {
         });
         if (res.status === 403) {
           setGateBlocked(true);
-          throw new Error('An active Mentorship subscription is required to book a session.');
+          throw new Error('An active Mentorship subscription is required to request a session.');
         }
         if (!res.ok) {
           const err = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(err.error ?? 'Could not book this session. Please try again.');
+          throw new Error(err.error ?? 'Could not request this session. Please try again.');
         }
-        const json = (await res.json()) as { booking: MentorshipBooking };
-        setBookings((current) => [json.booking, ...current.filter((b) => b.id !== json.booking.id)]);
+        await load();
         return true;
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Could not book this session.');
+        setError(e instanceof Error ? e.message : 'Could not request this session.');
         return false;
       } finally {
         setBooking(false);
       }
     },
-    [getToken],
+    [getToken, load],
   );
 
-  return { days, bookings, loading, booking, error, gateBlocked, refresh: load, confirmBooking };
+  /** Withdraws a pending request or cancels a confirmed session. */
+  const cancelBooking = useCallback(
+    async (id: string) => {
+      setBooking(true);
+      setError(null);
+      try {
+        const token = await getToken();
+        if (!token) throw new Error('Not authenticated');
+        const res = await fetch(`${API_BASE}/mentorship/bookings/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(err.error ?? 'Could not cancel this session. Please try again.');
+        }
+        await load();
+        return true;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Could not cancel this session.');
+        return false;
+      } finally {
+        setBooking(false);
+      }
+    },
+    [getToken, load],
+  );
+
+  return { days, bookings, loading, booking, error, gateBlocked, refresh: load, requestBooking, cancelBooking };
 }

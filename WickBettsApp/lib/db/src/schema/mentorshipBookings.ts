@@ -3,8 +3,17 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { usersTable } from "./users";
 
+// "pending" is the default on every new request — a member picking a slot
+// does not immediately occupy it as a confirmed session; it reserves that
+// slot (blocking other members from requesting the same time) until an
+// admin explicitly confirms or declines it. "declined" is distinct from
+// "cancelled": declined means an admin rejected the request (e.g. a
+// scheduling conflict), cancelled means the member withdrew it themselves
+// (before or after confirmation).
 export const mentorshipBookingStatusEnum = pgEnum("mentorship_booking_status", [
+  "pending",
   "confirmed",
+  "declined",
   "cancelled",
 ]);
 
@@ -17,7 +26,7 @@ export const mentorshipBookingsTable = pgTable("mentorship_bookings", {
   sessionDate: text("session_date").notNull(),
   /** Time slot label, e.g. "10:00 AM" */
   slot: text("slot").notNull(),
-  status: mentorshipBookingStatusEnum("status").notNull().default("confirmed"),
+  status: mentorshipBookingStatusEnum("status").notNull().default("pending"),
   /** Set once the reminder email has gone out, so the reminder scheduler never sends it twice. */
   reminderSentAt: timestamp("reminder_sent_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
