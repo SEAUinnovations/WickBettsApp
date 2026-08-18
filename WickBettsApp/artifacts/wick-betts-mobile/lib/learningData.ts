@@ -491,6 +491,40 @@ const bodyGreeksInPractice: LessonBlock[] = [
   { type: 'scenario', title: 'The earnings Vega crush', setup: 'A trader buys an ATM call the day before earnings, correctly predicting the stock will jump on the report.', whatHappened: 'The stock does jump, but the option barely moves — because implied volatility collapses the moment the earnings uncertainty resolves, and that Vega crush erases most of the gain the correct direction should have produced.', takeaway: 'Being right on direction is not the whole trade around a volatility event. When implied volatility is elevated going in, it usually falls hard afterward regardless of outcome — and that can offset gains from Delta alone.' },
 ];
 
+const bodyZeroDte: LessonBlock[] = [
+  { type: 'p', text: '0DTE means "zero days to expiration" — an option contract that expires the same day it is traded. SPX and SPY are where 0DTE trading really lives: SPX has listed expirations every single trading day (Monday through Friday) since 2022, and SPY effectively does too through its own daily-expiring series, so there is almost always a same-day expiration available on either one.' },
+  { type: 'definitions', items: [
+    { title: '0DTE contract', text: 'An option whose expiration date is today. Every hour that passes is a meaningfully larger share of its remaining lifespan than it would be on a weekly or monthly contract.' },
+    { title: 'SPX 0DTE', text: 'Cash-settled and European-style (no early assignment) — you are settled in cash based on where SPX closes, and 10x the notional size of SPY per contract. Popular for size and for avoiding assignment risk entirely.' },
+    { title: 'SPY 0DTE', text: 'American-style and physically settled — deep in-the-money SPY options can be assigned before expiration, and pin risk (the underlying settling right at your strike) is a real, practical concern into the close.' },
+    { title: 'Gamma', text: "Already covered in the Greeks lesson, but it matters more here than anywhere else: Gamma is highest for at-the-money options with very little time left, which is the exact description of a 0DTE contract for most of its life." },
+  ] },
+  { type: 'h3', text: 'Why 0DTE can produce massive returns' },
+  { type: 'list', items: [
+    'Premium is cheap — you are buying almost pure Gamma and very little time value, so a small dollar risk can control a large amount of notional exposure',
+    'Gamma acceleration means a contract can multiply several times over in value from a move that would barely register on a weekly option',
+    'A fast, correctly-timed intraday move can turn a contract worth pennies into one worth dollars within minutes, not days',
+  ] },
+  { type: 'h3', text: 'Why 0DTE can produce massive losses' },
+  { type: 'list', items: [
+    'Theta decay is measured in minutes, not days — a contract can lose a large share of its value in an hour of sideways chop alone',
+    'Gamma cuts both directions — the same acceleration that produces outsized gains produces outsized losses just as fast when the move goes against you',
+    'Premium can go to essentially zero the same day it was bought, with no time left for the trade to "come back"',
+    'Spreads are wide relative to the tiny premium involved, so slippage on entry and exit eats a much bigger percentage of a 0DTE trade than the same-dollar slippage would on a longer-dated one',
+    'Pin risk and assignment risk (SPY especially) can leave a position settling in an unexpected, hard-to-predict way right at the close',
+  ] },
+  { type: 'h3', text: 'Why the contract can lose value even while price moves your way' },
+  { type: 'p', text: "This is the part that confuses new 0DTE traders the most: you can be completely right about direction — the underlying rises exactly as you expected on a call — and still watch your contract lose money. It comes down to a race between two Greeks that are always running at the same time: Delta is adding value as the stock moves your way, while Theta is subtracting value every single minute just because time is passing. On a 0DTE contract, Theta is running at its absolute fastest, because there is almost no time left for it to burn through." },
+  { type: 'h3', text: 'Worked example' },
+  { type: 'p', text: "Say you buy a far OTM SPX 0DTE call with a Delta of 0.15 — meaning the option's price moves about $0.15 for every $1 move in SPX. In the last couple of hours before expiration, that same contract might be losing roughly $6 in value per hour purely to Theta, regardless of what price does. If SPX grinds up 10 points over that hour, Delta alone adds only about $1.50 of value (0.15 × 10) — nowhere close to covering the $6 Theta just took for that same hour. Net result: the contract is worth less than it was an hour ago, even though you correctly called the direction." },
+  { type: 'p', text: "The fix is not to stop trading direction — it is to recognize that a 0DTE contract needs the move to be fast and large enough to let Delta (and the Gamma boost that comes as price approaches your strike) outrun Theta, not just eventually correct. A slow, grinding move in your favor can still lose money on a 0DTE; a fast, sharp move in your favor is where the outsized gains from earlier in this lesson actually come from." },
+  { type: 'callout', label: 'Size it like it can hit zero — because it often does', text: "A 0DTE contract is one of the few instruments where losing the entire premium on a single trade is a routine outcome, not a tail-risk edge case. Risk only what you would be fully at peace losing on that one trade, and treat 0DTE as a small, deliberate slice of activity — not the core of a trading plan." },
+  { type: 'h3', text: 'Timing — a commonly-cited heuristic, not a rule' },
+  { type: 'p', text: 'The first 15–30 minutes after the open are frequently the noisiest, most algorithm-driven part of the session — wide spreads, fast whipsaws, and a directional read that can flip more than once. Many SPX/SPY 0DTE traders wait and watch that opening range play out before committing to a side, rather than trading the very first candles of the day.' },
+  { type: 'callout', label: 'A commonly-referenced window', text: 'A rule of thumb some traders use: by roughly 9:30 AM Central Time (10:30 AM Eastern — about an hour after the opening bell), the market has often shown its hand for the session, with the early chop settled into a clearer intraday trend. This is a heuristic based on common trading behavior, not a guarantee — some sessions never settle into a clean trend at all. Confirm with your own read of price action and volume before treating "an hour in" as a green light by itself.' },
+  { type: 'scenario', title: 'Same setup, two very different endings', setup: 'A trader buys a cheap, far OTM SPX 0DTE call right at the open, expecting a continuation of premarket strength, sized as if it were a normal weekly option.', whatHappened: "The first 20 minutes chop sideways and slightly down — normal opening noise — and Theta alone cuts the contract's value by more than half before 10:00 AM. By the time the market actually establishes its real direction closer to 10:30 AM Eastern, there is barely any premium left for a bounce to rescue.", takeaway: "The trade's direction was not necessarily wrong — the timing was. Entering into the noisiest, most Theta-expensive part of a 0DTE contract's single day of life is a different bet than entering once the session has shown some real direction. On a 0DTE contract, when you enter is as much a part of the trade as what you buy." },
+];
+
 const bodyPropFirms101: LessonBlock[] = [
   { type: 'p', text: "A futures prop (proprietary trading) firm lets you trade its capital instead of your own. Pass a rules-based evaluation on a simulated account, and the firm activates a funded account under its own risk parameters — you keep a share of the profits, and your own money was never actually at risk on the funded account itself." },
   { type: 'definitions', items: [
@@ -652,6 +686,7 @@ export const LEARNING_MODULES: LearningModule[] = [
   ] },
   { id: 'trivia-arena', level: 'Expert', kind: 'game', title: 'Trivia Arena', tagline: 'Mixed rapid-fire questions across every module.', minutes: 6, xp: 0, icon: 'help-circle-outline' },
   { id: 'trade-bias-simulator', level: 'Expert', kind: 'game', title: 'Trade Bias Simulator', tagline: 'Randomized ticker, a mock setup, one call: buy or sell.', minutes: 6, xp: 0, icon: 'shuffle-outline' },
+  { id: 'zero-dte-options', level: 'Expert', kind: 'lesson', title: '0DTE Options: Same-Day Expiration', tagline: 'SPX and SPY 0DTE — why the returns and the losses can both be massive, and when to look.', minutes: 9, xp: 75, icon: 'alert-circle-outline', specialization: 'options', body: bodyZeroDte },
   { id: 'options-strike-lab', level: 'Expert', kind: 'game', title: 'Options Strike & Greeks Lab', tagline: 'Match the strike to the goal — Delta, Theta, and premium all in play.', minutes: 7, xp: 0, icon: 'infinite-outline', specialization: 'options' },
   { id: 'funded-combine-prep', level: 'Expert', kind: 'game', title: 'Funded Combine Prep', tagline: 'Optional: grow a paper account $3,000 without breaching a $2,000 trailing drawdown.', minutes: 10, xp: 0, icon: 'briefcase-outline', specialization: 'funded' },
 ];
