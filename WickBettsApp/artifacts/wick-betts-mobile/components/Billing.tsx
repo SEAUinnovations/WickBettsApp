@@ -110,7 +110,7 @@ function ErrorLine({ message }: { message: string }) {
 
 /**
  * Plan selection for members with no subscription — matches the web landing /
- * profile plan cards (Membership $50, Signals $200, Mentorship $500) and the
+ * profile plan cards (Membership $50, Signals $250, Mentorship $500) and the
  * pricing compare table on the front page (see app/index.tsx).
  */
 export function SubscribePanel() {
@@ -136,7 +136,7 @@ export function SubscribePanel() {
         disabled={loading !== null}
         testID="subscribe-signals"
       >
-        Subscribe · Signals $200
+        Subscribe · Signals $250
       </ActionButton>
       <ActionButton
         onPress={() => void runCheckout('mentorship')}

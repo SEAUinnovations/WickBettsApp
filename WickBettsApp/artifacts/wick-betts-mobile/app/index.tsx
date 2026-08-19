@@ -16,7 +16,7 @@ const WB_LOGO = require('@/assets/images/wb-logo.png') as number;
 // Legal screen, not here.
 const PLAN_COLUMNS: { plan: Plan; label: string; price: string }[] = [
   { plan: 'membership', label: 'Membership', price: '$50/mo' },
-  { plan: 'signals', label: 'Signals', price: '$200/mo' },
+  { plan: 'signals', label: 'Signals', price: '$250/mo' },
   { plan: 'mentorship', label: 'Mentorship', price: '$500/mo' },
 ];
 
