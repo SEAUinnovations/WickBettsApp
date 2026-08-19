@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
 import { pickPrimarySubscription } from "../lib/subscriptionUtils.js";
+import { syncSubscriptionsFromStripe } from "../lib/subscriptionSync.js";
 
 const router = Router();
 const isDevAuthMode = (process.env.DEV_AUTH_MODE?.trim().toLowerCase() === "localhost") || (process.env.DEV_AUTH_MODE?.trim().toLowerCase() === "dev");
@@ -169,6 +170,11 @@ router.patch("/notifications", requireAuth, (req: Request, res: Response) => {
 router.get("/subscription", requireAuth, async (req: Request, res: Response) => {
   const user = req.dbUser!;
   try {
+    // Reconcile against Stripe before answering — the local table alone can
+    // be stale or missing a subscription that was added/edited directly in
+    // Stripe (e.g. for testing) rather than through our checkout flow. See
+    // lib/subscriptionSync.ts.
+    await syncSubscriptionsFromStripe(user);
     const subs = await db
       .select()
       .from(subscriptionsTable)

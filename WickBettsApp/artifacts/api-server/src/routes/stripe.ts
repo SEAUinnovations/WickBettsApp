@@ -1,17 +1,15 @@
 import { Router, type Request, type Response } from "express";
-import Stripe from "stripe";
+import type Stripe from "stripe";
 import { db, usersTable, subscriptionsTable } from "../lib/db.js";
 import { eq, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
 import { pickPrimarySubscription } from "../lib/subscriptionUtils.js";
+import { getStripe, resolvePriceId, PRICE_SIGNALS, PRICE_MENTORSHIP, PRICE_MEMBERSHIP } from "../lib/stripeClient.js";
+import { syncSubscriptionsFromStripe, resolvePlanForSubscription, type ProductPlan } from "../lib/subscriptionSync.js";
 
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
-const PRICE_SIGNALS = process.env.STRIPE_PRICE_SIGNALS;
-const PRICE_MENTORSHIP = process.env.STRIPE_PRICE_MENTORSHIP;
-const PRICE_MEMBERSHIP = process.env.STRIPE_PRICE_MEMBERSHIP;
 
 // Trade review credits are a fixed $2.50 one-time add-on, not a
 // subscription plan — built with Stripe's inline `price_data` rather than
@@ -20,43 +18,7 @@ const PRICE_MEMBERSHIP = process.env.STRIPE_PRICE_MEMBERSHIP;
 // for ops to configure. See docs/adr/0003-trade-review-ai-provider.md.
 const TRADE_REVIEW_CREDIT_PRICE_CENTS = 250;
 
-type ProductPlan = "signals" | "mentorship" | "membership";
 const ALLOWED_PLANS: ProductPlan[] = ["signals", "mentorship", "membership"];
-
-/**
- * Resolves a configured STRIPE_PRICE_* env value to an actual Stripe Price ID.
- *
- * These env vars have historically been set to Stripe *Product* IDs
- * (`prod_...`) rather than *Price* IDs (`price_...`) — see .env.example. A
- * Checkout Session line item requires a Price ID, so passing a Product ID
- * straight through makes `stripe.checkout.sessions.create` fail for every
- * plan with "No such price". This resolves either shape so checkout works
- * regardless of which one ops configured, and tolerates fixing the env vars
- * later without another code change.
- */
-const resolvedPriceIdCache = new Map<string, string>();
-
-async function resolvePriceId(stripe: Stripe, idOrProductId: string): Promise<string> {
-  if (idOrProductId.startsWith("price_")) return idOrProductId;
-
-  const cached = resolvedPriceIdCache.get(idOrProductId);
-  if (cached) return cached;
-
-  if (idOrProductId.startsWith("prod_")) {
-    const prices = await stripe.prices.list({ product: idOrProductId, active: true, limit: 1 });
-    const price = prices.data[0];
-    if (!price) {
-      throw new Error(
-        `No active Stripe price found for product "${idOrProductId}". Create a price for this product in the Stripe dashboard.`
-      );
-    }
-    resolvedPriceIdCache.set(idOrProductId, price.id);
-    return price.id;
-  }
-
-  // Unrecognized ID shape — let Stripe's own error surface rather than guessing.
-  return idOrProductId;
-}
 
 function resolveAppOrigin(): string {
   const configured = process.env.APP_ORIGIN?.trim();
@@ -70,11 +32,6 @@ function resolveAppOrigin(): string {
   }
 
   return "http://localhost:3000";
-}
-
-function getStripe(): Stripe | null {
-  if (!STRIPE_SECRET_KEY) return null;
-  return new Stripe(STRIPE_SECRET_KEY, { apiVersion: "2026-07-29.dahlia" });
 }
 
 const router = Router();
@@ -356,10 +313,26 @@ router.post(
         case "customer.subscription.created":
         case "customer.subscription.updated": {
           const sub = event.data.object as Stripe.Subscription;
-          const userId = sub.metadata?.userId;
-          const plan = (sub.metadata?.plan ?? "signals") as ProductPlan;
+          let userId = sub.metadata?.userId;
+          const plan = resolvePlanForSubscription(sub);
           if (!userId) {
-            logger.warn({ eventType: event.type, eventId: event.id, subscriptionId: sub.id }, "Webhook received subscription event with no userId in metadata — subscription state not updated");
+            // No metadata.userId — most likely a subscription added or
+            // edited directly in the Stripe dashboard (e.g. to test a
+            // member account) rather than through our own
+            // /create-checkout flow, so it never got stamped. Fall back to
+            // matching by Stripe customer ID so it still syncs instead of
+            // silently being dropped, which used to leave the app showing
+            // the paywall even though Stripe had an active subscription.
+            const customerId = sub.customer as string;
+            const owner = await db
+              .select({ id: usersTable.id })
+              .from(usersTable)
+              .where(eq(usersTable.stripeCustomerId, customerId))
+              .limit(1);
+            userId = owner[0]?.id;
+          }
+          if (!userId) {
+            logger.warn({ eventType: event.type, eventId: event.id, subscriptionId: sub.id }, "Webhook received subscription event with no userId in metadata and no matching Stripe customer — subscription state not updated");
             break;
           }
 
@@ -461,6 +434,10 @@ router.post(
 // any other consumer that hits /api/stripe/subscription directly.
 router.get("/subscription", requireAuth, async (req: Request, res: Response) => {
   const user = req.dbUser!;
+  // Reconcile against Stripe before answering — see lib/subscriptionSync.ts
+  // for why the local table alone can be stale or missing a subscription
+  // that was added/edited directly in Stripe (e.g. for testing).
+  await syncSubscriptionsFromStripe(user);
   const subs = await db
     .select()
     .from(subscriptionsTable)
