@@ -8,14 +8,24 @@ export const directionEnum = pgEnum("direction", ["Long", "Short"]);
 export const signalStatusEnum = pgEnum("signal_status", ["Active", "Watching", "Closed", "Stopped"]);
 export const optionTypeEnum = pgEnum("option_type", ["Call", "Put"]);
 // Trading style/horizon for the setup — this is what tells a member the time
-// expectancy of a trade at a glance. "Day Trade" is same-session/intraday
-// (manual only — the auto scanner runs on daily bars, so it never has the
-// resolution to call a genuine intraday setup and will never emit this
-// style). "Swing" is the original short-hold behavior (days/weeks, always
-// has a stop). "Buy & Hold" is a long-term spot position (stocks or crypto)
+// expectancy of a trade at a glance. "Day Trade" is same-session, CME
+// index/metals FUTURES (MES/MNQ/ES/NQ/MGC) — auto-generated daily by a
+// dedicated scan (services/signalScanner.ts's runDayTradeScan, screening
+// 4-hour bars, only publishing setups that clear a 1:3 reward:risk) as
+// well as manually by an admin. Futures aren't modeled as options
+// (isOption: false, no strike/premium/Greeks — see the isOption/optionType
+// columns below) even though, like Swing/LEAPS, they're a leveraged
+// contract rather than plain shares; `market` is "Stocks" for these today
+// as a workaround (no dedicated "Futures" market value yet — see
+// buildFuturesDayTradeSignal's doc comment), disambiguated via `sector`
+// ("Index Futures"/"Metals Futures"). "Swing" is the original short-hold
+// behavior (days/weeks, always has a stop) — a modeled stock options
+// contract. "Buy & Hold" is a long-term spot position (stocks or crypto)
 // with an entry + target but deliberately no stop — the thesis plays out
-// over a long horizon, not a hard invalidation price. "LEAPS" is a
-// long-dated options contract (6/8/12+ months out).
+// over a long horizon, not a hard invalidation price; this is the one
+// style that is always plain shares (isOption: false, market genuinely
+// Stocks/Crypto). "LEAPS" is a long-dated stock options contract (6/8/12+
+// months out).
 export const signalStyleEnum = pgEnum("signal_style", ["Day Trade", "Swing", "Buy & Hold", "LEAPS"]);
 
 export const signalsTable = pgTable("signals", {

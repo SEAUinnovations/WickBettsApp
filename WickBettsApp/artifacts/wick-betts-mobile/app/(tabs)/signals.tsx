@@ -8,8 +8,15 @@ import { LapsedRecovery, SubscribePanel } from '@/components/Billing';
 import { useColors } from '@/hooks/useColors';
 import { useAuth, type Plan } from '@/context/AuthContext';
 import { useSignals, type Signal, type SignalStatus } from '@/context/SignalContext';
+import { useWatchlist } from '@/hooks/useWatchlist';
 
-type Filter = 'All' | 'Stocks' | 'Crypto' | 'Options' | 'Day Trade' | 'Swing' | 'Buy & Hold' | 'LEAPS' | 'Active' | 'Closed';
+// 'Buy & Hold' is intentionally not a filter pill on its own — every stock
+// signal is a buy-and-hold play by definition (see the market-vs-style note
+// on VALID_STYLES in the API), so filtering by the "Stocks" market already
+// gets a member the same signals. 'Buy & Hold' still appears as a per-signal
+// style label/badge (styleTone, styleDurationHint, and the level labels
+// below) since it's still useful context on an individual card.
+type Filter = 'All' | 'Stocks' | 'Crypto' | 'Options' | 'Day Trade' | 'Swing' | 'LEAPS' | 'Active' | 'Closed';
 
 // A signal's style is the time-expectancy label a member actually needs at a
 // glance — "how long should I expect to be in this trade" — so every style
@@ -48,9 +55,28 @@ export default function SignalsScreen() {
   const colors = useColors();
   const { subscription, user } = useAuth();
   const { signals, isLoading, isSubscriptionRequired, error, refresh, updateSignal, deleteSignal } = useSignals();
+  const { items: watchlistItems, saving: watchlistSaving, addItem: addWatchlistItem } = useWatchlist();
   const isAdmin = user?.role === 'admin';
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [watchlistingSymbol, setWatchlistingSymbol] = useState<string | null>(null);
+  const watchedSymbols = useMemo(() => new Set(watchlistItems.map((item) => item.symbol.toUpperCase())), [watchlistItems]);
+
+  const addToWatchlist = async (signal: Signal) => {
+    const symbol = signal.asset.toUpperCase();
+    if (watchedSymbols.has(symbol)) return;
+    setWatchlistingSymbol(symbol);
+    try {
+      const ok = await addWatchlistItem({ symbol });
+      if (ok) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        Alert.alert('Could not add to watchlist', `${symbol} may not be in the supported market universe yet.`);
+      }
+    } finally {
+      setWatchlistingSymbol(null);
+    }
+  };
 
   // Re-fetch whenever this tab gains focus so a signal an admin just
   // published (from the Signal studio, or another device) shows up as soon
@@ -61,18 +87,34 @@ export default function SignalsScreen() {
     }, [refresh]),
   );
   const [filter, setFilter] = useState<Filter>('All');
+  type DirectionFilter = 'All' | 'Long' | 'Short';
+  const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('All');
+  const [sectorFilter, setSectorFilter] = useState<string>('All Sectors');
   const [expanded, setExpanded] = useState<string | null>(null);
+  // Sector list is derived from whatever signals are currently loaded rather
+  // than hardcoded — auto-generated signals carry a real GICS-style sector
+  // (see signalScanner.ts), so this stays accurate as the universe scanned
+  // changes over time instead of drifting out of sync with a static list.
+  const sectorOptions = useMemo(() => {
+    const sectors = new Set<string>();
+    signals.forEach((signal) => {
+      if (signal.sector) sectors.add(signal.sector);
+    });
+    return ['All Sectors', ...Array.from(sectors).sort()];
+  }, [signals]);
   const visibleSignals = useMemo(
     () =>
       signals.filter(
         (signal) =>
-          filter === 'All' ||
-          signal.market === filter ||
-          signal.status === filter ||
-          (filter === 'Options' && signal.isOption) ||
-          signal.style === filter,
+          (filter === 'All' ||
+            signal.market === filter ||
+            signal.status === filter ||
+            (filter === 'Options' && signal.isOption) ||
+            signal.style === filter) &&
+          (directionFilter === 'All' || signal.direction === directionFilter) &&
+          (sectorFilter === 'All Sectors' || signal.sector === sectorFilter),
       ),
-    [filter, signals],
+    [filter, directionFilter, sectorFilter, signals],
   );
 
   const advanceStatus = async (signal: Signal) => {
@@ -193,7 +235,7 @@ export default function SignalsScreen() {
       ) : null}
       <SectionLabel>Signal history</SectionLabel>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
-        {(['All', 'Stocks', 'Crypto', 'Options', 'Day Trade', 'Swing', 'Buy & Hold', 'LEAPS', 'Active', 'Closed'] as Filter[]).map((item) => (
+        {(['All', 'Stocks', 'Crypto', 'Options', 'Day Trade', 'Swing', 'LEAPS', 'Active', 'Closed'] as Filter[]).map((item) => (
           <Pressable
             key={item}
             onPress={() => setFilter(item)}
@@ -211,6 +253,54 @@ export default function SignalsScreen() {
           </Pressable>
         ))}
       </ScrollView>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
+        {([
+          { key: 'All', label: 'All directions' },
+          // Plain "Long"/"Short" rather than "(Calls)"/"(Puts)" — direction
+          // now spans options (Swing/LEAPS), futures (Day Trade), and spot
+          // shares (Buy & Hold), so a Calls/Puts-specific label would be
+          // wrong for 2 of those 3 instrument types.
+          { key: 'Long', label: 'Long' },
+          { key: 'Short', label: 'Short' },
+        ] as { key: DirectionFilter; label: string }[]).map((item) => (
+          <Pressable
+            key={item.key}
+            onPress={() => setDirectionFilter(item.key)}
+            style={[
+              styles.filter,
+              {
+                backgroundColor: directionFilter === item.key ? colors.primary : colors.card,
+                borderColor: directionFilter === item.key ? colors.primary : colors.border,
+              },
+            ]}
+          >
+            <Text style={[styles.filterText, { color: directionFilter === item.key ? colors.primaryForeground : colors.mutedForeground }]}>
+              {item.label}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      {sectorOptions.length > 1 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
+          {sectorOptions.map((item) => (
+            <Pressable
+              key={item}
+              onPress={() => setSectorFilter(item)}
+              style={[
+                styles.filter,
+                {
+                  backgroundColor: sectorFilter === item ? colors.primary : colors.card,
+                  borderColor: sectorFilter === item ? colors.primary : colors.border,
+                },
+              ]}
+            >
+              <Text style={[styles.filterText, { color: sectorFilter === item ? colors.primaryForeground : colors.mutedForeground }]}>
+                {item}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
       {visibleSignals.map((signal) => (
         <SignalCard
           key={signal.id}
@@ -222,6 +312,9 @@ export default function SignalsScreen() {
           removing={removingId === signal.id}
           onAdvanceStatus={() => void advanceStatus(signal)}
           onRemove={() => confirmRemove(signal)}
+          isWatched={watchedSymbols.has(signal.asset.toUpperCase())}
+          watchlisting={watchlistingSymbol === signal.asset.toUpperCase()}
+          onAddToWatchlist={() => void addToWatchlist(signal)}
         />
       ))}
       {visibleSignals.length === 0 ? (
@@ -245,6 +338,9 @@ function SignalCard({
   removing = false,
   onAdvanceStatus,
   onRemove,
+  isWatched = false,
+  watchlisting = false,
+  onAddToWatchlist,
 }: {
   signal: Signal;
   expanded: boolean;
@@ -254,6 +350,9 @@ function SignalCard({
   removing?: boolean;
   onAdvanceStatus?: () => void;
   onRemove?: () => void;
+  isWatched?: boolean;
+  watchlisting?: boolean;
+  onAddToWatchlist?: () => void;
 }) {
   const colors = useColors();
   const tone = signal.status === 'Active' ? 'green' : signal.status === 'Watching' ? 'orange' : 'muted';
@@ -304,6 +403,23 @@ function SignalCard({
             testID={`remove-signal-${signal.id}`}
           >
             <Ionicons name="close-circle" size={19} color={colors.destructive} />
+          </Pressable>
+        ) : null}
+        {onAddToWatchlist ? (
+          <Pressable
+            onPress={onAddToWatchlist}
+            disabled={watchlisting || isWatched}
+            hitSlop={8}
+            style={styles.watchIcon}
+            accessibilityRole="button"
+            accessibilityLabel={isWatched ? `${signal.asset} is on your watchlist` : `Add ${signal.asset} to your watchlist`}
+            testID={`watchlist-signal-${signal.id}`}
+          >
+            <Ionicons
+              name={isWatched ? 'star' : 'star-outline'}
+              size={18}
+              color={isWatched ? '#E2C25A' : colors.mutedForeground}
+            />
           </Pressable>
         ) : null}
         <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={17} color={colors.mutedForeground} />
@@ -399,8 +515,13 @@ const styles = StyleSheet.create({
   introBody: { fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 },
   adminCard: { marginBottom: 16 },
   adminActions: { marginTop: 10 },
-  filters: { gap: 8, paddingBottom: 14 },
-  filter: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9 },
+  filters: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 14 },
+  // flexShrink: 0 + alignSelf: 'flex-start' pin each pill to its own content
+  // size — without them, a Pressable inside a horizontal ScrollView's
+  // contentContainerStyle can get stretched by the container's cross-axis
+  // sizing on react-native-web (the same reason WickUI.tsx's Tag pins
+  // alignSelf: 'flex-start'; this filter pill just never had it).
+  filter: { flexShrink: 0, alignSelf: 'flex-start', borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9 },
   filterText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
   signalCard: { marginBottom: 12 },
   row: { flexDirection: 'row', alignItems: 'center' },
@@ -411,6 +532,7 @@ const styles = StyleSheet.create({
   meta: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 4 },
   durationHint: { fontSize: 10, fontFamily: 'Inter_500Medium', marginTop: 3 },
   removeIcon: { paddingHorizontal: 6, paddingVertical: 2, marginRight: 4 },
+  watchIcon: { paddingHorizontal: 6, paddingVertical: 2, marginRight: 4 },
   adminHint: { fontSize: 9, fontFamily: 'Inter_400Regular', marginTop: 10, fontStyle: 'italic' },
   contract: { borderRadius: 12, padding: 12, marginTop: 15 },
   contractLabel: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1.2, marginBottom: 5 },

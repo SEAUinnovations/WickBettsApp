@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { db, signalsTable, subscriptionsTable } from "../lib/db.js";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, ne } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger.js";
 import { fanOutSignalNotification } from "../utils/pushNotifications.js";
@@ -45,13 +45,23 @@ export async function requireActiveSubscription(req: Request, res: Response, nex
 
 const router = Router();
 
-// GET /api/signals — member feed (requires auth + active sub)
-router.get("/", requireAuth, requireActiveSubscription, async (_req, res) => {
-  const signals = await db
-    .select()
-    .from(signalsTable)
-    .orderBy(desc(signalsTable.createdAt))
-    .limit(100);
+// GET /api/signals — member feed (requires auth + active sub). "Watching" is
+// an auto-generated candidate awaiting admin review (see signalScanner.ts /
+// the PATCH handler below) — it must never reach subscribers, only the
+// moment it's promoted to "Active" is a live, admin-reviewed call. Admins
+// still see every status so they have something to review in the first
+// place.
+router.get("/", requireAuth, requireActiveSubscription, async (req: Request, res: Response) => {
+  const user = req.dbUser!;
+  const signals =
+    user.role === "admin"
+      ? await db.select().from(signalsTable).orderBy(desc(signalsTable.createdAt)).limit(100)
+      : await db
+          .select()
+          .from(signalsTable)
+          .where(ne(signalsTable.status, "Watching"))
+          .orderBy(desc(signalsTable.createdAt))
+          .limit(100);
   res.json({ signals });
 });
 
@@ -82,6 +92,11 @@ router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) 
     res.status(400).json({ error: stopRequired ? "Missing required signal fields" : "Missing required signal fields (stop is optional for Buy & Hold)" });
     return;
   }
+  // Day Trade is deliberately excluded from this gate — the auto scanner's
+  // Day Trade signals are CME futures contracts (see signalScanner.ts's
+  // runDayTradeScan), not stock options, so isOption is false for those.
+  // An admin manually creating a Day Trade signal can still set isOption
+  // true if they're publishing a genuine 0DTE options call instead.
   if (style === "LEAPS" && !body.isOption) {
     res.status(400).json({ error: "LEAPS signals must be an options contract (isOption: true)" });
     return;
@@ -185,6 +200,9 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   if (body.optionType != null && !validOptionType.includes(body.optionType)) {
     res.status(400).json({ error: `Invalid optionType value: ${String(body.optionType)}` }); return;
   }
+  // See the matching comment on the POST handler above — Day Trade is
+  // excluded from this gate since the auto scanner's Day Trade signals are
+  // futures contracts (isOption: false), not stock options.
   if (body.style === "LEAPS" && body.isOption === false) {
     res.status(400).json({ error: "LEAPS signals must be an options contract (isOption: true)" }); return;
   }

@@ -4,10 +4,12 @@ import { db, signalsTable } from "../lib/db.js";
 import { logger } from "../lib/logger.js";
 import { buildStockCandidateList, type RankedCandidate } from "./stockUniverse.js";
 import { fetchStockDailyBars, fetchCryptoDailyBars } from "./marketHistory.js";
+import { fetchFuturesHourlyBars, resampleTo4Hour } from "./intradayData.js";
 import { screenSymbol, type ScreenResult } from "./technicalAnalysis.js";
 import { blackScholes, pickExpiration, pickStrike, formatExpirationLabel, formatExpirationCode } from "./optionsModel.js";
 import { getNewsAlert, fomcWithinRange } from "./economicCalendar.js";
 import { getMacroConfluence, type MacroConfluence } from "./macroConfluence.js";
+import { sendDailyDayTradeDigest } from "../utils/emailNotifications.js";
 
 /**
  * The automated signal scanner.
@@ -33,10 +35,27 @@ import { getMacroConfluence, type MacroConfluence } from "./macroConfluence.js";
  * data source is configured — see optionsModel.ts), a spot Long/Short call
  * for crypto.
  *
+ * runSignalScan (this scan) additionally guarantees at least LEAPS_MIN_PER_RUN
+ * LEAPS-style signals every run via a top-up pass — see the comment right
+ * before that pass, near the end of the function, for why the ranked
+ * selection alone doesn't already guarantee this.
+ *
+ * A second, separate scan lives in this same file: runDayTradeScan, on its
+ * own daily schedule (startDayTradeScanScheduler, below) rather than this
+ * scan's 2-day one. It's a genuinely different instrument class, not
+ * stocks/crypto options — CME index/metals FUTURES (MES/MNQ/ES/NQ/MGC —
+ * see DAY_TRADE_UNIVERSE), screened on 4-hour bars (resampled from hourly
+ * — see intradayData.ts), and only ever published when the setup clears a
+ * minimum 1:3 reward:risk (MIN_RISK_REWARD) — see buildFuturesDayTradeSignal.
+ * "Day Trade" is deliberately never plain shares (that's what Buy & Hold
+ * is): every other style is some kind of contract — Swing/LEAPS are
+ * modeled stock options contracts, Day Trade is a futures contract.
+ *
  * Every external data dependency here (Nasdaq screener/historical, Wikipedia
- * index constituents, CoinGecko history, Nasdaq earnings calendar) degrades
- * gracefully on failure — a bad fetch just removes that symbol from
- * consideration rather than crashing the run.
+ * index constituents, CoinGecko history, Nasdaq earnings calendar, Yahoo
+ * Finance hourly futures chart) degrades gracefully on failure — a bad
+ * fetch just removes that symbol from consideration rather than crashing
+ * the run.
  */
 
 const CRYPTO_UNIVERSE = [
@@ -52,6 +71,53 @@ const MAX_SIGNALS_PER_RUN = 2;
 const STOCK_UNIVERSE_LIMIT = 60;
 const FETCH_BATCH_SIZE = 10;
 const DEDUP_WINDOW_DAYS = 14;
+
+// Every 2-day run must produce at least this many LEAPS-style signals — see
+// the top-up pass at the end of runSignalScan. The normal ranked selection
+// alone doesn't guarantee this (LEAPS only happens to come out of pickStyle
+// when a trend-aligned stock candidate also clears the strict technical
+// thresholds), so a dedicated pass forces it when the normal pass falls
+// short, same as MIN_SIGNALS_PER_RUN forces at least one signal overall.
+const LEAPS_MIN_PER_RUN = 2;
+
+/**
+ * Curated universe for the day-trade scan (runDayTradeScan) — CME index and
+ * metals futures, not stocks. Yahoo's continuous-contract ticker convention
+ * uses a "=F" suffix; `asset` is the plain, human-facing contract symbol
+ * stored on the signal (see routes/signals.ts and the mobile Signals tab).
+ * MES/MNQ are the micro (1/10th size) contracts, ES/NQ the full-size E-minis,
+ * MGC the micro gold contract — a deliberately small, singularly liquid
+ * universe rather than a broad screen, since futures day-trade call-outs
+ * need the deepest, tightest-spread instruments, not breadth.
+ */
+const DAY_TRADE_UNIVERSE: { yahooSymbol: string; asset: string; sector: string }[] = [
+  { yahooSymbol: "MES=F", asset: "MES", sector: "Index Futures" },
+  { yahooSymbol: "MNQ=F", asset: "MNQ", sector: "Index Futures" },
+  { yahooSymbol: "ES=F", asset: "ES", sector: "Index Futures" },
+  { yahooSymbol: "NQ=F", asset: "NQ", sector: "Index Futures" },
+  { yahooSymbol: "MGC=F", asset: "MGC", sector: "Metals Futures" },
+];
+// No MIN constant here, deliberately — zero inserts in a run is a valid,
+// expected outcome (see MIN_RISK_REWARD below). This universe is only 5
+// symbols, and the gate is "RSI extreme + a confirmed structure setup + at
+// least a 1:3 reward:risk" all at once; on most days that combination
+// legitimately won't exist for any of the 5. Forcing a signal out anyway
+// (the way MIN_SIGNALS_PER_RUN=1 does for the swing/LEAPS scan) would mean
+// publishing a trade that doesn't actually clear the risk:reward bar this
+// scan exists to enforce — worse than publishing nothing that day.
+const DAY_TRADE_MAX_PER_RUN = 3;
+// Minimum acceptable reward:risk — "only look for trades... of 1:4, 1:3."
+// A candidate whose structural target/stop don't clear 3x is skipped
+// entirely rather than published with a worse ratio or an artificially
+// stretched target that ignores real structure.
+const MIN_RISK_REWARD = 3;
+// Shorter than DEDUP_WINDOW_DAYS on purpose — day trades are meant to
+// refresh daily against the same small liquid universe, so a 14-day window
+// would make the same futures permanently ineligible after their first
+// appearance. 20h (not a flat 24h) means a scan that drifts a bit later
+// each day (setInterval isn't wall-clock-exact — see the scheduler below)
+// never accidentally skips a symbol that's actually eligible again.
+const DAY_TRADE_DEDUP_HOURS = 20;
 const SPOT_HOLD_DAYS = 10; // assumed holding window for crypto/spot star-flag checks
 // A "Watching" signal that never gets promoted to Active within a week has,
 // in practice, never triggered — the setup didn't play out. Left alone these
@@ -140,6 +206,50 @@ async function hasRecentAutoSignal(symbol: string): Promise<boolean> {
     return rows.length > 0;
   } catch (err) {
     logger.warn({ err, symbol }, "Could not run pre-insert dedup check — proceeding, up-front dedup still applies");
+    return false;
+  }
+}
+
+async function getRecentAutoDayTradeAssets(): Promise<Set<string>> {
+  const cutoff = new Date(Date.now() - DAY_TRADE_DEDUP_HOURS * 60 * 60 * 1000);
+  try {
+    const rows = await db
+      .select({ asset: signalsTable.asset })
+      .from(signalsTable)
+      .where(
+        and(
+          eq(signalsTable.source, "auto"),
+          eq(signalsTable.style, "Day Trade"),
+          inArray(signalsTable.status, ["Active", "Watching"]),
+          gte(signalsTable.createdAt, cutoff),
+        ),
+      );
+    return new Set(rows.map((r) => r.asset));
+  } catch (err) {
+    logger.warn({ err }, "Could not load recent auto day-trade assets for dedup — proceeding without dedup this run");
+    return new Set();
+  }
+}
+
+async function hasRecentAutoDayTradeSignal(symbol: string): Promise<boolean> {
+  const cutoff = new Date(Date.now() - DAY_TRADE_DEDUP_HOURS * 60 * 60 * 1000);
+  try {
+    const rows = await db
+      .select({ id: signalsTable.id })
+      .from(signalsTable)
+      .where(
+        and(
+          eq(signalsTable.asset, symbol),
+          eq(signalsTable.source, "auto"),
+          eq(signalsTable.style, "Day Trade"),
+          inArray(signalsTable.status, ["Active", "Watching"]),
+          gte(signalsTable.createdAt, cutoff),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  } catch (err) {
+    logger.warn({ err, symbol }, "Could not run pre-insert day-trade dedup check — proceeding, up-front dedup still applies");
     return false;
   }
 }
@@ -368,6 +478,121 @@ async function buildStockOptionSignal(
     source: "auto" as const,
     newsAlert: newsAlert.flagged,
     newsAlertNote: newsAlert.note,
+  };
+}
+
+/**
+ * Day-trade futures signal — CME index/metals futures (MES/MNQ/ES/NQ/MGC),
+ * not stocks and not an options contract. Built from 4-hour bars (resampled
+ * from Yahoo's hourly futures data — see intradayData.ts's
+ * resampleTo4Hour), matching the "1hr to 4hr timeframe" spec: 4H is the
+ * structure/bias timeframe here, with the underlying 1H data giving it
+ * enough resolution to actually resolve a same-week break-retest-engulfing
+ * sequence rather than a multi-month one.
+ *
+ * Stop is the break-of-structure level from screen.breakoutRetest when
+ * present ("risk the break of structure" — the whole point of that
+ * confluence), falling back to the plain support/resistance buffer used
+ * elsewhere in this file when it isn't. Target is the opposing
+ * support/resistance level. Returns null — deliberately not a signal with
+ * a worse ratio, and deliberately not a signal with an artificially
+ * stretched target that ignores real structure — when the resulting
+ * reward:risk doesn't clear MIN_RISK_REWARD (1:3).
+ *
+ * There's no options-chain modeling here at all (no strike/premium/Greeks
+ * — see schema doc on isOption), no earnings/news-alert lookup either
+ * (getNewsAlert is calendar-driven for equities; not meaningful for an
+ * index/metals future), though the FOMC-window check from the caller still
+ * applies — a rate decision moves ES/NQ/MGC hard regardless of instrument type.
+ *
+ * KNOWN WORKAROUND: the `market` enum only has "Stocks"/"Crypto" today (no
+ * "Futures" value) — adding one is a schema migration, and this app
+ * currently has a separate pending migration blocked on an interactive
+ * drizzle-kit prompt the user needs to resolve by hand. Rather than stack a
+ * second migration on top of that, futures signals are stored with
+ * market: "Stocks" and disambiguated via `sector` ("Index Futures"/"Metals
+ * Futures") and this analysis text. Worth a proper "Futures" enum value as
+ * a fast-follow once that pending migration is cleared.
+ */
+function buildFuturesDayTradeSignal(
+  c: Candidate,
+  confluence: MacroConfluence,
+  fomcInWindow: boolean,
+): { record: ReturnType<typeof buildFuturesDayTradeRecord>; riskReward: number } | null {
+  const { screen } = c;
+  const stop = screen.breakoutRetest
+    ? screen.direction === "Long"
+      ? screen.breakoutRetest.brokenLevel * 0.997
+      : screen.breakoutRetest.brokenLevel * 1.003
+    : screen.direction === "Long"
+      ? screen.support * 0.99
+      : screen.resistance * 1.01;
+  const target = screen.direction === "Long" ? screen.resistance : screen.support;
+
+  const risk = Math.abs(screen.price - stop);
+  const reward = Math.abs(target - screen.price);
+  if (risk <= 0) return null;
+  const riskReward = reward / risk;
+  if (riskReward < MIN_RISK_REWARD) return null;
+
+  return { record: buildFuturesDayTradeRecord(c, confluence, fomcInWindow, stop, target, riskReward), riskReward };
+}
+
+function buildFuturesDayTradeRecord(
+  c: Candidate,
+  confluence: MacroConfluence,
+  fomcInWindow: boolean,
+  stop: number,
+  target: number,
+  riskReward: number,
+) {
+  const { screen } = c;
+  const isFallback = !screen.strictMatch;
+  const structureNote = screen.breakoutRetest
+    ? ` Break-of-structure retest confirmed: price broke ${screen.direction === "Long" ? "above" : "below"} $${screen.breakoutRetest.brokenLevel.toFixed(2)}, retested that level, and an engulfing candle confirmed it's holding — risk is placed on a close back through that level (break of structure invalidates the thesis), not just a generic support/resistance buffer.`
+    : "";
+  const vp = screen.volumeProfile;
+  const volumeNote = vp
+    ? ` Fixed-range volume profile (prior session's high to current price) puts the highest-volume node — the point of control — at $${vp.poc.toFixed(2)}; treat that as a secondary entry-zone reference alongside the current price.`
+    : "";
+
+  return {
+    id: randomUUID(),
+    asset: c.symbol,
+    sector: c.sector,
+    // See buildFuturesDayTradeSignal's doc comment — known workaround, no "Futures" market value yet.
+    market: "Stocks" as const,
+    direction: screen.direction,
+    status: "Watching" as const,
+    entry: `$${screen.price.toFixed(2)}`,
+    target: `$${target.toFixed(2)}`,
+    stop: `$${stop.toFixed(2)}`,
+    timeframe: "4H structure (1H-built) — day session futures",
+    risk: "High",
+    style: "Day Trade" as const,
+    analysis:
+      buildAnalysisText(c, isFallback, confluence, fomcInWindow) +
+      ` CME futures contract (${c.symbol}), not an equity or options play — quoted in index/metals points, not a per-share price. Built from 4-hour bars (resampled from hourly). ` +
+      `Reward:risk on this setup is ~1:${riskReward.toFixed(1)} (entry $${screen.price.toFixed(2)}, target $${target.toFixed(2)}, stop $${stop.toFixed(2)}) — only surfaced because it clears the 1:${MIN_RISK_REWARD} minimum.` +
+      structureNote +
+      volumeNote,
+    isOption: false,
+    optionType: null,
+    contract: null,
+    expiration: null,
+    strike: null,
+    premium: null,
+    bid: null,
+    ask: null,
+    impliedVolatility: null,
+    delta: null,
+    gamma: null,
+    theta: null,
+    vega: null,
+    openInterest: null,
+    source: "auto" as const,
+    newsAlert: false,
+    newsAlertNote: null,
   };
 }
 
@@ -604,6 +829,7 @@ export async function runSignalScan(): Promise<void> {
     }
 
     const inserted: string[] = [];
+    let leapsInserted = 0;
     for (const c of chosen) {
       // Re-verify right before insert — see hasRecentAutoSignal's doc
       // comment for why the up-front `recentAssets` snapshot alone isn't
@@ -628,14 +854,156 @@ export async function runSignalScan(): Promise<void> {
       try {
         await db.insert(signalsTable).values(record as never);
         inserted.push(c.symbol);
+        if (style === "LEAPS") leapsInserted++;
       } catch (err) {
         logger.error({ err, symbol: c.symbol }, "Failed to insert auto-generated signal");
       }
     }
 
-    logger.info({ inserted, scanned: allCandidates.length }, "Auto signal scan complete");
+    // LEAPS top-up: the ranked selection above picks the single best 1-2
+    // setups across ALL styles, so a run can easily land zero or one LEAPS
+    // signal even when the stock universe has multiple trend-aligned
+    // candidates — pickStyle only produces "LEAPS" for stocks, and only the
+    // top-ranked picks get chosen. Force it here rather than changing the
+    // ranking itself, which would risk demoting a genuinely stronger Swing
+    // setup just to make room for a weaker LEAPS one. Runs over the same
+    // `ranked` stock pool, in order, skipping symbols already used above.
+    if (leapsInserted < LEAPS_MIN_PER_RUN) {
+      // Trend-aligned candidates first — a LEAPS thesis is a multi-month
+      // hold, so a counter-trend setup (trendAligned: false) makes for a
+      // meaningfully worse LEAPS candidate than it does a short-dated Swing
+      // one. Only reach into counter-trend candidates if trend-aligned ones
+      // genuinely run out; `ranked`'s existing strict-match-first order is
+      // preserved within each group.
+      const leapsPool = ranked
+        .filter((c) => c.market === "Stocks" && !usedSymbols.has(c.symbol))
+        .sort((a, b) => Number(b.screen.trendAligned === true) - Number(a.screen.trendAligned === true));
+      for (const c of leapsPool) {
+        if (leapsInserted >= LEAPS_MIN_PER_RUN) break;
+        if (await hasRecentAutoSignal(c.symbol)) continue;
+        usedSymbols.add(c.symbol);
+        const windowEnd = new Date();
+        windowEnd.setUTCDate(windowEnd.getUTCDate() + 14);
+        const newsAlert = await getNewsAlert(c.symbol, c.market, new Date(), windowEnd);
+        const fomcInWindow = fomcInWindowFor(c.market);
+        const record = await buildStockOptionSignal(c, newsAlert, confluence, fomcInWindow, "LEAPS");
+        try {
+          await db.insert(signalsTable).values(record as never);
+          inserted.push(c.symbol);
+          leapsInserted++;
+        } catch (err) {
+          logger.error({ err, symbol: c.symbol }, "Failed to insert LEAPS top-up signal");
+        }
+      }
+      if (leapsInserted < LEAPS_MIN_PER_RUN) {
+        logger.warn(
+          { leapsInserted, target: LEAPS_MIN_PER_RUN },
+          "Could not reach the LEAPS-per-run minimum — stock universe/dedup left too few eligible candidates this run",
+        );
+      }
+    }
+
+    logger.info({ inserted, leapsInserted, scanned: allCandidates.length }, "Auto signal scan complete");
   } catch (err) {
     logger.error({ err }, "Auto signal scan failed");
+  }
+}
+
+// Caps how many day-trade candidates a single run inserts (DAY_TRADE_MAX_PER_RUN),
+// mirroring MAX_SIGNALS_PER_RUN's role for the swing/LEAPS scan above.
+// Unlike that scan, there's deliberately no floor — see DAY_TRADE_MAX_PER_RUN's
+// doc comment for why a quiet day (nothing clears both the technical screen
+// AND the 1:3 reward:risk bar) is a correct, expected outcome here, not a
+// failure to paper over.
+export async function runDayTradeScan(): Promise<void> {
+  logger.info("Futures day-trade scan starting");
+  try {
+    const results = await batchScreen(
+      DAY_TRADE_UNIVERSE,
+      async (item) => resampleTo4Hour(await fetchFuturesHourlyBars(item.yahooSymbol)),
+      (item) => item.asset,
+    );
+    const sectorBySymbol = new Map(DAY_TRADE_UNIVERSE.map((c) => [c.asset, c.sector]));
+
+    if (results.length === 0) {
+      logger.warn("Day-trade scan found zero usable candidates (futures data fetch failed for the whole universe) — no signals created this run");
+      return;
+    }
+
+    const confluence = await getMacroConfluence();
+    const now = new Date();
+    const windowEnd = new Date(now);
+    windowEnd.setUTCDate(windowEnd.getUTCDate() + 1);
+    const fomcInWindow = fomcWithinRange(now, windowEnd);
+
+    const recentAssets = await getRecentAutoDayTradeAssets();
+    const pool = results.filter((r) => !recentAssets.has(r.symbol));
+
+    // Same strict-first ranking approach as the swing/LEAPS scan: prefer
+    // setups that fully clear the technical thresholds, fall back to the
+    // best available read otherwise.
+    const rankScore = (r: { screen: ScreenResult }) => r.screen.score;
+    const strict = pool.filter((r) => r.screen.strictMatch).sort((a, b) => rankScore(b) - rankScore(a));
+    const rest = pool.filter((r) => !r.screen.strictMatch).sort((a, b) => rankScore(b) - rankScore(a));
+    const ranked = [...strict, ...rest];
+
+    const inserted: string[] = [];
+    let skippedOnRiskReward = 0;
+    // Built alongside `inserted` (rather than re-queried by asset symbol
+    // afterward) so the digest email below reflects exactly this run's rows
+    // — an asset-symbol re-query could also pick up an older Active/Watching
+    // day-trade signal on the same ticker from a previous run.
+    const insertedRows: Array<{
+      asset: string; market: string; sector: string | null; direction: string; style: string;
+      status: string; isOption: boolean; contract: string | null; entry: string; target: string;
+    }> = [];
+    // Walk the FULL ranked pool, not just the top DAY_TRADE_MAX_PER_RUN —
+    // buildFuturesDayTradeSignal can reject a candidate for not clearing
+    // the reward:risk bar, so the top-ranked-by-technicals candidate isn't
+    // necessarily one that ends up publishable.
+    for (const r of ranked) {
+      if (inserted.length >= DAY_TRADE_MAX_PER_RUN) break;
+      if (await hasRecentAutoDayTradeSignal(r.symbol)) {
+        logger.info({ symbol: r.symbol }, "Skipped day-trade insert — a recent Watching/Active day-trade signal already exists for this asset");
+        continue;
+      }
+      const candidate: Candidate = { symbol: r.symbol, market: "Stocks", screen: r.screen, sector: sectorBySymbol.get(r.symbol) ?? null };
+      const built = buildFuturesDayTradeSignal(candidate, confluence, fomcInWindow);
+      if (!built) {
+        skippedOnRiskReward++;
+        continue;
+      }
+      try {
+        await db.insert(signalsTable).values(built.record as never);
+        inserted.push(r.symbol);
+        insertedRows.push({
+          asset: built.record.asset, market: built.record.market, sector: built.record.sector, direction: built.record.direction,
+          style: built.record.style, status: built.record.status, isOption: built.record.isOption, contract: built.record.contract,
+          entry: built.record.entry, target: built.record.target,
+        });
+      } catch (err) {
+        logger.error({ err, symbol: r.symbol }, "Failed to insert day-trade signal");
+      }
+    }
+
+    logger.info(
+      { inserted, skippedOnRiskReward, scanned: results.length },
+      inserted.length === 0
+        ? "Futures day-trade scan complete — no candidate cleared the RSI screen + 1:3 reward:risk bar today"
+        : "Futures day-trade scan complete",
+    );
+
+    // Best-effort recap to the ops inbox, fired right off this run's own
+    // results rather than a separately-scheduled re-query — see
+    // emailDigestScheduler.ts for the weekly digest, which does need its own
+    // wall-clock-aligned schedule since it's not tied to any single scan.
+    try {
+      await sendDailyDayTradeDigest(insertedRows);
+    } catch (err) {
+      logger.error({ err }, "Daily day-trade digest send failed (signals were still saved)");
+    }
+  } catch (err) {
+    logger.error({ err }, "Futures day-trade scan failed");
   }
 }
 
@@ -685,4 +1053,33 @@ export function startSignalScanScheduler(): void {
   }, RUN_INTERVAL_MS);
 }
 
+const DAY_TRADE_RUN_INTERVAL_MS = 24 * 60 * 60 * 1000; // every day
+let dayTradeSchedulerStarted = false;
+
+/**
+ * Separate timer from startSignalScanScheduler above — day trades need a
+ * daily cadence, distinct from the swing/LEAPS scan's 2-day one. Staggered
+ * 40s after boot (vs. 20s for the other scan) purely so the two initial
+ * runs don't hit the same external data hosts (Nasdaq/CoinGecko/Yahoo) in
+ * the same instant on cold start.
+ *
+ * Caveat worth knowing: like startSignalScanScheduler, this is a plain
+ * in-process setInterval, not a wall-clock cron — the "every 24h" clock
+ * resets on every deploy/restart, so the actual time-of-day this fires can
+ * drift across redeploys. Good enough for "at least once a day," not a
+ * guarantee of a fixed time.
+ */
+export function startDayTradeScanScheduler(): void {
+  if (dayTradeSchedulerStarted) return;
+  dayTradeSchedulerStarted = true;
+
+  setTimeout(() => {
+    void runDayTradeScan();
+  }, 40_000);
+  setInterval(() => {
+    void runDayTradeScan();
+  }, DAY_TRADE_RUN_INTERVAL_MS);
+}
+
 startSignalScanScheduler();
+startDayTradeScanScheduler();

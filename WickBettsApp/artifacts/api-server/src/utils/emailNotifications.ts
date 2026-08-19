@@ -387,6 +387,142 @@ export async function sendSupportTicketEmail(ticket: {
   }
 }
 
+interface DigestSignalRow {
+  asset: string;
+  market: string;
+  sector: string | null;
+  direction: string;
+  style: string;
+  status: string;
+  isOption: boolean;
+  contract: string | null;
+  entry: string;
+  target: string;
+}
+
+function signalDigestLine(s: DigestSignalRow): string {
+  // Day Trade signals are futures contracts (isOption: false, no
+  // contract/optionType — see signalScanner.ts's buildFuturesDayTradeRecord),
+  // which the plain isOption check below would otherwise mislabel "(shares)".
+  const typeLabel =
+    s.style === "Day Trade"
+      ? " (futures)"
+      : s.isOption
+        ? s.contract
+          ? ` — ${s.contract}`
+          : ` (${s.direction === "Long" ? "Call" : "Put"})`
+        : " (shares)";
+  const sectorLabel = s.sector ? ` · ${s.sector}` : "";
+  return `${s.asset} ${s.direction} · ${s.style}${typeLabel}${sectorLabel} — entry ${s.entry}, target ${s.target}`;
+}
+
+function signalDigestListHtml(rows: DigestSignalRow[]): string {
+  if (rows.length === 0) return `<p style="color:#8a94a3;">None.</p>`;
+  return `<ul style="padding-left:18px;margin:0;">${rows
+    .map((s) => `<li style="margin-bottom:6px;">${escapeHtml(signalDigestLine(s))}</li>`)
+    .join("")}</ul>`;
+}
+
+/**
+ * Fired once a day (see services/emailDigestScheduler.ts) right after the
+ * futures day-trade scan runs — a same-day recap of every MES/MNQ/ES/NQ/MGC
+ * candidate the scanner surfaced (only ones clearing the 1:3 reward:risk
+ * bar — see signalScanner.ts's MIN_RISK_REWARD), sent to the fixed ops
+ * inbox rather than members (day-trade "Watching" candidates still need
+ * admin review/promotion before a member ever sees them — see
+ * routes/signals.ts). If the scan produced nothing that day (a genuinely
+ * common, correct outcome given the reward:risk bar — see
+ * DAY_TRADE_MAX_PER_RUN's doc comment), this still sends so a quiet day is
+ * visible rather than silently indistinguishable from the digest not
+ * running at all.
+ */
+export async function sendDailyDayTradeDigest(rows: DigestSignalRow[]): Promise<void> {
+  if (!isConfigured()) {
+    logger.warn({ count: rows.length }, "RESEND_API_KEY is not configured — daily day-trade digest email skipped.");
+    return;
+  }
+  try {
+    const dateLabel = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+    const subject = rows.length > 0
+      ? `[Wick Betts] ${rows.length} futures day-trade call-out${rows.length === 1 ? "" : "s"} — ${dateLabel}`
+      : `[Wick Betts] No futures day-trade setups cleared 1:3 today — ${dateLabel}`;
+    const bodyHtml = `<p>Today's automated futures scan (MES/MNQ/ES/NQ/MGC, 4H structure, 1:3+ reward:risk only):</p>${signalDigestListHtml(rows)}<p style="margin-top:16px;color:#8a94a3;font-size:12px;">Each is a "Watching" candidate awaiting your review — nothing here reaches subscribers until promoted to Active in the signal studio.</p>`;
+    const text = `Futures day-trade call-outs — ${dateLabel}\n\n${rows.length > 0 ? rows.map(signalDigestLine).join("\n") : "None."}\n\nEach is a Watching candidate awaiting review in the signal studio.`;
+    const res = await fetch(RESEND_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: FROM_ADDRESS,
+        to: [SUPPORT_INBOX],
+        subject,
+        html: wrapHtml(subject, bodyHtml, "Review in signal studio", "/admin"),
+        text,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.error({ status: res.status, body }, "Daily day-trade digest email failed");
+    }
+  } catch (err) {
+    logger.error({ err }, "Daily day-trade digest email threw");
+  }
+}
+
+/**
+ * Fired every Sunday (see services/emailDigestScheduler.ts) — a week-ahead
+ * ops summary to the fixed ops inbox: every signal that went Active in the
+ * past 7 days (what actually shipped to subscribers) plus every new
+ * auto-generated "Watching" candidate from the past 7 days (what's queued
+ * for review). This is an admin recap, not a member-facing watchlist email.
+ */
+export async function sendWeeklyOpsDigest(params: {
+  activeThisWeek: DigestSignalRow[];
+  newWatching: DigestSignalRow[];
+}): Promise<void> {
+  const { activeThisWeek, newWatching } = params;
+  if (!isConfigured()) {
+    logger.warn(
+      { activeCount: activeThisWeek.length, watchingCount: newWatching.length },
+      "RESEND_API_KEY is not configured — weekly ops digest email skipped.",
+    );
+    return;
+  }
+  try {
+    const weekLabel = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric" });
+    const subject = `[Wick Betts] Weekly watchlist — week of ${weekLabel}`;
+    const bodyHtml =
+      `<p><strong>Went Active this past week</strong> (already live for subscribers):</p>${signalDigestListHtml(activeThisWeek)}` +
+      `<p style="margin-top:16px;"><strong>New Watching candidates this past week</strong> (queued for your review):</p>${signalDigestListHtml(newWatching)}`;
+    const text =
+      `Weekly watchlist — week of ${weekLabel}\n\n` +
+      `Went Active this past week:\n${activeThisWeek.length > 0 ? activeThisWeek.map(signalDigestLine).join("\n") : "None."}\n\n` +
+      `New Watching candidates:\n${newWatching.length > 0 ? newWatching.map(signalDigestLine).join("\n") : "None."}`;
+    const res = await fetch(RESEND_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: FROM_ADDRESS,
+        to: [SUPPORT_INBOX],
+        subject,
+        html: wrapHtml(subject, bodyHtml, "Open signal studio", "/admin"),
+        text,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logger.error({ status: res.status, body }, "Weekly ops digest email failed");
+    }
+  } catch (err) {
+    logger.error({ err }, "Weekly ops digest email threw");
+  }
+}
+
 /** Direct single-recipient send, used outside the fan-out paths (e.g. future
  *  account-level notices). Kept small and generic so it doesn't need its own
  *  ADR entry — same transport as the two fan-out helpers above. */

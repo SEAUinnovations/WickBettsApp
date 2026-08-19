@@ -11,7 +11,8 @@ import watchlistRouter from "./watchlist.js";
 import mentorshipRouter from "./mentorship.js";
 import tradeReviewsRouter from "./tradeReviews.js";
 import supportRouter from "./support.js";
-import "../services/signalScanner.js"; // self-starting scheduler, side-effect import only
+import "../services/signalScanner.js"; // self-starting scheduler(s), side-effect import only — swing/LEAPS (2-day) + day-trade (daily)
+import "../services/emailDigestScheduler.js"; // self-starting weekly ops digest, side-effect import only
 
 const router = Router();
 
