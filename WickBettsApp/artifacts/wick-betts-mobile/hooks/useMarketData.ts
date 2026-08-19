@@ -9,6 +9,9 @@ export interface QuoteItem {
   price: number;
   change: number;
   changePercent: number;
+  // The API (routes/market.ts) always includes this on every quote — it was
+  // missing here, which is what broke the tabs heatmap's volume detail row.
+  volume: number;
   group: string;
   currency: string;
 }
