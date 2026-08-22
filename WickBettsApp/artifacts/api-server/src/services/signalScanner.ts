@@ -25,15 +25,15 @@ import { sendDailyDayTradeDigest } from "../utils/emailNotifications.js";
  * them as "Watching" signals
  * for an admin to review, edit, or delete. Each chosen setup is also
  * assigned a trading "style" (Swing/LEAPS/Buy & Hold — see `pickStyle`
- * below) based on trend conviction, the same way a human would decide
- * whether a setup deserves a short-dated trade or a longer-horizon
- * position: trend-aligned stock setups with a strict technical match become
- * a modeled 6mo+ LEAPS play, trend-aligned setups without a strict match
- * (stocks) or any trend-aligned crypto setup become a Buy & Hold spot
- * position (no hard stop), and everything else stays a short-dated Swing
- * trade — a modeled 7-14 DTE options play for stocks (no live options-chain
- * data source is configured — see optionsModel.ts), a spot Long/Short call
- * for crypto.
+ * below): for STOCKS, a trend-aligned setup that also clears the strict
+ * technical thresholds becomes a modeled 6mo+ LEAPS options contract —
+ * the one case where a stock signal has a strike/premium/Greeks — and
+ * every other stock setup becomes a Buy & Hold spot position instead (just
+ * the stock price and an entry, no options contract, no hard stop): a
+ * stock play is fundamentally "buy the shares." For CRYPTO (no options
+ * builder in this app at all), a trend-aligned setup becomes Buy & Hold
+ * (spot, no stop), everything else stays a short-dated Swing spot
+ * Long/Short (has a stop).
  *
  * runSignalScan (this scan) additionally guarantees at least LEAPS_MIN_PER_RUN
  * LEAPS-style signals every run via a top-up pass — see the comment right
@@ -43,13 +43,13 @@ import { sendDailyDayTradeDigest } from "../utils/emailNotifications.js";
  * A second, separate scan lives in this same file: runDayTradeScan, on its
  * own daily schedule (startDayTradeScanScheduler, below) rather than this
  * scan's 2-day one. It's a genuinely different instrument class, not
- * stocks/crypto options — CME index/metals FUTURES (MES/MNQ/ES/NQ/MGC —
- * see DAY_TRADE_UNIVERSE), screened on 4-hour bars (resampled from hourly
- * — see intradayData.ts), and only ever published when the setup clears a
+ * stocks/crypto — CME index/metals FUTURES (MES/MNQ/ES/NQ/MGC — see
+ * DAY_TRADE_UNIVERSE), screened on 4-hour bars (resampled from hourly —
+ * see intradayData.ts), and only ever published when the setup clears a
  * minimum 1:3 reward:risk (MIN_RISK_REWARD) — see buildFuturesDayTradeSignal.
- * "Day Trade" is deliberately never plain shares (that's what Buy & Hold
- * is): every other style is some kind of contract — Swing/LEAPS are
- * modeled stock options contracts, Day Trade is a futures contract.
+ * In short: Buy & Hold = plain shares (stocks) or spot (crypto), LEAPS =
+ * stock options contract, Day Trade = futures contract, Swing = crypto
+ * spot only (no longer a stock style — see pickStyle).
  *
  * Every external data dependency here (Nasdaq screener/historical, Wikipedia
  * index constituents, CoinGecko history, Nasdaq earnings calendar, Yahoo
@@ -267,21 +267,31 @@ function rsiMagnitude(rsi: number, direction: "Long" | "Short"): string {
 /**
  * Assigns a trading style to a chosen candidate based on trend conviction —
  * the same `trendAligned`/`strictMatch` fields already computed by
- * technicalAnalysis.ts, reused rather than adding a new indicator. A
- * counter-trend or trend-agnostic setup (trendAligned false/null) is a
- * short-dated timing play — Swing. A trend-aligned setup that also cleared
- * the strict technical thresholds is high enough conviction to justify a
- * longer-dated LEAPS contract (stocks only — there's no crypto options
- * builder in this app). A trend-aligned setup that only cleared the looser
- * fallback thresholds (or any trend-aligned crypto setup) becomes a Buy &
- * Hold spot position: real conviction in the direction, but not a precise
- * enough technical trigger to time an options entry against.
+ * technicalAnalysis.ts, reused rather than adding a new indicator.
+ *
+ * Stocks: never "Swing" anymore — a stock play is fundamentally "buy the
+ * shares," not a timed options trade (per the user: a stock signal should
+ * just show the stock price and entry, "because it's buy and hold"). A
+ * trend-aligned setup that also clears the strict technical thresholds is
+ * high enough conviction to justify a longer-dated LEAPS contract (the one
+ * remaining case where a stock signal IS an options contract — that's what
+ * LEAPS means by definition). Every other stock setup — including
+ * counter-trend ones, which used to become a short-dated Swing options
+ * play — is a Buy & Hold spot position instead: real conviction in the
+ * direction (or, for a counter-trend read, that context is still disclosed
+ * in the thesis text — see buildAnalysisText), but no options contract.
+ *
+ * Crypto: unaffected by the above — there's no crypto options builder in
+ * this app at all, so Swing here just means a short-dated spot Long/Short
+ * with a hard stop (trendAligned false/null), versus Buy & Hold's
+ * long-term spot accumulation with no stop (trendAligned true).
  */
 function pickStyle(c: Candidate): SignalStyle {
   const { screen, market } = c;
-  if (!screen.trendAligned) return "Swing";
-  if (market === "Stocks") return screen.strictMatch ? "LEAPS" : "Buy & Hold";
-  return "Buy & Hold";
+  if (market === "Stocks") {
+    return screen.trendAligned && screen.strictMatch ? "LEAPS" : "Buy & Hold";
+  }
+  return screen.trendAligned ? "Buy & Hold" : "Swing";
 }
 
 /**

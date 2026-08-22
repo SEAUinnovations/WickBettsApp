@@ -19,13 +19,19 @@ export const optionTypeEnum = pgEnum("option_type", ["Call", "Put"]);
 // as a workaround (no dedicated "Futures" market value yet — see
 // buildFuturesDayTradeSignal's doc comment), disambiguated via `sector`
 // ("Index Futures"/"Metals Futures"). "Swing" is the original short-hold
-// behavior (days/weeks, always has a stop) — a modeled stock options
-// contract. "Buy & Hold" is a long-term spot position (stocks or crypto)
-// with an entry + target but deliberately no stop — the thesis plays out
-// over a long horizon, not a hard invalidation price; this is the one
-// style that is always plain shares (isOption: false, market genuinely
-// Stocks/Crypto). "LEAPS" is a long-dated stock options contract (6/8/12+
-// months out).
+// behavior (days/weeks, always has a stop) — for the auto scanner this is
+// CRYPTO ONLY now (a spot Long/Short, isOption: false; see
+// signalScanner.ts's pickStyle), since a stock signal should just be the
+// stock price and an entry — "buy and hold" — not a timed options trade;
+// an admin can still manually publish a stock Swing OPTIONS play if they
+// want one (isOption: true is still accepted for that style on the
+// PATCH/POST routes), it's just what the automated scan no longer produces.
+// "Buy & Hold" is a long-term position (stocks or crypto) with an entry +
+// target but deliberately no stop — the thesis plays out over a long
+// horizon, not a hard invalidation price; this is the DEFAULT/most common
+// stock style now, always plain shares (isOption: false). "LEAPS" is a
+// long-dated stock options contract (6/8/12+ months out) — the one case
+// where an auto-generated stock signal has a strike/premium/Greeks.
 export const signalStyleEnum = pgEnum("signal_style", ["Day Trade", "Swing", "Buy & Hold", "LEAPS"]);
 
 export const signalsTable = pgTable("signals", {
