@@ -9,6 +9,7 @@ export {
   usersTable,
   insertUserSchema,
   userRoleEnum,
+  referralTierEnum,
   type InsertUser,
   type User,
   // Subscriptions
@@ -78,4 +79,10 @@ export {
   insertSupportTicketSchema,
   type InsertSupportTicket,
   type SupportTicket,
+  // Referral program (docs/referral-program-plan.md)
+  referralsTable,
+  referralStatusEnum,
+  insertReferralSchema,
+  type InsertReferral,
+  type Referral,
 } from "@workspace/db";

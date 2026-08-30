@@ -20,6 +20,12 @@ export interface LearningProgress {
   optionsGame: { bestScore: number; bestStreak: number; plays: number };
   /** Funded Combine Prep — bestEquity is the highest paper-account peak ever reached in a single run. */
   fundedGame: { bestEquity: number; bestStreak: number; timesReady: number; plays: number };
+  /** Portfolio Allocation Builder — bestScore is the highest single-scenario allocation-quality score (0-100) ever reached. */
+  portfolioBuilderGame: { bestScore: number; plays: number };
+  /** Risk-Sizing Duel — bestFinalEquityMultiple is the best ending-equity/starting-equity ratio ever reached across a single run's trade sequence. */
+  riskDuelGame: { bestFinalEquityMultiple: number; plays: number };
+  /** Chart Pattern Recognition Trainer — same shape as the other arcade games above. */
+  patternGame: { bestScore: number; bestStreak: number; plays: number };
   /** Last specialization the member had selected on the Learning hub — 'all' shows every track. */
   preferredSpecialization: Specialization | 'all';
 }
@@ -38,6 +44,9 @@ export function blankLearningProgress(): LearningProgress {
     tradeSimGame: { bestScore: 0, bestStreak: 0, plays: 0 },
     optionsGame: { bestScore: 0, bestStreak: 0, plays: 0 },
     fundedGame: { bestEquity: 0, bestStreak: 0, timesReady: 0, plays: 0 },
+    portfolioBuilderGame: { bestScore: 0, plays: 0 },
+    riskDuelGame: { bestFinalEquityMultiple: 0, plays: 0 },
+    patternGame: { bestScore: 0, bestStreak: 0, plays: 0 },
     preferredSpecialization: 'all',
   };
 }
@@ -57,6 +66,9 @@ export async function loadLearningProgress(userId: string | undefined): Promise<
       tradeSimGame: { ...fallback.tradeSimGame, ...parsed.tradeSimGame },
       optionsGame: { ...fallback.optionsGame, ...parsed.optionsGame },
       fundedGame: { ...fallback.fundedGame, ...parsed.fundedGame },
+      portfolioBuilderGame: { ...fallback.portfolioBuilderGame, ...parsed.portfolioBuilderGame },
+      riskDuelGame: { ...fallback.riskDuelGame, ...parsed.riskDuelGame },
+      patternGame: { ...fallback.patternGame, ...parsed.patternGame },
     };
   } catch {
     return fallback;

@@ -349,6 +349,11 @@ export default function ProfileScreen() {
       {/* Account */}
       <SectionLabel>Account</SectionLabel>
       <Card style={styles.settingsCard}>
+        <Pressable onPress={() => router.push('/refer' as never)} style={styles.accountRow} accessibilityRole="button" testID="refer-and-earn">
+          <Ionicons name="gift-outline" size={19} color={colors.accent} />
+          <Text style={[styles.accountText, { color: colors.foreground }]}>Refer &amp; earn</Text>
+          <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+        </Pressable>
         <Pressable onPress={() => router.push('/learning')} style={styles.accountRow} accessibilityRole="button">
           <Ionicons name="school-outline" size={19} color={colors.accent} />
           <Text style={[styles.accountText, { color: colors.foreground }]}>Learning</Text>
@@ -414,6 +419,18 @@ export default function ProfileScreen() {
           >
             <Ionicons name="calendar-outline" size={19} color={colors.primary} />
             <Text style={[styles.accountText, { color: colors.foreground }]}>Mentorship requests</Text>
+            <Tag>ADMIN</Tag>
+            <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+          </Pressable>
+        ) : null}
+        {isAdmin ? (
+          <Pressable
+            onPress={() => router.push('/admin/referrals')}
+            style={styles.accountRow}
+            accessibilityRole="button"
+          >
+            <Ionicons name="gift-outline" size={19} color={colors.primary} />
+            <Text style={[styles.accountText, { color: colors.foreground }]}>Referral queue</Text>
             <Tag>ADMIN</Tag>
             <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
           </Pressable>

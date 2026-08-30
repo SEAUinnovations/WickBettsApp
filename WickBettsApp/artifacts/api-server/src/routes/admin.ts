@@ -1,12 +1,13 @@
 import { Router, type Request, type Response } from "express";
-import { db, usersTable, subscriptionsTable, supportTicketsTable, mentorshipBookingsTable } from "../lib/db.js";
-import { eq, desc } from "drizzle-orm";
+import { db, usersTable, subscriptionsTable, supportTicketsTable, mentorshipBookingsTable, referralsTable } from "../lib/db.js";
+import { eq, desc, inArray } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import OpenAI from "openai";
 import { requireAuth, requireAdmin, isBootstrapAdmin } from "../middlewares/requireAuth.js";
 import { pickPrimarySubscription } from "../lib/subscriptionUtils.js";
 import { aiRateLimit } from "../middlewares/rateLimit.js";
 import { sendMentorshipRequestConfirmed, sendMentorshipDeclined } from "../utils/emailNotifications.js";
+import { REFERRAL_HOLD_DAYS } from "../lib/referralConfig.js";
 
 const router = Router();
 
@@ -275,6 +276,93 @@ router.patch("/mentorship-requests/:id", requireAuth, requireAdmin, async (req: 
   } catch (err) {
     logger.error(err, "Failed to update mentorship request");
     res.status(500).json({ error: "Failed to update mentorship request" });
+  }
+});
+
+// GET /api/admin/referrals — every referral, most recent first, enriched
+// with referrer/referred display info so the admin panel doesn't need a
+// second lookup per row. This is also where the daily-limit fraud guard
+// (docs/referral-program-plan.md) surfaces anything it held for manual
+// review: those rows carry `status: "pending"` and `fraudFlag: true`.
+router.get("/referrals", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const referrals = await db.select().from(referralsTable).orderBy(desc(referralsTable.createdAt));
+
+    const userIds = new Set<string>();
+    for (const r of referrals) {
+      userIds.add(r.referrerId);
+      userIds.add(r.referredUserId);
+    }
+    const relatedUsers = userIds.size > 0
+      ? await db
+          .select({ id: usersTable.id, email: usersTable.email, name: usersTable.name })
+          .from(usersTable)
+          .where(inArray(usersTable.id, [...userIds]))
+      : [];
+    const userById = new Map(relatedUsers.map((u) => [u.id, u]));
+
+    const enriched = referrals.map((r) => ({
+      ...r,
+      referrer: userById.get(r.referrerId) ?? null,
+      referredUser: userById.get(r.referredUserId) ?? null,
+    }));
+
+    res.json({ referrals: enriched });
+  } catch (err) {
+    logger.error(err, "Failed to fetch referrals");
+    res.status(500).json({ error: "Could not load referrals." });
+  }
+});
+
+// PATCH /api/admin/referrals/:id — approve or block a referral the daily
+// fraud-limit guard held for review. Only acts on a referral still in
+// "pending" — one that's already converted/rewarded/clawed-back/blocked is
+// left alone rather than being silently reprocessed. Approving moves it
+// into the normal pipeline (converted now, reward eligible after the usual
+// hold period) rather than crediting it immediately, so an approved
+// referral still gets the same fraud-window protection as any other.
+router.patch("/referrals/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const { action } = req.body as { action?: "approve" | "block" };
+  if (action !== "approve" && action !== "block") {
+    res.status(400).json({ error: "action must be 'approve' or 'block'" });
+    return;
+  }
+
+  try {
+    const [referral] = await db.select().from(referralsTable).where(eq(referralsTable.id, id)).limit(1);
+    if (!referral) {
+      res.status(404).json({ error: "Referral not found" });
+      return;
+    }
+    if (referral.status !== "pending") {
+      res.status(400).json({ error: `This referral is already "${referral.status}", not pending review.` });
+      return;
+    }
+
+    if (action === "approve") {
+      await db
+        .update(referralsTable)
+        .set({
+          status: "converted",
+          fraudFlag: false,
+          convertedAt: new Date(),
+          rewardEligibleAt: new Date(Date.now() + REFERRAL_HOLD_DAYS * 24 * 60 * 60 * 1000),
+          updatedAt: new Date(),
+        } as object)
+        .where(eq(referralsTable.id, id));
+    } else {
+      await db
+        .update(referralsTable)
+        .set({ status: "blocked", updatedAt: new Date() } as object)
+        .where(eq(referralsTable.id, id));
+    }
+
+    logger.info({ referralId: id, action }, "Referral review decision recorded");
+    res.json({ ok: true, id, status: action === "approve" ? "converted" : "blocked" });
+  } catch (err) {
+    logger.error(err, "Failed to update referral");
+    res.status(500).json({ error: "Failed to update referral" });
   }
 });
 

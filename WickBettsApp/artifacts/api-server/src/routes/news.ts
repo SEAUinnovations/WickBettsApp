@@ -174,6 +174,71 @@ function xmlImage(item: Record<string, unknown>): string | null {
   return null;
 }
 
+// Named HTML entities RSS feeds actually emit in headlines/summaries beyond
+// the five XML-reserved ones: nbsp, smart quotes, en/em dash, ellipsis.
+// Anything not in this list falls through decodeEntities() untouched.
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  ndash: "–",
+  mdash: "—",
+  lsquo: "‘",
+  rsquo: "’",
+  ldquo: "“",
+  rdquo: "”",
+  hellip: "…",
+};
+
+/**
+ * Decodes HTML/XML entities — named (from the table above), numeric decimal
+ * (`&#39;`), and numeric hex (`&#x27;`). An entity outside that set is left
+ * as-is rather than guessed at.
+ */
+function decodeEntities(text: string): string {
+  return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, entity: string) => {
+    if (entity[0] === "#") {
+      const isHex = entity[1] === "x" || entity[1] === "X";
+      const code = isHex ? parseInt(entity.slice(2), 16) : parseInt(entity.slice(1), 10);
+      if (!Number.isFinite(code)) return match;
+      try {
+        return String.fromCodePoint(code);
+      } catch {
+        return match;
+      }
+    }
+    return NAMED_ENTITIES[entity] ?? match;
+  });
+}
+
+/**
+ * Normalizes raw RSS text — titles and descriptions alike — into clean
+ * plain text: strips CDATA wrapper markers and HTML tags, decodes entities,
+ * drops non-printable control characters, and collapses whitespace.
+ *
+ * Previously only the description/summary field got any of this treatment
+ * (CDATA/tag stripping plus two hardcoded entity replacements); `title` was
+ * used completely raw from the XML parser. That's why headlines occasionally
+ * rendered with stray HTML-entity fragments (e.g. an unhandled `&#8217;` or
+ * `&#038;` left as literal text) or control characters baked in — the exact
+ * "strange titles with extra characters" symptom. Both fields now go through
+ * this same sanitizer so neither can carry that junk into the feed.
+ */
+function cleanRssText(raw: string): string {
+  return decodeEntities(
+    raw
+      .replace(/<!\[CDATA\[|\]\]>/g, "")
+      .replace(/<[^>]*>/g, ""),
+  )
+    // eslint-disable-next-line no-control-regex -- deliberately stripping non-printable control chars
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /**
  * Safely coerce an XML node's parsed value into plain text.
  *
@@ -224,19 +289,12 @@ async function fetchRss(source: typeof RSS_SOURCES[0]): Promise<NewsArticle[]> {
 
   const candidates = rawItems.slice(0, 20).map((item) => {
     const it = item as Record<string, unknown>;
-    const title = xmlText(it["title"]);
+    const title = cleanRssText(xmlText(it["title"]));
     const link = xmlText(it["link"]) || xmlText(it["guid"]);
     const pubDate = xmlText(it["pubDate"] ?? it["published"] ?? it["updated"]);
     const desc = xmlText(it["description"] ?? it["summary"] ?? it["content"]);
     const byline = xmlText(it["dc:creator"] ?? it["author"]);
-    // Strip HTML tags/entities from description
-    const summary = desc
-      .replace(/<!\[CDATA\[|\]\]>/g, "")
-      .replace(/<[^>]*>/g, "")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&amp;/g, "&")
-      .slice(0, 200)
-      .trim();
+    const summary = cleanRssText(desc).slice(0, 200).trim();
     const article: NewsArticle = {
       id: link || title,
       headline: title,

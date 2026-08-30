@@ -7,7 +7,13 @@ const router = Router();
 
 // ── Ticker universe ───────────────────────────────────────────────────────────
 type AssetClass = "etf" | "stocks";
-interface TickerMeta { assetclass: AssetClass; group: string; shortName: string }
+// `domain` is only set for tickers that are a single real company — that's
+// what makes a domain-based logo (see resolveLogoUrl below) meaningful. ETFs
+// and macro instruments deliberately have no domain: a sector SPDR's "logo"
+// would just be its issuer's (State Street's) logo repeated across a dozen
+// unrelated tickers, which is worse than no icon at all — the UI falls back
+// to an initials badge for those instead.
+interface TickerMeta { assetclass: AssetClass; group: string; shortName: string; domain?: string }
 
 const EQUITY_TICKERS: Record<string, TickerMeta> = {
   // Indices / broad ETFs
@@ -39,26 +45,26 @@ const EQUITY_TICKERS: Record<string, TickerMeta> = {
   XLB:  { assetclass: "etf",    group: "sectors", shortName: "Materials" },
   // Mega-cap tech — grouped by real sector rather than a generic "mega-cap"
   // bucket, so the ticker search actually labels each one correctly.
-  AAPL: { assetclass: "stocks", group: "technology", shortName: "Apple" },
-  MSFT: { assetclass: "stocks", group: "technology", shortName: "Microsoft" },
-  NVDA: { assetclass: "stocks", group: "technology", shortName: "Nvidia" },
-  ORCL: { assetclass: "stocks", group: "technology", shortName: "Oracle" },
-  AMD:  { assetclass: "stocks", group: "technology", shortName: "AMD" },
-  AVGO: { assetclass: "stocks", group: "technology", shortName: "Broadcom" },
-  AMZN: { assetclass: "stocks", group: "consumer-discretionary", shortName: "Amazon" },
-  TSLA: { assetclass: "stocks", group: "consumer-discretionary", shortName: "Tesla" },
-  GOOGL:{ assetclass: "stocks", group: "communication-services", shortName: "Alphabet" },
-  META: { assetclass: "stocks", group: "communication-services", shortName: "Meta" },
+  AAPL: { assetclass: "stocks", group: "technology", shortName: "Apple", domain: "apple.com" },
+  MSFT: { assetclass: "stocks", group: "technology", shortName: "Microsoft", domain: "microsoft.com" },
+  NVDA: { assetclass: "stocks", group: "technology", shortName: "Nvidia", domain: "nvidia.com" },
+  ORCL: { assetclass: "stocks", group: "technology", shortName: "Oracle", domain: "oracle.com" },
+  AMD:  { assetclass: "stocks", group: "technology", shortName: "AMD", domain: "amd.com" },
+  AVGO: { assetclass: "stocks", group: "technology", shortName: "Broadcom", domain: "broadcom.com" },
+  AMZN: { assetclass: "stocks", group: "consumer-discretionary", shortName: "Amazon", domain: "amazon.com" },
+  TSLA: { assetclass: "stocks", group: "consumer-discretionary", shortName: "Tesla", domain: "tesla.com" },
+  GOOGL:{ assetclass: "stocks", group: "communication-services", shortName: "Alphabet", domain: "google.com" },
+  META: { assetclass: "stocks", group: "communication-services", shortName: "Meta", domain: "meta.com" },
   // Financials
-  JPM:  { assetclass: "stocks", group: "financials", shortName: "JPMorgan" },
-  GS:   { assetclass: "stocks", group: "financials", shortName: "Goldman Sachs" },
-  V:    { assetclass: "stocks", group: "financials", shortName: "Visa" },
-  MA:   { assetclass: "stocks", group: "financials", shortName: "Mastercard" },
-  BAC:  { assetclass: "stocks", group: "financials", shortName: "BofA" },
-  MS:   { assetclass: "stocks", group: "financials", shortName: "Morgan Stanley" },
+  JPM:  { assetclass: "stocks", group: "financials", shortName: "JPMorgan", domain: "jpmorgan.com" },
+  GS:   { assetclass: "stocks", group: "financials", shortName: "Goldman Sachs", domain: "goldmansachs.com" },
+  V:    { assetclass: "stocks", group: "financials", shortName: "Visa", domain: "visa.com" },
+  MA:   { assetclass: "stocks", group: "financials", shortName: "Mastercard", domain: "mastercard.com" },
+  BAC:  { assetclass: "stocks", group: "financials", shortName: "BofA", domain: "bankofamerica.com" },
+  MS:   { assetclass: "stocks", group: "financials", shortName: "Morgan Stanley", domain: "morganstanley.com" },
   // Crypto-adjacent stocks
-  COIN: { assetclass: "stocks", group: "crypto",  shortName: "Coinbase" },
-  MSTR: { assetclass: "stocks", group: "crypto",  shortName: "MicroStrategy" },
+  COIN: { assetclass: "stocks", group: "crypto",  shortName: "Coinbase", domain: "coinbase.com" },
+  MSTR: { assetclass: "stocks", group: "crypto",  shortName: "MicroStrategy", domain: "microstrategy.com" },
 };
 
 const CRYPTO_TICKERS: Record<string, { id: string; shortName: string }> = {
@@ -73,6 +79,8 @@ export function isTrackedSymbol(symbol: string): boolean {
 export interface QuoteItem {
   symbol: string; shortName: string; price: number; change: number;
   changePercent: number; volume: number; group: string; currency: string;
+  /** Real logo image URL when one is known (see resolveLogoUrl below); null otherwise. */
+  logoUrl: string | null;
 }
 
 interface CacheEntry { quotes: QuoteItem[]; fetchedAt: number }
@@ -117,7 +125,8 @@ async function fetchNasdaqQuote(symbol: string, meta: TickerMeta): Promise<Quote
     const changePercent = parseMoney(d.percentageChange ?? "");
     const change = parseMoney(d.netChange ?? "");
     const volume = parseMoney(d.volume?.replace(/,/g, "") ?? "");
-    return { symbol, shortName: meta.shortName, price, change, changePercent, volume, group: meta.group, currency: "USD" };
+    const logoUrl = meta.domain ? `https://logo.clearbit.com/${meta.domain}` : null;
+    return { symbol, shortName: meta.shortName, price, change, changePercent, volume, group: meta.group, currency: "USD", logoUrl };
   } catch {
     return null;
   }
@@ -126,21 +135,63 @@ async function fetchNasdaqQuote(symbol: string, meta: TickerMeta): Promise<Quote
 async function fetchCryptoQuotes(): Promise<QuoteItem[]> {
   try {
     const ids = Object.values(CRYPTO_TICKERS).map((c) => c.id).join(",");
-    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
+    // /coins/markets (rather than /simple/price, used previously) costs the
+    // same one request but additionally returns each coin's official logo
+    // image URL — straight from CoinGecko's own CDN, so it's guaranteed
+    // accurate rather than a guessed asset id. Same host this app already
+    // depends on for crypto price data (see services/marketHistory.ts).
+    const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=24h`;
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return [];
-    const json = await res.json() as Record<string, { usd: number; usd_24h_change: number }>;
+    const json = (await res.json()) as Array<{
+      id: string;
+      current_price: number | null;
+      price_change_percentage_24h: number | null;
+      image?: string;
+    }>;
+    const byId = new Map(json.map((c) => [c.id, c]));
     return Object.entries(CRYPTO_TICKERS).map(([symbol, meta]) => {
-      const data = json[meta.id];
+      const data = byId.get(meta.id);
       if (!data) return null;
-      const price = data.usd ?? 0;
-      const changePercent = data.usd_24h_change ?? 0;
+      const price = data.current_price ?? 0;
+      const changePercent = data.price_change_percentage_24h ?? 0;
       const change = price * (changePercent / 100);
-      return { symbol, shortName: meta.shortName, price, change, changePercent, volume: 0, group: "crypto", currency: "USD" } satisfies QuoteItem;
+      return {
+        symbol,
+        shortName: meta.shortName,
+        price,
+        change,
+        changePercent,
+        volume: 0,
+        group: "crypto",
+        currency: "USD",
+        logoUrl: data.image ?? null,
+      } satisfies QuoteItem;
     }).filter((q): q is QuoteItem => q !== null);
   } catch {
     return [];
   }
+}
+
+/**
+ * Best-effort logo image URL for a ticker symbol — used by Signals and
+ * Community Shared Signals so a signal card can show the real company/coin
+ * icon instead of just initials. Checks the live quote cache first (covers
+ * every stock, ETF, and crypto symbol this app tracks; crypto logos there
+ * come straight from CoinGecko, see fetchCryptoQuotes above), then falls
+ * back to the static domain map directly for a tracked stock in case the
+ * cache hasn't warmed up yet. A ticker outside the tracked universe — an
+ * ETF with no single company behind it, or a symbol a member typed into a
+ * community-shared signal that isn't one Wick Betts tracks — returns null,
+ * and callers fall back to an initials badge rather than guessing at a logo.
+ */
+export function resolveLogoUrl(rawSymbol: string): string | null {
+  const symbol = rawSymbol.trim().toUpperCase();
+  const cached = cache?.quotes.find((q) => q.symbol === symbol);
+  if (cached?.logoUrl) return cached.logoUrl;
+  const meta = EQUITY_TICKERS[symbol];
+  if (meta?.domain) return `https://logo.clearbit.com/${meta.domain}`;
+  return null;
 }
 
 async function refreshAllQuotes(): Promise<QuoteItem[]> {
@@ -274,7 +325,7 @@ router.get("/quotes", requireAuth, requireActiveSubscription, async (_req, res) 
 // { sections: { indices: { SPY: { shortName, price, changePercent } }, ... } }
 router.get("/tickers", (_req, res) => {
   const quoteBySymbol = new Map((cache?.quotes ?? []).map((q) => [q.symbol, q]));
-  const sections: Record<string, Record<string, { shortName: string; price: number | null; changePercent: number | null }>> = {};
+  const sections: Record<string, Record<string, { shortName: string; price: number | null; changePercent: number | null; logoUrl: string | null }>> = {};
 
   const addEntry = (symbol: string, group: string, shortName: string) => {
     const quote = quoteBySymbol.get(symbol);
@@ -283,6 +334,7 @@ router.get("/tickers", (_req, res) => {
       shortName,
       price: quote?.price ?? null,
       changePercent: quote?.changePercent ?? null,
+      logoUrl: quote?.logoUrl ?? resolveLogoUrl(symbol),
     };
   };
 

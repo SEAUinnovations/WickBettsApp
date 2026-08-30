@@ -14,8 +14,9 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useClerk } from '@clerk/expo';
 import { useSignUp } from '@clerk/expo/legacy';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useColors } from '@/hooks/useColors';
+import { GoogleSignInButton } from '@/components/GoogleSignInButton';
 
 const WB_LOGO = require('@/assets/images/wb-logo.png') as number;
 
@@ -24,11 +25,17 @@ export default function SignUpScreen() {
   const { setActive } = useClerk();
   const router = useRouter();
   const colors = useColors();
+  // Pre-fills from a referral link (wickbetts.com/r/<code> → app/r/[code].tsx
+  // → here with ?ref=<code>). Still editable, so someone who got a code by
+  // word of mouth rather than a link can type it in directly. See
+  // docs/referral-program-plan.md.
+  const { ref: refParam } = useLocalSearchParams<{ ref?: string }>();
 
   const [step, setStep] = useState<'credentials' | 'verify'>('credentials');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [referralCode, setReferralCode] = useState(typeof refParam === 'string' ? refParam.toUpperCase() : '');
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -39,10 +46,18 @@ export default function SignUpScreen() {
     setError('');
     try {
       const desiredUsername = username.trim();
+      const desiredReferralCode = referralCode.trim().toUpperCase();
+      const unsafeMetadata: Record<string, string> = {};
+      if (desiredUsername) unsafeMetadata.username = desiredUsername;
+      // Read once by the backend on first account provisioning only (see
+      // requireAuth.ts's jitProvisionUser) — has no effect on an existing
+      // account, so there's no way to attribute a referral after the fact.
+      if (desiredReferralCode) unsafeMetadata.referralCode = desiredReferralCode;
+
       await signUp.create({
         emailAddress: email.trim(),
         password,
-        unsafeMetadata: desiredUsername ? { username: desiredUsername } : undefined,
+        unsafeMetadata: Object.keys(unsafeMetadata).length > 0 ? unsafeMetadata : undefined,
       });
       await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
       setStep('verify');
@@ -151,6 +166,20 @@ export default function SignUpScreen() {
                 />
               </View>
 
+              <View style={styles.field}>
+                <Text style={[styles.label, { color: colors.mutedForeground }]}>Referral code <Text style={styles.optionalLabel}>(optional)</Text></Text>
+                <TextInput
+                  style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: '#0f0d18' }]}
+                  value={referralCode}
+                  onChangeText={(text) => setReferralCode(text.toUpperCase())}
+                  placeholder="e.g. WB4K7T2"
+                  placeholderTextColor={colors.mutedForeground}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  testID="referral-code-input"
+                />
+              </View>
+
               {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
               <Pressable
@@ -166,6 +195,18 @@ export default function SignUpScreen() {
                   ? <ActivityIndicator size="small" color="#fff" />
                   : <Text style={styles.primaryButtonText}>Create account →</Text>}
               </Pressable>
+
+              <View style={styles.dividerRow}>
+                <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+                <Text style={[styles.dividerText, { color: colors.mutedForeground }]}>or</Text>
+                <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+              </View>
+
+              {/* Same referral code (if any) carries through here too — Google
+                  sign-in has no metadata hook before account creation, so
+                  GoogleSignInButton attributes it via a follow-up API call
+                  once the session is active. See components/GoogleSignInButton.tsx. */}
+              <GoogleSignInButton referralCode={referralCode} onError={setError} />
             </>
           ) : (
             <>
@@ -251,6 +292,9 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
   },
   codeInput: { textAlign: 'center', fontSize: 24, fontFamily: 'Inter_700Bold', letterSpacing: 8 },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 20 },
+  dividerLine: { flex: 1, height: 1 },
+  dividerText: { fontSize: 12, fontFamily: 'Inter_500Medium' },
   errorText: { color: '#ef4444', fontSize: 13, fontFamily: 'Inter_400Regular', marginBottom: 16 },
   primaryButton: {
     borderRadius: 14,

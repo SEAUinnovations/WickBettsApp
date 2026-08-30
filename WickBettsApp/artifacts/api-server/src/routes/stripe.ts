@@ -8,6 +8,7 @@ import { requireAuth } from "../middlewares/requireAuth.js";
 import { pickPrimarySubscription } from "../lib/subscriptionUtils.js";
 import { getStripe, resolvePriceId, PRICE_SIGNALS, PRICE_MENTORSHIP, PRICE_MEMBERSHIP } from "../lib/stripeClient.js";
 import { syncSubscriptionsFromStripe, resolvePlanForSubscription, type ProductPlan } from "../lib/subscriptionSync.js";
+import { maybeRecordReferralConversion, clawBackReferralIfAny, ensureAmbassadorCoupon, applyAmbassadorRewardIfEligible } from "../lib/referrals.js";
 
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -81,10 +82,24 @@ router.post("/create-checkout", requireAuth, async (req: Request, res: Response)
         .where(eq(usersTable.id, user.id));
     }
 
+    // Ambassador tier (docs/referral-program-plan.md): a referrer who has
+    // crossed the referral cap gets a lifetime 50% off Membership. If they
+    // earned that status before ever subscribing to Membership, this is
+    // where it actually gets applied — applyAmbassadorRewardIfEligible
+    // (called from the webhook/scheduler) can only attach the discount to
+    // an *existing* Membership subscription, so a brand-new checkout needs
+    // its own attach point here.
+    let discounts: Stripe.Checkout.SessionCreateParams.Discount[] | undefined;
+    if (plan === "membership" && user.referralTier === "ambassador") {
+      const coupon = await ensureAmbassadorCoupon(stripe);
+      discounts = [{ coupon: coupon.id }];
+    }
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
       line_items: [{ price: priceId, quantity: 1 }],
+      ...(discounts ? { discounts } : {}),
       subscription_data: {
         metadata: {
           userId: user.id,
@@ -384,6 +399,35 @@ router.post(
               cancelAtPeriodEnd: sub.cancel_at_period_end ? "true" : "false",
             } as any);
           }
+
+          // Referral program (docs/referral-program-plan.md): a brand-new
+          // subscription that's already entitling means Stripe Checkout
+          // already collected payment, so this is the conversion moment —
+          // maybeRecordReferralConversion itself checks that this is the
+          // user's first-ever subscription and that they were actually
+          // referred by someone, so it's always safe to call here.
+          if (event.type === "customer.subscription.created" && (status === "active" || status === "trialing")) {
+            await maybeRecordReferralConversion(userId, sub.id);
+
+            // Defense-in-depth: if this user already has Ambassador status
+            // (e.g. granted from an earlier referral batch) and this new
+            // subscription is Membership, make sure the lifetime discount
+            // is actually attached — the usual attach points are
+            // create-checkout (for a checkout they start after becoming an
+            // Ambassador) and the reward scheduler (the moment they cross
+            // the cap), but a subscription created outside either path
+            // (e.g. directly in the Stripe dashboard) would otherwise miss it.
+            if (plan === "membership") {
+              const [maybeAmbassador] = await db
+                .select({ referralTier: usersTable.referralTier })
+                .from(usersTable)
+                .where(eq(usersTable.id, userId))
+                .limit(1);
+              if (maybeAmbassador?.referralTier === "ambassador") {
+                await applyAmbassadorRewardIfEligible(userId, stripe);
+              }
+            }
+          }
           break;
         }
         case "customer.subscription.deleted": {
@@ -414,6 +458,33 @@ router.post(
               } as object)
               .where(eq(usersTable.id, userId));
             logger.info({ userId, sessionId: session.id }, "Trade review credit purchased");
+          }
+          break;
+        }
+        // Referral clawback (docs/referral-program-plan.md): if the charge
+        // behind a referred subscription's first payment is later refunded
+        // or disputed, reverse any $5 credit already issued for it. Looked
+        // up by Stripe customer ID rather than by charge/invoice, since we
+        // already key referrals off `referredUserId`, not off a specific
+        // charge — one lookup covers both event types identically.
+        //
+        // Note: these two event types must be enabled on the webhook
+        // endpoint in the Stripe dashboard — `charge.refunded` and
+        // `charge.dispute.created` are not part of this app's previous
+        // event selection.
+        case "charge.refunded":
+        case "charge.dispute.created": {
+          const charge = event.data.object as Stripe.Charge;
+          const customerId = typeof charge.customer === "string" ? charge.customer : charge.customer?.id;
+          if (customerId) {
+            const [owner] = await db
+              .select({ id: usersTable.id })
+              .from(usersTable)
+              .where(eq(usersTable.stripeCustomerId, customerId))
+              .limit(1);
+            if (owner) {
+              await clawBackReferralIfAny(owner.id, stripe);
+            }
           }
           break;
         }

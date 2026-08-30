@@ -4,6 +4,7 @@ import { db, usersTable } from "../lib/db.js";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger.js";
+import { generateUniqueReferralCode } from "../lib/referralCode.js";
 
 const SUPER_ADMIN_EMAIL = "bettstahlik@gmail.com";
 
@@ -31,10 +32,22 @@ function getDevAuthMode(): string {
   return (process.env.DEV_AUTH_MODE ?? process.env.AUTH_BYPASS_MODE ?? "").trim().toLowerCase();
 }
 
+// SECURITY: this must never trust the Host or Origin headers — both are
+// entirely attacker-controlled on any request reaching this process (a raw
+// HTTP client can send `Host: localhost` or `Origin: http://localhost` to a
+// public server just as easily as a real local request would). The previous
+// implementation checked exactly those headers, which meant that if
+// DEV_AUTH_MODE/AUTH_BYPASS_MODE were ever set on a reachable deployment
+// with NODE_ENV != "production" (e.g. a staging environment spun up for
+// testing), anyone on the internet could authenticate as the configured dev
+// user — including as an admin, if DEV_AUTH_ROLE=admin or DEV_AUTH_EMAIL
+// matched a bootstrap admin — by simply spoofing one header. `req.ip` is not
+// spoofable the same way: with `trust proxy: 1` set in app.ts, it reflects
+// the address Railway's edge actually saw the connection come from, which an
+// external client cannot forge by adding request headers.
 function isLocalRequest(req: Request): boolean {
-  const host = (req.headers.host ?? "").toLowerCase();
-  const origin = typeof req.headers.origin === "string" ? req.headers.origin.toLowerCase() : "";
-  return host.includes("localhost") || host.startsWith("127.0.0.1") || origin.includes("localhost") || origin.includes("127.0.0.1");
+  const ip = req.ip ?? req.socket.remoteAddress ?? "";
+  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
 }
 
 function isDevAuthEnabled(req: Request): boolean {
@@ -50,7 +63,7 @@ async function provisionDevUser(req: Request): Promise<import("@workspace/db").U
   const username = process.env.DEV_AUTH_USERNAME?.trim() || "";
   const role = (process.env.DEV_AUTH_ROLE?.trim() === "admin" || isBootstrapAdmin(email)) ? "admin" : "member";
 
-  const user = await jitProvisionUser({ email, firstName, lastName, username });
+  const user = await jitProvisionUser({ email, firstName, lastName, username, referralCode: "" });
   if (!user) return null;
 
   if (role === "admin" && user.role !== "admin") {
@@ -87,6 +100,7 @@ async function resolveClerkIdentity(userId: string): Promise<{
   firstName: string;
   lastName: string;
   username: string;
+  referralCode: string;
 } | null> {
   try {
     const clerkUser = await clerkClient.users.getUser(userId);
@@ -94,12 +108,18 @@ async function resolveClerkIdentity(userId: string): Promise<{
       (e) => e.id === clerkUser.primaryEmailAddressId,
     );
     if (!emailObj?.emailAddress) return null;
-    const unsafeMetadata = clerkUser.unsafeMetadata as { username?: unknown } | undefined;
+    const unsafeMetadata = clerkUser.unsafeMetadata as { username?: unknown; referralCode?: unknown } | undefined;
     return {
       email: emailObj.emailAddress,
       firstName: clerkUser.firstName ?? "",
       lastName: clerkUser.lastName ?? "",
       username: typeof unsafeMetadata?.username === "string" ? unsafeMetadata.username.trim() : "",
+      // Set by the mobile sign-up screen (app/sign-up.tsx) when the account
+      // was created from a referral link/code. Only ever read on the very
+      // first provisioning of a user row — see the `if (!user)` branch
+      // below — so there's no way to retroactively attribute an existing
+      // account by setting this metadata after the fact.
+      referralCode: typeof unsafeMetadata?.referralCode === "string" ? unsafeMetadata.referralCode.trim() : "",
     };
   } catch (err) {
     logger.error(err, "resolveClerkIdentity: Clerk API call failed");
@@ -121,6 +141,8 @@ export async function jitProvisionUser(identity: {
   firstName: string;
   lastName: string;
   username: string;
+  /** Referral code the account was created with, if any — see resolveClerkIdentity. */
+  referralCode?: string;
 }): Promise<import("@workspace/db").User | null> {
   const { email, firstName, lastName, username } = identity;
 
@@ -140,10 +162,44 @@ export async function jitProvisionUser(identity: {
     const role =
       isBootstrapAdmin(email) ? ("admin" as const) : ("member" as const);
 
+    // Referral attribution (docs/referral-program-plan.md) — best-effort:
+    // a failure here should never block account creation, so both steps
+    // are individually try/caught and simply omitted from the insert on
+    // failure. A missing own referral code is backfilled lazily by
+    // GET /api/referrals/me the first time this member opens that screen.
+    let referredByUserId: string | undefined;
+    const referralCodeInput = identity.referralCode?.trim();
+    if (referralCodeInput) {
+      try {
+        const [referrer] = await db
+          .select({ id: usersTable.id })
+          .from(usersTable)
+          .where(eq(usersTable.referralCode, referralCodeInput.toUpperCase()))
+          .limit(1);
+        if (referrer) referredByUserId = referrer.id;
+      } catch (err) {
+        logger.warn(err, "jitProvisionUser: referral code lookup failed, continuing without attribution");
+      }
+    }
+
+    let ownReferralCode: string | undefined;
+    try {
+      ownReferralCode = await generateUniqueReferralCode();
+    } catch (err) {
+      logger.warn(err, "jitProvisionUser: failed to generate a referral code up front, will backfill lazily");
+    }
+
     try {
       await db
         .insert(usersTable)
-        .values({ id: randomUUID(), email, name, role })
+        .values({
+          id: randomUUID(),
+          email,
+          name,
+          role,
+          ...(ownReferralCode ? { referralCode: ownReferralCode } : {}),
+          ...(referredByUserId ? { referredByUserId } : {}),
+        })
         .onConflictDoNothing();
     } catch {
       // Ignore concurrent first-request race; re-query below resolves it
@@ -162,7 +218,7 @@ export async function jitProvisionUser(identity: {
     }
 
     if (!user) return null;
-    logger.info({ userId: user.id, email }, "New user JIT-provisioned via Clerk");
+    logger.info({ userId: user.id, email, referredByUserId }, "New user JIT-provisioned via Clerk");
   }
 
   // Always enforce bootstrap-admin role regardless of what the DB row says

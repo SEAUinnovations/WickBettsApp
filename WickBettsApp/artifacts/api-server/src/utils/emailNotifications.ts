@@ -18,6 +18,11 @@ const RESEND_BATCH_URL = "https://api.resend.com/emails/batch";
 // this change.
 const FROM_ADDRESS = process.env.EMAIL_FROM || "Wick Betts Alerts <alerts@wickbetts.app>";
 const APP_ORIGIN = process.env.APP_ORIGIN || "https://wickbetts.app";
+// FROM_ADDRESS's mailbox (alerts@...) isn't a real inbox anyone checks — without
+// this, a member hitting "reply" on an alert would bounce or vanish. Route
+// replies to the real support mailbox instead. Independent of which domain
+// FROM_ADDRESS sends from.
+const REPLY_TO_ADDRESS = process.env.EMAIL_REPLY_TO || "support@seaubank.com";
 
 function isConfigured(): boolean {
   return !!process.env.RESEND_API_KEY;
@@ -46,6 +51,7 @@ async function sendBatch(emails: EmailPayload[]): Promise<void> {
     const chunk = emails.slice(i, i + CHUNK_SIZE).map((e) => ({
       from: FROM_ADDRESS,
       to: [e.to],
+      reply_to: REPLY_TO_ADDRESS,
       subject: e.subject,
       html: e.html,
       text: e.text,
@@ -541,6 +547,7 @@ export async function sendEmail(payload: EmailPayload): Promise<void> {
       body: JSON.stringify({
         from: FROM_ADDRESS,
         to: [payload.to],
+        reply_to: REPLY_TO_ADDRESS,
         subject: payload.subject,
         html: payload.html,
         text: payload.text,

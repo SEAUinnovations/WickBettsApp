@@ -317,6 +317,23 @@ export const TRIVIA_QUESTIONS: TriviaQuestion[] = [
   { id: 'q22', question: 'An in-the-money (ITM) call option, compared to an out-of-the-money (OTM) one, typically has…', options: ['A higher Delta and a higher premium', 'A lower Delta and a higher premium', 'A higher Delta and a lower premium', 'No Delta at all'], correct: 'A higher Delta and a higher premium' },
   { id: 'q23', question: 'Theta measures…', options: ["How much value an option loses per day from time decay", "The option's sensitivity to implied volatility", 'The strike price relative to the underlying', "The option's trading volume"], correct: 'How much value an option loses per day from time decay' },
   { id: 'q24', question: 'Which strike is generally the cheapest, highest-leverage way to speculate on a big move — with the highest chance of expiring worthless?', options: ['Out-of-the-money (OTM)', 'In-the-money (ITM)', 'Deep in-the-money', 'At-the-money with 2 years to expiration'], correct: 'Out-of-the-money (OTM)' },
+  // ── Strategies curriculum drill questions ──────────────────────────────────
+  { id: 'q25', question: 'A Fair Value Gap (FVG) forms across…', options: ['Three candles, where the 1st and 3rd wicks do not overlap', 'A single candle with no wicks at all', 'Two candles of the same color', 'Ten candles measured over a full week'], correct: 'Three candles, where the 1st and 3rd wicks do not overlap' },
+  { id: 'q26', question: 'A bullish FVG sitting below current price tends to act as…', options: ['Support if price returns to it', 'Resistance no matter what', 'A guaranteed reversal signal', 'A dividend record date'], correct: 'Support if price returns to it' },
+  { id: 'q27', question: "The core idea behind trading a Fair Value Gap is…", options: ["Price is statistically drawn back to 'rebalance' an imbalanced zone", 'Gaps always fill within one candle', 'Gaps only matter on the weekly chart', 'A gap means the company is about to report earnings'], correct: "Price is statistically drawn back to 'rebalance' an imbalanced zone" },
+  { id: 'q28', question: 'Scalping is best described as…', options: ['Many small, fast trades held for seconds to a few minutes', 'A single trade held for several months', 'Buying and never selling', 'A strategy only usable on illiquid stocks'], correct: 'Many small, fast trades held for seconds to a few minutes' },
+  { id: 'q29', question: 'At high scalping trade frequency, one of the biggest hidden threats to profitability is…', options: ['The spread and commissions on every round-trip trade', 'Too little screen time', 'Dividend withholding tax', 'Overnight financing rates'], correct: 'The spread and commissions on every round-trip trade' },
+  { id: 'q30', question: 'An Opening Range Breakout (ORB) strategy defines its key level from…', options: ["The high/low of a fixed window right after the open (e.g. the first 15 minutes)", "The prior year's high and low", 'The closing price from exactly one week ago', "The average of every candle in the entire session"], correct: "The high/low of a fixed window right after the open (e.g. the first 15 minutes)" },
+  { id: 'q31', question: 'In an ORB strategy, a "retest entry" means…', options: ['Waiting for price to pull back to the broken range level before entering', 'Entering the instant the range breaks, no matter what', 'Only trading the closing 15 minutes of the day', 'Re-drawing the opening range every hour'], correct: 'Waiting for price to pull back to the broken range level before entering' },
+  { id: 'q32', question: 'Why are false breakouts especially common right after the open?', options: ['Direction and volume are still being established in that volatile early window', 'Markets are technically closed for the first hour', 'Options expire every morning at 9:30', 'Volume is always at its lowest right after the open'], correct: 'Direction and volume are still being established in that volatile early window' },
+  { id: 'q33', question: 'Real support and resistance are best thought of as…', options: ['A zone a few ticks wide, not one exact price', 'Always exactly one penny wide', 'Only valid on the monthly chart', 'Irrelevant once a stock IPOs'], correct: 'A zone a few ticks wide, not one exact price' },
+  { id: 'q34', question: '"Role reversal" in support/resistance trading refers to…', options: ['Old resistance frequently becoming new support once broken, and vice versa', 'A stock switching stock exchanges', 'A company changing its ticker symbol', 'Support only working on down days'], correct: 'Old resistance frequently becoming new support once broken, and vice versa' },
+  { id: 'q35', question: 'According to this module, a support/resistance level generally gets weaker when…', options: ['It has been tested and held many times, using up the orders resting there', 'It has never once been touched', 'It lines up with a round number', 'It sits near a 50-day moving average'], correct: 'It has been tested and held many times, using up the orders resting there' },
+  { id: 'q36', question: 'VWAP stands for…', options: ['Volume Weighted Average Price', 'Very Wide Average Position', 'Value-Weighted Asset Portfolio', 'Volatility-Weighted Averaged Premium'], correct: 'Volume Weighted Average Price' },
+  { id: 'q37', question: 'Unlike a simple moving average, VWAP is pulled toward…', options: ['Price levels where heavier volume traded', 'Whichever price came first each day', 'The opening price only', 'The prior day\'s closing price'], correct: 'Price levels where heavier volume traded' },
+  { id: 'q38', question: 'On a strong, high-volume trend day, this module recommends…', options: ['Using VWAP as support/resistance in the direction of the trend rather than fading it', 'Always shorting any move far above VWAP', 'Ignoring VWAP entirely', 'Buying only when price closes exactly on VWAP'], correct: 'Using VWAP as support/resistance in the direction of the trend rather than fading it' },
+  { id: 'q39', question: 'VWAP resets…', options: ['Every trading session', 'Once a year', 'Only when a stock splits', 'Every time volume doubles'], correct: 'Every trading session' },
+  { id: 'q40', question: 'A trader who shorts every stretch above VWAP regardless of the day\'s trend is most exposed to…', options: ['Getting run over by a genuine, high-volume trend day', 'Paying too little in commissions', 'Missing dividend payments', 'Running out of overnight margin'], correct: 'Getting run over by a genuine, high-volume trend day' },
 ];
 
 // ── Lesson body content model ────────────────────────────────────────────────
@@ -452,6 +469,92 @@ const bodyLiquidityAndStructure: LessonBlock[] = [
   { type: 'h3', text: 'Why "obvious" levels get run first' },
   { type: 'p', text: 'The support and resistance everyone can see are exactly where the stop orders pile up. A quick move through that level to grab liquidity — a stop hunt — before reversing is one of the most common reasons a level almost holds and then does not.' },
   { type: 'scenario', title: 'A textbook stop hunt', setup: 'Price grinds up to an obvious resistance level that every chart-watcher can see, then breaks slightly above it — traders short below it get stopped out, and breakout buyers pile in.', whatHappened: "Within minutes, price reverses hard and closes back below the old resistance. The 'breakout' was really a liquidity grab, sweeping stops on both sides before the real move — down — began.", takeaway: 'The most obvious level on the chart is exactly where stops cluster. A quick wick through a level with no real follow-through is often liquidity being taken, not a genuine breakout.' },
+];
+
+const bodyFairValueGaps: LessonBlock[] = [
+  { type: 'p', text: 'A Fair Value Gap (FVG) is a three-candle imbalance: the wick of the first candle and the wick of the third candle do not overlap, leaving a visible gap in price that the second, big-momentum candle blew straight through without any real two-way trading happening in between.' },
+  { type: 'definitions', items: [
+    { title: 'Bullish FVG', text: 'Formed during a sharp up-move — the gap sits below current price and tends to act as support if price returns to it.' },
+    { title: 'Bearish FVG', text: 'Formed during a sharp down-move — the gap sits above current price and tends to act as resistance if price returns to it.' },
+    { title: 'Imbalance', text: 'The core idea behind an FVG: a price range where buyers or sellers were so aggressive that the opposite side never got a fair chance to transact. Price is statistically drawn back to "rebalance" that zone.' },
+    { title: 'Filling the gap', text: "When price trades back into the FVG range, it is said to be 'filled' — this does not require the entire gap to be retraced, just enough of it to react from." },
+  ] },
+  { type: 'h3', text: 'How the trade actually works' },
+  { type: 'list', items: [
+    'Identify the three-candle sequence and mark the gap between candle 1\'s wick and candle 3\'s wick',
+    'Wait for price to return into that zone rather than chasing it immediately after it forms',
+    'Look for a rejection — a wick, an engulfing candle, a shift in the smaller timeframe — inside the gap before entering, not just tagging the level',
+    'Place the stop just beyond the far edge of the gap, since a full close through it invalidates the idea',
+  ] },
+  { type: 'callout', label: 'Not every gap fills, and not every fill holds', text: "An FVG is a place to pay closer attention, not an automatic trade signal. In a strong trend, price can blow through an FVG without even slowing down — treat it as one input that needs its own confirmation, the same way a support/resistance level does." },
+  { type: 'scenario', title: 'Chasing the gap instead of waiting for it', setup: 'A stock rips higher, leaving a clean bullish FVG well below current price. A trader immediately buys at the current, already-extended price, reasoning the FVG proves the trend is strong.', whatHappened: "Price chops sideways for two days going nowhere, then finally pulls all the way back into the FVG zone and reacts exactly as the pattern would predict — but the trader who bought at the top is sitting on an unrealized loss the entire time, watching the setup they correctly identified play out below their own entry.", takeaway: "An FVG is a level to trade FROM once price returns to it, not a reason to buy wherever price currently is. Identifying the gap is only half the setup — patience for the retracement is the other half." },
+];
+
+const bodyScalpingStrategies: LessonBlock[] = [
+  { type: 'p', text: 'Scalping is trading for small, fast profits — often in and out of a position in seconds to a few minutes — relying on a high number of trades and a tight process rather than any single big winner.' },
+  { type: 'definitions', items: [
+    { title: 'Holding period', text: "Seconds to low single-digit minutes, almost always closed before the session ends. There is no overnight risk in a pure scalp." },
+    { title: 'Tight risk/reward', text: "Scalps commonly target a small, fixed number of ticks or cents with an equally tight stop — the edge comes from win rate and trade frequency, not from big reward-to-risk ratios." },
+    { title: 'Tape reading / order flow', text: "Watching the level 2 book and time & sales print-by-print for real-time buying/selling pressure, since scalping timeframes are often too fast for standard indicators to be useful." },
+    { title: 'Spread and commission drag', text: "The bid-ask spread and per-trade fees are a fixed cost paid on every single scalp — at high trade frequency, this drag can quietly erase an otherwise-profitable strategy." },
+  ] },
+  { type: 'h3', text: 'What scalping actually requires' },
+  { type: 'list', items: [
+    'A highly liquid instrument with a tight spread — illiquid names make the entry/exit cost alone unworkable at this timeframe',
+    'Total, undivided focus for the full session — scalping is not a strategy you half-watch between other tasks',
+    'Fast, mechanical execution and exits, since hesitation on a strategy built around small moves erases the edge almost immediately',
+    'A very clear, pre-defined max-loss-per-day rule, since a high trade count means a bad session compounds quickly',
+  ] },
+  { type: 'note', text: "Scalping is one of the least forgiving styles for a beginner — it demands the fastest reactions and the least room for the exact hesitation and second-guessing new traders are most prone to. Many traders find it worth mastering a slower style (Swing, ORB, S/R) first." },
+  { type: 'scenario', title: 'Winning the trades, losing the day', setup: 'A trader scalps 40 small trades in a session with a 65% win rate — a genuinely strong hit rate by most standards.', whatHappened: "Spread and commission costs on 40 round-trip trades quietly add up to more than the net edge the strategy produced. The trader finishes the day roughly flat despite 'winning' most of the individual trades.", takeaway: 'At scalping frequency, transaction costs are not a rounding error — they are a real, recurring opponent that has to be beaten in addition to the market itself.' },
+];
+
+const bodyOpeningRangeBreakout: LessonBlock[] = [
+  { type: 'p', text: 'Opening Range Breakout (ORB) defines a price range from the first few minutes of the session — commonly 5, 15, or 30 minutes — then trades a break above or below that range as the signal.' },
+  { type: 'definitions', items: [
+    { title: 'Opening range', text: "The high and low printed during a fixed window right after the open (e.g. 9:30–9:45 AM Eastern for a 15-minute ORB) — this range becomes the reference level for the rest of the setup." },
+    { title: 'Breakout entry', text: "A trade taken the moment price closes above the range high (long) or below the range low (short), on the idea that the opening range reflects the first real tug-of-war of the day, and a decisive break shows who won it." },
+    { title: 'Retest entry', text: "A more patient variant: wait for price to break the range, then pull back to retest the broken level as new support/resistance before entering — trading the confirmation instead of the first breakout print." },
+    { title: 'False breakout', text: "Price breaks the range, triggers ORB entries, then reverses back inside it — extremely common in the first hour when volume and direction are still being established." },
+  ] },
+  { type: 'h3', text: 'Why the opening range matters' },
+  { type: 'p', text: 'The open concentrates overnight news, pre-market positioning, and the first scheduled economic data of the day into one short, high-volume window. A range that holds through that chaos and then gets decisively broken carries more information than a random breakout later in a quiet afternoon.' },
+  { type: 'callout', label: 'Breakout vs. retest is a real tradeoff', text: "Trading the immediate breakout gets a better entry price but eats more false signals. Waiting for a retest cuts down on fakeouts but means missing some breakouts that never look back — pick one approach deliberately rather than switching mid-session based on how the last trade went." },
+  { type: 'scenario', title: 'The 9:35 fakeout', setup: 'A stock breaks decisively above its 15-minute opening range at 9:47 AM on rising volume — a clean ORB long signal by the book.', whatHappened: "Price reverses within four minutes and closes back inside the range, stopping out the breakout entry for a small loss — a classic false breakout during the still-volatile first half hour of the session.", takeaway: "ORB works because the opening range is meaningful, not because every breakout of it succeeds. A stop just inside the range, sized for the instrument's normal opening volatility, is what makes the strategy survivable through the false breakouts that are a normal part of it." },
+];
+
+const bodySupportResistanceTrading: LessonBlock[] = [
+  { type: 'p', text: 'Every trader can point at an obvious support or resistance line — trading it well is a different skill from just seeing it. This module goes past the "Reading the Chart" basics into how support/resistance is actually used as a repeatable strategy.' },
+  { type: 'definitions', items: [
+    { title: 'Zone, not a line', text: "Real support and resistance are rarely a single exact price — they are a zone a few ticks or points wide, since different participants place orders at slightly different levels around the same idea." },
+    { title: 'Wicks vs. closes', text: "Deciding whether a level 'held' based on candle wicks (more forgiving, catches every touch) versus candle closes (stricter, filters out quick wick-throughs) is a real methodology choice that changes how many valid touches a level shows." },
+    { title: 'Role reversal', text: "Old resistance frequently becomes new support once broken, and vice versa — the same order-flow logic that made the level matter in the first place doesn't disappear just because price broke through it once." },
+    { title: 'Confluence', text: "A support/resistance level lining up with a round number, a moving average, or a prior swing point is meaningfully stronger evidence than any one of those in isolation." },
+  ] },
+  { type: 'h3', text: 'A repeatable S/R trade' },
+  { type: 'list', items: [
+    'Mark zones from clear prior swing highs/lows, not every minor wiggle on the chart',
+    'Wait for price to actually reach the zone rather than anticipating it early',
+    'Look for a reaction — a rejection candle, a volume spike, a smaller-timeframe reversal — inside the zone before entering',
+    'Place the stop just past the far side of the zone, so a genuine break invalidates the trade rather than getting shaken out by normal noise inside it',
+  ] },
+  { type: 'callout', label: 'The more times a level is tested, the weaker it gets', text: "This runs against most beginners' intuition. A level that has been tested and held five times has also been probed five times — eventually the orders resting there get used up, and the level breaks. A fresh, untested level is often more reliable than a heavily-touched one." },
+  { type: 'scenario', title: 'Role reversal in action', setup: 'A stock struggles for weeks under a clear resistance level at $50, getting rejected on four separate touches.', whatHappened: 'Price finally breaks and closes decisively above $50 on strong volume. Two days later it pulls back down to retest that same $50 level from above — and it holds as support on the first touch, exactly as the role-reversal idea predicts.', takeaway: 'A broken level does not stop mattering — it frequently just switches sides. The retest of old resistance as new support is one of the highest-quality, most repeatable entries in this style of trading.' },
+];
+
+const bodyVwapReversion: LessonBlock[] = [
+  { type: 'p', text: 'VWAP — Volume Weighted Average Price — is the average price a security has traded at today, weighted by volume at each price level. It resets every session and is one of the most closely watched intraday levels on the desk, especially among institutional traders.' },
+  { type: 'definitions', items: [
+    { title: 'VWAP', text: "A running, volume-weighted average of the day's trading, recalculated continuously through the session. Unlike a simple moving average, a price level with heavier volume behind it pulls VWAP toward it more than a quiet price level does." },
+    { title: 'Why institutions watch it', text: "Many large funds are measured against VWAP as an execution benchmark — filling an order better than VWAP is considered a good fill. That built-in institutional attention is part of why price so often reacts around it." },
+    { title: 'Mean-reversion approach', text: "Trading the idea that price has stretched too far from VWAP and is likely to snap back toward it — buying when price is unusually far below VWAP, selling when unusually far above." },
+    { title: 'Trend-following approach', text: "The opposite read of the same level: treating a strong, sustained move away from VWAP (especially with rising volume) as a real trend, using VWAP itself as a trailing support/resistance reference rather than a magnet to revert to." },
+    { title: 'Standard deviation bands', text: "Bands plotted a fixed number of standard deviations above and below VWAP, used to gauge how statistically stretched the current move away from VWAP actually is." },
+  ] },
+  { type: 'h3', text: 'Reversion and trend-following are opposites — know which one you are trading' },
+  { type: 'p', text: "The single most common mistake with VWAP is not picking one of these two approaches and sticking with it for the trade. Fading a move back toward VWAP while a genuine, high-volume trend is underway is fighting real conviction in the market — and buying a 'reversion' bounce off VWAP during a strong trend day is really just trading with the trend by accident." },
+  { type: 'callout', label: 'Read the day\'s character first', text: "A choppy, rangebound session rewards fading stretched moves back to VWAP. A strong trend day rewards using VWAP as support/resistance in the direction of the trend instead. Decide which kind of day it looks like before picking the strategy, not after the trade is already open." },
+  { type: 'scenario', title: 'Fading a trend day', setup: 'A stock gaps up on major news and grinds steadily higher through the morning, trading well above VWAP with strong, consistent volume the entire time.', whatHappened: "A trader shorts the stretch above VWAP expecting reversion, gets stopped out on the first attempt, and shorts again at an even higher price with the same reasoning — getting stopped out a second time as the trend continues.", takeaway: 'A large, volume-backed move away from VWAP on real news is often the market re-rating the stock, not a stretched rubber band waiting to snap back. VWAP reversion works best on quieter, rangebound days — not against a trending one driven by a real catalyst.' },
 ];
 
 const bodyOptionsBasics: LessonBlock[] = [
@@ -667,6 +770,22 @@ export const LEARNING_MODULES: LearningModule[] = [
     { title: 'Liquidity Zones SIMPLIFIED', url: 'https://www.youtube.com/watch?v=0BOMeGq-J0I', duration: '8:38' },
     { title: 'High and Low Liquidity Zones in Trading Explained (Supply & Demand Basics)', url: 'https://www.youtube.com/watch?v=kAmPmTPJpg8', duration: '6:46' },
   ] },
+  // ── Strategies curriculum ──────────────────────────────────────────────────
+  // Five popular, named strategies — deliberately untagged (no specialization)
+  // since each applies across stocks, futures, and crypto alike, unlike the
+  // options- and funded-specific tracks below. Placed at Advanced, same tier
+  // as Liquidity & Structure, since all five assume the reader already has
+  // chart-reading and candlestick fundamentals from the Intermediate track.
+  // No `videos` entries here — every other module's video links were
+  // verified (existence + duration) before being added, and that
+  // verification wasn't possible for these five in this pass. Omitting is
+  // safer than shipping an unverified or dead YouTube link; add videos in a
+  // follow-up once they've been checked the same way the rest were.
+  { id: 'fair-value-gaps', level: 'Advanced', kind: 'lesson', title: 'Fair Value Gaps (FVG)', tagline: 'The three-candle imbalance price is statistically drawn back to fill.', minutes: 7, xp: 60, icon: 'scan-outline', body: bodyFairValueGaps },
+  { id: 'scalping-strategies', level: 'Advanced', kind: 'lesson', title: 'Scalping Strategies', tagline: 'Small, fast, frequent — and why transaction costs are a real opponent.', minutes: 7, xp: 60, icon: 'flash-outline', body: bodyScalpingStrategies },
+  { id: 'opening-range-breakout', level: 'Advanced', kind: 'lesson', title: 'Opening Range Breakout (ORB)', tagline: 'Trading the break of the first few minutes — and the false breakouts that come with it.', minutes: 7, xp: 60, icon: 'sunny-outline', body: bodyOpeningRangeBreakout },
+  { id: 'support-resistance-trading', level: 'Advanced', kind: 'lesson', title: 'Trading Support & Resistance', tagline: 'Zones not lines, role reversal, and why heavily-tested levels get weaker.', minutes: 7, xp: 60, icon: 'swap-horizontal-outline', body: bodySupportResistanceTrading },
+  { id: 'vwap-reversion', level: 'Advanced', kind: 'lesson', title: 'VWAP Reversion', tagline: "The institutional benchmark price reverts to — or trends away from, on the right kind of day.", minutes: 7, xp: 60, icon: 'pulse-outline', body: bodyVwapReversion },
   { id: 'options-basics', level: 'Advanced', kind: 'lesson', title: 'Options Basics: Calls, Puts & Strikes', tagline: 'Contracts, strikes, and why the strike matters as much as the direction.', minutes: 8, xp: 65, icon: 'options-outline', specialization: 'options', body: bodyOptionsBasics, videos: [
     { title: 'Options Trading for Beginners in 10 Minutes (2026)', url: 'https://www.youtube.com/watch?v=jVsnFHqAd0Y', duration: '9:47' },
   ] },
@@ -689,6 +808,9 @@ export const LEARNING_MODULES: LearningModule[] = [
   { id: 'zero-dte-options', level: 'Expert', kind: 'lesson', title: '0DTE Options: Same-Day Expiration', tagline: 'SPX and SPY 0DTE — why the returns and the losses can both be massive, and when to look.', minutes: 9, xp: 75, icon: 'alert-circle-outline', specialization: 'options', body: bodyZeroDte },
   { id: 'options-strike-lab', level: 'Expert', kind: 'game', title: 'Options Strike & Greeks Lab', tagline: 'Match the strike to the goal — Delta, Theta, and premium all in play.', minutes: 7, xp: 0, icon: 'infinite-outline', specialization: 'options' },
   { id: 'funded-combine-prep', level: 'Expert', kind: 'game', title: 'Funded Combine Prep', tagline: 'Optional: grow a paper account $3,000 without breaching a $2,000 trailing drawdown.', minutes: 10, xp: 0, icon: 'briefcase-outline', specialization: 'funded' },
+  { id: 'pattern-recognition', level: 'Intermediate', kind: 'game', title: 'Pattern Recognition Trainer', tagline: 'Head & Shoulders, Double Top, Double Bottom — find the point that actually confirms each one.', minutes: 6, xp: 0, icon: 'trending-down-outline' },
+  { id: 'portfolio-allocation-builder', level: 'Advanced', kind: 'game', title: 'Portfolio Allocation Builder', tagline: 'Split $10,000 across cash, options, and long-term holds — then see how each scenario plays out.', minutes: 8, xp: 0, icon: 'pie-chart-outline' },
+  { id: 'risk-sizing-duel', level: 'Advanced', kind: 'game', title: 'Risk-Sizing Duel', tagline: 'Same positive edge, different risk per trade — find out why sizing decides who survives.', minutes: 7, xp: 0, icon: 'skull-outline' },
 ];
 
 // ── XP / leveling ─────────────────────────────────────────────────────────────

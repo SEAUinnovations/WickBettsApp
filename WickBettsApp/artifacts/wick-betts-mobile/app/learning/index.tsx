@@ -173,6 +173,12 @@ export default function LearningScreen() {
       router.push('/learning/options-strike-lab');
     } else if (id === 'funded-combine-prep') {
       router.push('/learning/funded-combine-prep');
+    } else if (id === 'pattern-recognition') {
+      router.push('/learning/pattern-recognition');
+    } else if (id === 'portfolio-allocation-builder') {
+      router.push('/learning/portfolio-allocation-builder');
+    } else if (id === 'risk-sizing-duel') {
+      router.push('/learning/risk-sizing-duel');
     } else {
       router.push({ pathname: '/learning/lesson', params: { id } });
     }
@@ -316,7 +322,13 @@ export default function LearningScreen() {
                   ? `Best score: ${progress.optionsGame.bestScore}/8`
                   : mod.id === 'funded-combine-prep'
                     ? `Best peak: $${progress.fundedGame.bestEquity.toLocaleString()} · Ready ${progress.fundedGame.timesReady}×`
-                    : null;
+                    : mod.id === 'pattern-recognition'
+                      ? `Best score: ${progress.patternGame.bestScore}/6 · Best streak ${progress.patternGame.bestStreak}`
+                      : mod.id === 'portfolio-allocation-builder'
+                        ? `Best allocation score: ${progress.portfolioBuilderGame.bestScore}/100`
+                        : mod.id === 'risk-sizing-duel'
+                          ? `Best sequence: ${progress.riskDuelGame.bestFinalEquityMultiple.toFixed(2)}x starting capital`
+                          : null;
           return (
             <Card key={mod.id} style={styles.moduleCard} onPress={() => openModule(mod.id)}>
               <View style={styles.moduleRow}>

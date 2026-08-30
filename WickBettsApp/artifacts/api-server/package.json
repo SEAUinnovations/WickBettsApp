@@ -8,7 +8,8 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps --env-file-if-exists=.env ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node test-build.mjs"
+    "test": "node test-build.mjs",
+    "test:resend": "node --env-file=.env scripts/test-resend.mjs"
   },
   "dependencies": {
     "@clerk/express": "^2.1.52",

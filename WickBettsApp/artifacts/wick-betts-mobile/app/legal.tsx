@@ -18,6 +18,22 @@ export default function LegalScreen() {
         <Text style={[styles.body, { color: colors.mutedForeground }]}>Trading and investing carry a substantial risk of loss and are not suitable for every person. Past performance of any setup, signal, or strategy shown in this app is not indicative of future results. You are solely responsible for your own trading decisions — consult a licensed financial advisor before acting on anything in this app.</Text>
       </Card>
 
+      <SectionLabel>Referral program</SectionLabel>
+      <Card style={styles.card}>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>
+          Share your referral link or code with a friend. When they sign up for their first Wick Betts subscription — any plan — using it, you receive a $5 credit automatically applied toward your next charge, whatever plan you're on. Credit has no cash value, cannot be redeemed for cash, and cannot be transferred to another account.
+        </Text>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>
+          Only a person's first-ever Wick Betts subscription counts as a referral. Referring yourself, using a second account you control, or any other attempt to manufacture referrals voids the reward and may result in account termination. Credit already issued for a referral is reversed if the referred subscription's payment is later refunded or disputed.
+        </Text>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>
+          After your first 10 rewarded referrals, you become a Wick Betts Ambassador: instead of further $5 credits, you receive 50% off Membership for as long as you remain subscribed to it — this status, once granted, does not expire or get revoked.
+        </Text>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>
+          If you share your referral link publicly (social media, forums, or similar), please disclose that you receive a reward for signups made through it. We may modify or end this program at any time; credit already earned before a change is honored.
+        </Text>
+      </Card>
+
       <SectionLabel>Billing, refunds &amp; disputes</SectionLabel>
       <Card style={styles.card}>
         <Text style={[styles.bodyBold, { color: colors.foreground }]}>All sales are final. No refunds.</Text>

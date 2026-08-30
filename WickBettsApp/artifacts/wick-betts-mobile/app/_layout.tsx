@@ -47,7 +47,7 @@ const proxyUrl: string | undefined =
 function isPublicRoute(segments: string[]): boolean {
   const first = segments[0];
   if (!first) return true;
-  return first === 'login' || first === 'sign-in' || first === 'auth' || first === 'sign-up' || first === 'sso-callback';
+  return first === 'login' || first === 'sign-in' || first === 'auth' || first === 'sign-up' || first === 'sso-callback' || first === 'r';
 }
 
 function isAuthRoute(segments: string[]): boolean {
@@ -94,6 +94,8 @@ function RootLayoutNav() {
       <Stack.Screen name="sso-callback" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="auth" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="mentorship" options={{ headerShown: false }} />
+      <Stack.Screen name="refer" options={{ headerShown: false }} />
+      <Stack.Screen name="r/[code]" options={{ headerShown: false, animation: 'none' }} />
       <Stack.Screen name="learning/index" options={{ headerShown: false }} />
       <Stack.Screen name="learning/lesson" options={{ headerShown: false }} />
       <Stack.Screen name="learning/candle-arcade" options={{ headerShown: false }} />
@@ -105,6 +107,7 @@ function RootLayoutNav() {
       <Stack.Screen name="admin/users" options={{ headerShown: false }} />
       <Stack.Screen name="admin/tickets" options={{ headerShown: false }} />
       <Stack.Screen name="admin/mentorship" options={{ headerShown: false }} />
+      <Stack.Screen name="admin/referrals" options={{ headerShown: false }} />
       <Stack.Screen name="contact" options={{ headerShown: false }} />
     </Stack>
   );

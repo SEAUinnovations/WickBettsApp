@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Card, Header, Screen, SectionLabel, Tag } from '@/components/WickUI';
+import { TickerIcon } from '@/components/TickerIcon';
 import { LapsedRecovery, SubscribePanel } from '@/components/Billing';
 import { useColors } from '@/hooks/useColors';
 import { useAuth, type Plan } from '@/context/AuthContext';
@@ -359,9 +360,7 @@ function SignalCard({
   return (
     <Card onPress={onPress} style={[styles.signalCard, removing && { opacity: 0.5 }]}>
       <View style={styles.row}>
-        <View style={[styles.assetIcon, { backgroundColor: colors.secondary }]}>
-          <Text style={[styles.assetText, { color: colors.accent }]}>{signal.asset.slice(0, 2)}</Text>
-        </View>
+        <TickerIcon symbol={signal.asset} logoUrl={signal.logoUrl} size={43} />
         <View style={{ flex: 1, marginLeft: 12 }}>
           <View style={styles.titleLine}>
             <Text style={[styles.assetName, { color: colors.foreground }]}>{signal.asset}</Text>
@@ -525,8 +524,6 @@ const styles = StyleSheet.create({
   filterText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
   signalCard: { marginBottom: 12 },
   row: { flexDirection: 'row', alignItems: 'center' },
-  assetIcon: { width: 43, height: 43, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  assetText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
   titleLine: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   assetName: { fontSize: 15, fontFamily: 'Inter_700Bold' },
   meta: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 4 },

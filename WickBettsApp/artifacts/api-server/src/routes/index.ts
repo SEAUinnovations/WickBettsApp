@@ -11,8 +11,10 @@ import watchlistRouter from "./watchlist.js";
 import mentorshipRouter from "./mentorship.js";
 import tradeReviewsRouter from "./tradeReviews.js";
 import supportRouter from "./support.js";
+import referralsRouter from "./referrals.js";
 import "../services/signalScanner.js"; // self-starting scheduler(s), side-effect import only — swing/LEAPS (2-day) + day-trade (daily)
 import "../services/emailDigestScheduler.js"; // self-starting weekly ops digest, side-effect import only
+import "../services/referralRewardScheduler.js"; // self-starting referral credit issuance, side-effect import only
 
 const router = Router();
 
@@ -28,5 +30,6 @@ router.use("/watchlist", watchlistRouter);
 router.use("/mentorship", mentorshipRouter);
 router.use("/trade-reviews", tradeReviewsRouter);
 router.use("/support", supportRouter);
+router.use("/referrals", referralsRouter);
 
 export default router;

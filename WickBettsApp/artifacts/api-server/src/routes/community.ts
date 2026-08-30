@@ -4,6 +4,7 @@ import { eq, desc, gte, lt, and, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
+import { resolveLogoUrl } from "./market.js";
 import { checkProfanity } from "../lib/profanityFilter.js";
 
 const GRACE_PERIOD_DAYS = 5;
@@ -13,10 +14,10 @@ const GRACE_PERIOD_DAYS = 5;
 // keyboard).
 const ALLOWED_REACTIONS = ["👍", "🔥", "💯", "😂", "🚀", "📉"];
 
-// Community chat is a rolling 30-day window — older posts are filtered out
+// Community chat is a rolling 90-day window — older posts are filtered out
 // of reads and periodically purged from the DB so the table doesn't grow
 // unbounded and old chatter doesn't linger indefinitely.
-const RETENTION_DAYS = 30;
+const RETENTION_DAYS = 90;
 const RETENTION_MS = RETENTION_DAYS * 24 * 60 * 60 * 1000;
 function retentionCutoff(): Date {
   return new Date(Date.now() - RETENTION_MS);
@@ -46,6 +47,16 @@ function startRetentionCleanup(): void {
 
 startRetentionCleanup();
 
+// SECURITY: this gate was previously defined but never applied to any route
+// below — every Community route only required requireAuth, so any signed-up
+// account (no subscription at all) had full read/write access to Community
+// Chat, Shared Signals, reactions, and follows, which are documented and
+// billed as a "Members only" paid perk (see the mobile client's "Members
+// only" badge on this screen, and the identical gate already applied in
+// signals.ts and tradeReviews.ts). Now wired into every route below except
+// PATCH/DELETE /signals/:id, which stay ownership-only — a member who lets
+// their subscription lapse should still be able to manage/delete their own
+// past posts, they just can't read the feed or create new ones.
 async function requireActiveSubscription(req: Request, res: Response, next: () => void) {
   const user = req.dbUser!;
   const subs = await db
@@ -87,7 +98,7 @@ const router = Router();
 // has tapped. Only returns posts within the last RETENTION_DAYS days; older
 // posts are periodically purged from the DB entirely (see
 // startRetentionCleanup above) — their reactions cascade-delete with them.
-router.get("/", requireAuth, async (req: Request, res: Response) => {
+router.get("/", requireAuth, requireActiveSubscription, async (req: Request, res: Response) => {
   try {
     const rows = await db
       .select({
@@ -142,7 +153,7 @@ router.get("/", requireAuth, async (req: Request, res: Response) => {
 // requesting member. Re-tapping the same emoji removes it (relies on the
 // (post_id, user_id, emoji) unique index — insert fails silently.. actually
 // we check existence explicitly below to return an accurate toggled state).
-router.post("/:postId/react", requireAuth, async (req: Request, res: Response) => {
+router.post("/:postId/react", requireAuth, requireActiveSubscription, async (req: Request, res: Response) => {
   const postId = String(req.params.postId);
   const { emoji } = req.body as { emoji?: string };
 
@@ -191,7 +202,7 @@ router.post("/:postId/react", requireAuth, async (req: Request, res: Response) =
 });
 
 // POST /api/community — create a new post (members + admins)
-router.post("/", requireAuth, async (req: Request, res: Response) => {
+router.post("/", requireAuth, requireActiveSubscription, async (req: Request, res: Response) => {
   const { thread, text } = req.body as { thread?: string; text?: string };
 
   const validThreads = ["Signals", "News", "Community Chat"];
@@ -235,13 +246,52 @@ router.post("/", requireAuth, async (req: Request, res: Response) => {
   }
 });
 
+// DELETE /api/community/:postId — remove a chat message (author or admin
+// only). Reactions on the post cascade-delete at the DB level (see
+// communityPostReactionsTable's onDelete: "cascade" in
+// lib/db/src/schema/communityPostReactions.ts), so nothing orphaned is left
+// behind. Works across all three chat threads (Signals, News, Community
+// Chat) — they share this one table, so one remove endpoint covers all of
+// them rather than needing a per-thread variant.
+//
+// Deliberately NOT gated by requireActiveSubscription, same reasoning as
+// DELETE /signals/:id below: a member whose subscription lapses should
+// still be able to remove their own past messages — they just can't read
+// the feed or post new ones without an active subscription.
+router.delete("/:postId", requireAuth, async (req: Request, res: Response) => {
+  const postId = String(req.params.postId);
+  const user = req.dbUser!;
+  try {
+    const existing = await db
+      .select({ authorId: communityPostsTable.authorId })
+      .from(communityPostsTable)
+      .where(eq(communityPostsTable.id, postId))
+      .limit(1);
+    const row = existing[0];
+    if (!row) {
+      res.status(404).json({ error: "Message not found" });
+      return;
+    }
+    if (row.authorId !== user.id && user.role !== "admin") {
+      res.status(403).json({ error: "You can only remove your own messages" });
+      return;
+    }
+    await db.delete(communityPostsTable).where(eq(communityPostsTable.id, postId));
+    logger.info({ postId, actorId: user.id }, "Community post removed");
+    res.json({ ok: true });
+  } catch (err) {
+    logger.error(err, "Failed to remove community post");
+    res.status(500).json({ error: "Failed to remove message" });
+  }
+});
+
 const MAX_SIGNAL_NOTE_LENGTH = 500;
 
 // GET /api/community/signals — member-shared trade ideas, distinct from the
 // admin-curated /api/signals feed (these never appear there — see
 // docs/adr). Returns the full recent set plus the requester's follow list;
 // the Following/All split happens client-side, same pattern as GET / above.
-router.get("/signals", requireAuth, async (req: Request, res: Response) => {
+router.get("/signals", requireAuth, requireActiveSubscription, async (req: Request, res: Response) => {
   try {
     const rows = await db
       .select({
@@ -270,7 +320,13 @@ router.get("/signals", requireAuth, async (req: Request, res: Response) => {
       .from(memberFollowsTable)
       .where(eq(memberFollowsTable.followerId, req.dbUser!.id));
 
-    res.json({ signals: rows, following: followingRows.map((r) => r.followingId) });
+    // logoUrl is best-effort and computed on read, same as the admin-curated
+    // /api/signals feed (see routes/signals.ts) — members can share any
+    // ticker text here, so most will resolve to a real logo only when it's
+    // inside Wick Betts' tracked universe (routes/market.ts); anything else
+    // falls back to an initials badge client-side.
+    const signals = rows.map((r) => ({ ...r, logoUrl: resolveLogoUrl(r.asset) }));
+    res.json({ signals, following: followingRows.map((r) => r.followingId) });
   } catch (err) {
     logger.error(err, "Failed to fetch community signals");
     res.status(500).json({ error: "Failed to fetch community signals" });
@@ -281,7 +337,7 @@ router.get("/signals", requireAuth, async (req: Request, res: Response) => {
 // Deliberately lean: ticker, market, direction, entry/target, optional stop,
 // and a short thesis note — no options/Greeks detail, keeping this distinct
 // from Wick's curated options plays in the paid /signals feed.
-router.post("/signals", requireAuth, async (req: Request, res: Response) => {
+router.post("/signals", requireAuth, requireActiveSubscription, async (req: Request, res: Response) => {
   const { asset, market, direction, entry, target, stop, note } = req.body as {
     asset?: string; market?: "Stocks" | "Crypto"; direction?: "Long" | "Short";
     entry?: string; target?: string; stop?: string; note?: string;
@@ -332,6 +388,7 @@ router.post("/signals", requireAuth, async (req: Request, res: Response) => {
         updatedAt: new Date(),
         authorName: user.name,
         avatarUrl: user.avatarUrl,
+        logoUrl: resolveLogoUrl(record.asset),
       },
     });
   } catch (err) {
@@ -424,7 +481,7 @@ router.delete("/signals/:id", requireAuth, async (req: Request, res: Response) =
 // POST /api/community/follow/:userId — toggle following another member.
 // Following is user-to-user, not per-signal: it drives which authors'
 // future shared signals surface in the follower's personalized feed.
-router.post("/follow/:userId", requireAuth, async (req: Request, res: Response) => {
+router.post("/follow/:userId", requireAuth, requireActiveSubscription, async (req: Request, res: Response) => {
   const targetId = String(req.params.userId);
   const user = req.dbUser!;
 

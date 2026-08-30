@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { Card, Header, Screen, SectionLabel, Tag } from '@/components/WickUI';
 import { TickerAutocomplete } from '@/components/TickerAutocomplete';
+import { TickerIcon } from '@/components/TickerIcon';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
 import { API_BASE } from '@/lib/apiUrl';
@@ -36,6 +37,8 @@ interface SharedSignal {
   status: SharedStatus;
   createdAt: string;
   updatedAt: string;
+  /** Best-effort logo image URL for `asset`, resolved server-side; null/absent falls back to an initials badge. */
+  logoUrl?: string | null;
 }
 
 interface TradeReview {
@@ -117,6 +120,14 @@ export default function CommunityScreen() {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [reviewUsage, setReviewUsage] = useState<{ usedThisWindow: number; freeRemaining: number; credits: number } | null>(null);
   const [buyingCredit, setBuyingCredit] = useState(false);
+  // The feed needs its own scroll ref (distinct from Community Chat's
+  // `scrollRef`) so a fresh submission — prepended at index 0 — can be
+  // scrolled into view instead of landing off-screen above whatever the
+  // member was already looking at.
+  const reviewFeedRef = useRef<ScrollView>(null);
+  // Briefly highlights the just-submitted review so it's unmistakable that
+  // new results landed, even if the scroll-into-view above is subtle.
+  const [highlightReviewId, setHighlightReviewId] = useState<string | null>(null);
 
   const fetchTradeReviews = useCallback(async () => {
     try {
@@ -213,6 +224,14 @@ export default function CommunityScreen() {
       setReviewDescription('');
       setReviewBias('Bullish');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // The new review lands at the top of the feed — dismiss the keyboard
+      // and scroll there so the AI result is actually visible instead of
+      // silently landing off-screen above the composer.
+      Keyboard.dismiss();
+      setHighlightReviewId(data.review.id);
+      setTimeout(() => reviewFeedRef.current?.scrollTo({ y: 0, animated: true }), 60);
+      setTimeout(() => setHighlightReviewId((current) => (current === data.review.id ? null : current)), 4000);
     } catch (e) {
       Alert.alert('Review failed', e instanceof Error ? e.message : 'The AI could not review this chart. Try again.');
     } finally {
@@ -409,6 +428,37 @@ export default function CommunityScreen() {
     ]);
   };
 
+  // Remove a plain-text message (Signals / News / Community Chat threads —
+  // they share one backing table/endpoint, see routes/community.ts). Author
+  // or admin only, mirroring deleteSharedSignal's confirm-then-delete shape
+  // above.
+  const deletePost = async (post: CommunityPost) => {
+    const doDelete = async () => {
+      try {
+        const token = await getToken();
+        if (!token) throw new Error('Not authenticated');
+        const res = await fetch(`${API_BASE}/community/${post.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setPosts((prev) => prev.filter((p) => p.id !== post.id));
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {
+        Alert.alert('Could not remove', 'Try again.');
+      }
+    };
+    const label = 'Remove this message?';
+    if (Platform.OS === 'web') {
+      if (window.confirm(label)) void doDelete();
+      return;
+    }
+    Alert.alert('Remove message', `${label} This can't be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => void doDelete() },
+    ]);
+  };
+
   const [allowedReactions, setAllowedReactions] = useState<string[]>(DEFAULT_REACTIONS);
 
   const fetchPosts = useCallback(async (isRefresh = false) => {
@@ -533,7 +583,15 @@ export default function CommunityScreen() {
   const currentPosts = posts.filter((p) => p.thread === thread);
 
   return (
-    <Screen contentStyle={styles.content}>
+    // scroll={false}: this screen builds its own fixed-header /
+    // flexible-feed / pinned-composer layout below (like a chat screen).
+    // Screen's default scroll=true wraps everything in an outer ScrollView,
+    // which nests it around the inner feed ScrollView — the inner `flex: 1`
+    // then has no bounded height to size against, so the tabs, feed, and
+    // composer all collapse together instead of laying out as intended.
+    // That nested-scroll bug is the root cause of the feed feeling
+    // "bunched together" and of newly-submitted results being unreachable.
+    <Screen scroll={false}>
       <Header eyebrow="Wick Betts / Members only" title="Community" action="Alerts" onAction={() => router.push('/news')} />
       <Text style={[styles.description, { color: colors.mutedForeground }]}>
         One community. No noise. Keep the conversation useful.
@@ -578,6 +636,14 @@ export default function CommunityScreen() {
         <Tag tone="green">Members only</Tag>
       </View>
 
+      {/* Keeps the composer clear of the on-screen keyboard on the two tabs
+          with a text input pinned to the bottom, instead of the keyboard
+          covering the submit button and (on Trade Review) the AI result. */}
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoider}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
       {thread === 'Shared Signals' ? (
         <>
           {/* Following / All scope pills */}
@@ -665,6 +731,7 @@ export default function CommunityScreen() {
                     </View>
 
                     <View style={styles.signalTagsRow}>
+                      <TickerIcon symbol={s.asset} logoUrl={s.logoUrl} size={22} />
                       <Text style={[styles.signalAssetText, { color: colors.foreground }]}>{s.asset}</Text>
                       <Tag tone={s.direction === 'Long' ? 'green' : 'orange'}>{s.direction}</Tag>
                       <Tag tone="muted">{s.market}</Tag>
@@ -780,6 +847,7 @@ export default function CommunityScreen() {
         <>
           {/* Trade Review feed */}
           <ScrollView
+            ref={reviewFeedRef}
             style={styles.messageList}
             refreshControl={
               <RefreshControl refreshing={false} onRefresh={() => fetchTradeReviews()} tintColor={colors.primary} />
@@ -796,7 +864,13 @@ export default function CommunityScreen() {
               </Text>
             ) : (
               tradeReviews.map((review) => (
-                <Card key={review.id} style={styles.messageCard}>
+                <Card
+                  key={review.id}
+                  style={[
+                    styles.messageCard,
+                    review.id === highlightReviewId && { borderColor: colors.primary, borderWidth: 2 },
+                  ]}
+                >
                   <View style={styles.messageTop}>
                     {review.avatarUrl ? (
                       <Image source={{ uri: review.avatarUrl }} style={styles.avatar} accessibilityLabel={review.authorName ?? 'Member avatar'} />
@@ -809,9 +883,13 @@ export default function CommunityScreen() {
                       <Text style={[styles.author, { color: colors.foreground }]}>{review.authorName ?? 'Member'}</Text>
                       <Text style={[styles.time, { color: colors.mutedForeground }]}>{formatTime(review.createdAt)}</Text>
                     </View>
-                    <Tag tone={review.bias === 'Bullish' ? 'green' : review.bias === 'Bearish' ? 'orange' : 'muted'}>
-                      {review.bias}
-                    </Tag>
+                    {review.id === highlightReviewId ? (
+                      <Tag tone="green">Just posted</Tag>
+                    ) : (
+                      <Tag tone={review.bias === 'Bullish' ? 'green' : review.bias === 'Bearish' ? 'orange' : 'muted'}>
+                        {review.bias}
+                      </Tag>
+                    )}
                   </View>
 
                   <Image source={{ uri: review.imageDataUrl }} style={styles.chartImage} resizeMode="cover" />
@@ -849,49 +927,58 @@ export default function CommunityScreen() {
                 </Text>
               </View>
             ) : null}
-            {reviewImage ? (
-              <View style={styles.reviewImagePreviewRow}>
-                <Image source={{ uri: reviewImage.uri }} style={styles.reviewImagePreview} />
-                <Pressable onPress={() => setReviewImage(null)} accessibilityRole="button" style={styles.removeImageButton}>
-                  <Ionicons name="close-circle" size={20} color={colors.mutedForeground} />
-                </Pressable>
-              </View>
-            ) : (
-              <Pressable
-                onPress={() => void pickReviewImage()}
-                style={[styles.attachButton, { borderColor: colors.border }]}
-                accessibilityRole="button"
-              >
-                <Ionicons name="camera-outline" size={16} color={colors.primary} />
-                <Text style={[styles.attachButtonText, { color: colors.primary }]}>Attach chart screenshot</Text>
-              </Pressable>
-            )}
-
-            <View style={styles.biasRow}>
-              {(['Bullish', 'Bearish', 'Neutral'] as Bias[]).map((b) => (
+            <View style={styles.composerField}>
+              <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Chart screenshot</Text>
+              {reviewImage ? (
+                <View style={styles.reviewImagePreviewRow}>
+                  <Image source={{ uri: reviewImage.uri }} style={styles.reviewImagePreview} />
+                  <Pressable onPress={() => setReviewImage(null)} accessibilityRole="button" style={styles.removeImageButton}>
+                    <Ionicons name="close-circle" size={20} color={colors.mutedForeground} />
+                  </Pressable>
+                </View>
+              ) : (
                 <Pressable
-                  key={b}
-                  onPress={() => setReviewBias(b)}
-                  style={[
-                    styles.biasChip,
-                    { backgroundColor: reviewBias === b ? colors.primary : colors.background, borderColor: colors.border },
-                  ]}
+                  onPress={() => void pickReviewImage()}
+                  style={[styles.attachButton, { borderColor: colors.border }]}
                   accessibilityRole="button"
                 >
-                  <Text style={[styles.biasChipText, { color: reviewBias === b ? colors.primaryForeground : colors.mutedForeground }]}>{b}</Text>
+                  <Ionicons name="camera-outline" size={16} color={colors.primary} />
+                  <Text style={[styles.attachButtonText, { color: colors.primary }]}>Attach chart screenshot</Text>
                 </Pressable>
-              ))}
+              )}
             </View>
 
-            <TextInput
-              value={reviewDescription}
-              onChangeText={setReviewDescription}
-              placeholder="Describe your setup and why you're taking it..."
-              placeholderTextColor={colors.mutedForeground}
-              style={[styles.reviewInput, { color: colors.foreground, borderColor: colors.border }]}
-              multiline
-              editable={!submittingReview}
-            />
+            <View style={styles.composerField}>
+              <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Your bias</Text>
+              <View style={styles.biasRow}>
+                {(['Bullish', 'Bearish', 'Neutral'] as Bias[]).map((b) => (
+                  <Pressable
+                    key={b}
+                    onPress={() => setReviewBias(b)}
+                    style={[
+                      styles.biasChip,
+                      { backgroundColor: reviewBias === b ? colors.primary : colors.background, borderColor: colors.border },
+                    ]}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.biasChipText, { color: reviewBias === b ? colors.primaryForeground : colors.mutedForeground }]}>{b}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.composerField}>
+              <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Your setup</Text>
+              <TextInput
+                value={reviewDescription}
+                onChangeText={setReviewDescription}
+                placeholder="Describe your setup and why you're taking it..."
+                placeholderTextColor={colors.mutedForeground}
+                style={[styles.reviewInput, { color: colors.foreground, borderColor: colors.border }]}
+                multiline
+                editable={!submittingReview}
+              />
+            </View>
 
             <Pressable
               onPress={submitReview}
@@ -1015,6 +1102,18 @@ export default function CommunityScreen() {
                       );
                     })}
                   </View>
+                  {post.authorId === user?.id || isAdmin ? (
+                    <View style={styles.ownSignalActions}>
+                      <Pressable
+                        onPress={() => void deletePost(post)}
+                        style={[styles.smallActionButton, { borderColor: colors.border }]}
+                        accessibilityRole="button"
+                      >
+                        <Ionicons name="trash-outline" size={13} color={colors.destructive} />
+                        <Text style={[styles.smallActionText, { color: colors.destructive }]}>Remove</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
                 </Card>
               ))
             )}
@@ -1057,12 +1156,12 @@ export default function CommunityScreen() {
           )}
         </>
       )}
+      </KeyboardAvoidingView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { paddingBottom: 120, flex: 1 },
   description: { fontSize: 13, lineHeight: 19, fontFamily: 'Inter_400Regular', marginBottom: 18 },
   adminCard: { marginBottom: 18 },
   adminActions: { flexDirection: 'row', gap: 12 },
@@ -1097,7 +1196,10 @@ const styles = StyleSheet.create({
   aiReviewText: { fontSize: 12, lineHeight: 18, fontFamily: 'Inter_400Regular' },
   riskNote: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, borderTopWidth: 1, marginTop: 10, paddingTop: 10 },
   riskNoteText: { flex: 1, fontSize: 11, lineHeight: 16, fontFamily: 'Inter_400Regular' },
-  reviewComposer: { borderWidth: 1, borderRadius: 17, padding: 12, marginTop: 3, gap: 10 },
+  keyboardAvoider: { flex: 1 },
+  reviewComposer: { borderWidth: 1, borderRadius: 17, padding: 14, marginTop: 8, gap: 14 },
+  composerField: { gap: 6 },
+  composerFieldLabel: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1, textTransform: 'uppercase' },
   usageRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   usageText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
   attachButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderWidth: 1, borderStyle: 'dashed', borderRadius: 12, paddingVertical: 12 },

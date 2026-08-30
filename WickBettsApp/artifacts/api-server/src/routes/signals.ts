@@ -6,6 +6,7 @@ import { logger } from "../lib/logger.js";
 import { fanOutSignalNotification } from "../utils/pushNotifications.js";
 import { fanOutSignalEmail, fanOutNewsEmail } from "../utils/emailNotifications.js";
 import { requireAuth, requireAdmin } from "../middlewares/requireAuth.js";
+import { resolveLogoUrl } from "./market.js";
 
 export async function requireActiveSubscription(req: Request, res: Response, next: () => void) {
   const user = req.dbUser!;
@@ -53,7 +54,7 @@ const router = Router();
 // place.
 router.get("/", requireAuth, requireActiveSubscription, async (req: Request, res: Response) => {
   const user = req.dbUser!;
-  const signals =
+  const rows =
     user.role === "admin"
       ? await db.select().from(signalsTable).orderBy(desc(signalsTable.createdAt)).limit(100)
       : await db
@@ -62,6 +63,11 @@ router.get("/", requireAuth, requireActiveSubscription, async (req: Request, res
           .where(ne(signalsTable.status, "Watching"))
           .orderBy(desc(signalsTable.createdAt))
           .limit(100);
+  // logoUrl is computed on read rather than stored — it's a best-effort
+  // lookup (see resolveLogoUrl in routes/market.ts) that should reflect
+  // whatever the live ticker/logo mapping knows right now, not whatever it
+  // knew at signal-creation time.
+  const signals = rows.map((s) => ({ ...s, logoUrl: resolveLogoUrl(s.asset) }));
   res.json({ signals });
 });
 

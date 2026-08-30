@@ -58,6 +58,8 @@ export interface Signal {
   /** "Keep in mind" star: trade window overlaps a major macro event or the symbol's earnings date. */
   newsAlert?: boolean;
   newsAlertNote?: string;
+  /** Best-effort logo image URL for `asset`, resolved server-side; null/absent falls back to an initials badge. */
+  logoUrl?: string | null;
 }
 
 interface ApiSignal {
@@ -92,6 +94,7 @@ interface ApiSignal {
   source?: string;
   newsAlert?: boolean;
   newsAlertNote?: string;
+  logoUrl?: string | null;
 }
 
 const STORAGE_KEY_PREFIX = '@wick-betts/signals-v2';
@@ -163,6 +166,7 @@ function mapApiSignal(s: ApiSignal): Signal {
     source: s.source,
     newsAlert: s.newsAlert,
     newsAlertNote: s.newsAlertNote,
+    logoUrl: s.logoUrl,
   };
 }
 
