@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Card, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
@@ -47,6 +47,22 @@ export default function LearningScreen() {
       cancelled = true;
     };
   }, [userId, isLocked]);
+
+  // Completing a lesson (or an arcade game) writes its XP/completed-module
+  // update straight to storage from that other screen, not through this
+  // screen's own `progress` state — so without this, finishing a module and
+  // tapping back left the XP bar showing the stale pre-completion amount
+  // until the whole Learning tab happened to remount. Stack navigators keep
+  // this screen mounted underneath the lesson screen, so re-reading from
+  // storage on every focus (not just on first mount) is what actually picks
+  // up the change. Skipped while the initial load above is still in flight
+  // (hydrated is false) so the two loads don't race each other on first mount.
+  useFocusEffect(
+    useCallback(() => {
+      if (isLocked || !hydrated) return;
+      void loadLearningProgress(userId).then((p) => setProgress(p));
+    }, [userId, isLocked, hydrated]),
+  );
 
   // Persist on every change, but only once the initial load has completed —
   // otherwise the blank starting state would clobber saved progress.
