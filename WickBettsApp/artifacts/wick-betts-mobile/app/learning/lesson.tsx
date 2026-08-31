@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Card, PrimaryButton, Screen } from '@/components/WickUI';
 import { CandleGlyph } from '@/components/CandleGlyph';
+import { LessonDiagram } from '@/components/LessonDiagram';
 import { RichText } from '@/components/RichText';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
@@ -248,6 +249,17 @@ function LessonBlockView({ block }: { block: LessonBlock }) {
           ))}
         </View>
       );
+    case 'diagram':
+      return (
+        <View style={[styles.candleCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={styles.candleStage}>
+            <LessonDiagram kind={block.kind} />
+          </View>
+          {block.caption ? (
+            <Text style={[styles.diagramCaption, { color: colors.mutedForeground }]}>{block.caption}</Text>
+          ) : null}
+        </View>
+      );
     default:
       return null;
   }
@@ -315,6 +327,7 @@ const styles = StyleSheet.create({
   biasPillText: { fontSize: 9, fontFamily: 'Inter_700Bold', textTransform: 'uppercase' },
   candleRole: { fontSize: 10, fontFamily: 'Inter_600SemiBold', marginBottom: 6 },
   candleMeaning: { fontSize: 12, lineHeight: 17, fontFamily: 'Inter_400Regular' },
+  diagramCaption: { fontSize: 11, lineHeight: 16, fontFamily: 'Inter_400Regular', textAlign: 'center', fontStyle: 'italic' },
   videos: { marginTop: 20, gap: 8 },
   videosEyebrow: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1, marginBottom: 2 },
   videoChip: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 },

@@ -1,4 +1,5 @@
 import type { Ionicons } from '@expo/vector-icons';
+import type { DiagramKind } from '@/components/LessonDiagram';
 
 /**
  * Content + data model for the Learning tab (the academy). Ported from the
@@ -347,6 +348,7 @@ export type LessonBlock =
   | { type: 'definitions'; items: { title: string; text: string }[] }
   | { type: 'list'; items: string[] }
   | { type: 'candles' }
+  | { type: 'diagram'; kind: DiagramKind; caption?: string }
   | { type: 'timeline'; items: { year: string; text: string }[] }
   | { type: 'bios'; items: { name: string; meta: string; text: string }[] }
   | { type: 'note'; text: string }
@@ -411,6 +413,7 @@ const bodyReadingTheChart: LessonBlock[] = [
     { title: 'Timeframe', text: 'Start from the Daily (D) chart to find the higher-timeframe trend first, then drop into lower timeframes to time an entry.' },
     { title: 'Support & Resistance', text: 'Support is a price floor where buying has stepped in before; resistance is a price ceiling where selling has capped price before. Price tends to react at both.' },
   ] },
+  { type: 'diagram', kind: 'trend-and-sr', caption: 'Price trending up while bouncing between a support floor and a resistance ceiling.' },
   { type: 'h3', text: 'Liquidity zones — a preview' },
   { type: 'p', text: 'A liquidity zone is an area packed with resting stop-losses and pending orders. Price is frequently drawn toward these zones before reversing — the _Liquidity & Market Structure_ module in the Advanced track goes much deeper on this.' },
   { type: 'scenario', title: 'Fighting the higher timeframe', setup: "On the 5-minute chart, a stock prints a clean bullish reversal candle at what looks like support.", whatHappened: "Zooming out to the Daily chart shows the stock is in a firm, weeks-long downtrend — that '5-minute support' was just a pause inside a much bigger slide. Price kept falling within the hour.", takeaway: 'A textbook pattern on a low timeframe means little if it fights the higher-timeframe trend. Always check the Daily chart first, the way this module opened.' },
@@ -433,6 +436,7 @@ const bodyIndicatorsToolkit: LessonBlock[] = [
     'Smoothing out noisy day-to-day price action',
     'Crossover signals — a shorter SMA crossing above a longer one (e.g. 50 over 200) is a **Golden Cross**; crossing below is a **Death Cross**',
   ] },
+  { type: 'diagram', kind: 'sma-crossover', caption: 'A shorter SMA crossing above a longer one — the Golden Cross.' },
   { type: 'h3', text: 'The rest of the toolkit' },
   { type: 'definitions', items: [
     { title: 'EMA', text: 'An Exponential Moving Average weights recent prices more heavily than an SMA, so it reacts faster to new moves.' },
@@ -466,6 +470,7 @@ const bodyLiquidityAndStructure: LessonBlock[] = [
     '**Break of Structure (BOS)** — price breaks the most recent swing high/low in the direction of the trend, confirming it is still intact',
     '**Change of Character (CHoCH)** — price breaks structure against the prevailing trend, an early warning the trend may be turning',
   ] },
+  { type: 'diagram', kind: 'market-structure', caption: 'Higher highs and higher lows, until a Change of Character breaks the pattern.' },
   { type: 'h3', text: 'Why "obvious" levels get run first' },
   { type: 'p', text: 'The support and resistance everyone can see are exactly where the stop orders pile up. A quick move through that level to grab liquidity — a stop hunt — before reversing is one of the most common reasons a level almost holds and then does not.' },
   { type: 'scenario', title: 'A textbook stop hunt', setup: 'Price grinds up to an obvious resistance level that every chart-watcher can see, then breaks slightly above it — traders short below it get stopped out, and breakout buyers pile in.', whatHappened: "Within minutes, price reverses hard and closes back below the old resistance. The 'breakout' was really a liquidity grab, sweeping stops on both sides before the real move — down — began.", takeaway: 'The most obvious level on the chart is exactly where stops cluster. A quick wick through a level with no real follow-through is often liquidity being taken, not a genuine breakout.' },
@@ -479,6 +484,7 @@ const bodyFairValueGaps: LessonBlock[] = [
     { title: 'Imbalance', text: 'The core idea behind an FVG: a price range where buyers or sellers were so aggressive that the opposite side never got a fair chance to transact. Price is statistically drawn back to "rebalance" that zone.' },
     { title: 'Filling the gap', text: "When price trades back into the FVG range, it is said to be 'filled' — this does not require the entire gap to be retraced, just enough of it to react from." },
   ] },
+  { type: 'diagram', kind: 'fair-value-gap', caption: 'The three-candle imbalance — a gap the middle candle blew through untraded.' },
   { type: 'h3', text: 'How the trade actually works' },
   { type: 'list', items: [
     'Identify the three-candle sequence and mark the gap between candle 1\'s wick and candle 3\'s wick',
@@ -519,6 +525,7 @@ const bodyOpeningRangeBreakout: LessonBlock[] = [
   ] },
   { type: 'h3', text: 'Why the opening range matters' },
   { type: 'p', text: 'The open concentrates overnight news, pre-market positioning, and the first scheduled economic data of the day into one short, high-volume window. A range that holds through that chaos and then gets decisively broken carries more information than a random breakout later in a quiet afternoon.' },
+  { type: 'diagram', kind: 'orb', caption: 'A breakout above the opening range, established in the first minutes of the session.' },
   { type: 'callout', label: 'Breakout vs. retest is a real tradeoff', text: "Trading the immediate breakout gets a better entry price but eats more false signals. Waiting for a retest cuts down on fakeouts but means missing some breakouts that never look back — pick one approach deliberately rather than switching mid-session based on how the last trade went." },
   { type: 'scenario', title: 'The 9:35 fakeout', setup: 'A stock breaks decisively above its 15-minute opening range at 9:47 AM on rising volume — a clean ORB long signal by the book.', whatHappened: "Price reverses within four minutes and closes back inside the range, stopping out the breakout entry for a small loss — a classic false breakout during the still-volatile first half hour of the session.", takeaway: "ORB works because the opening range is meaningful, not because every breakout of it succeeds. A stop just inside the range, sized for the instrument's normal opening volatility, is what makes the strategy survivable through the false breakouts that are a normal part of it." },
 ];
@@ -531,6 +538,7 @@ const bodySupportResistanceTrading: LessonBlock[] = [
     { title: 'Role reversal', text: "Old resistance frequently becomes new support once broken, and vice versa — the same order-flow logic that made the level matter in the first place doesn't disappear just because price broke through it once." },
     { title: 'Confluence', text: "A support/resistance level lining up with a round number, a moving average, or a prior swing point is meaningfully stronger evidence than any one of those in isolation." },
   ] },
+  { type: 'diagram', kind: 'support-resistance-zone', caption: 'Rejected touches, then a break and retest that flips the zone from resistance to support.' },
   { type: 'h3', text: 'A repeatable S/R trade' },
   { type: 'list', items: [
     'Mark zones from clear prior swing highs/lows, not every minor wiggle on the chart',
@@ -551,6 +559,7 @@ const bodyVwapReversion: LessonBlock[] = [
     { title: 'Trend-following approach', text: "The opposite read of the same level: treating a strong, sustained move away from VWAP (especially with rising volume) as a real trend, using VWAP itself as a trailing support/resistance reference rather than a magnet to revert to." },
     { title: 'Standard deviation bands', text: "Bands plotted a fixed number of standard deviations above and below VWAP, used to gauge how statistically stretched the current move away from VWAP actually is." },
   ] },
+  { type: 'diagram', kind: 'vwap-reversion', caption: 'Price stretching away from VWAP, then reverting back to it.' },
   { type: 'h3', text: 'Reversion and trend-following are opposites — know which one you are trading' },
   { type: 'p', text: "The single most common mistake with VWAP is not picking one of these two approaches and sticking with it for the trade. Fading a move back toward VWAP while a genuine, high-volume trend is underway is fighting real conviction in the market — and buying a 'reversion' bounce off VWAP during a strong trend day is really just trading with the trend by accident." },
   { type: 'callout', label: 'Read the day\'s character first', text: "A choppy, rangebound session rewards fading stretched moves back to VWAP. A strong trend day rewards using VWAP as support/resistance in the direction of the trend instead. Decide which kind of day it looks like before picking the strategy, not after the trade is already open." },
@@ -572,6 +581,7 @@ const bodyOptionsBasics: LessonBlock[] = [
     '**At-the-money (ATM)** — the strike sits right at the current price. The classic 50/50 bet, and the strike that decays fastest.',
     '**Out-of-the-money (OTM)** — the strike is not yet favorable. Cheapest premium, most leverage, and the highest chance of expiring completely worthless.',
   ] },
+  { type: 'diagram', kind: 'options-payoff', caption: 'Payoff shape at expiration for a long call versus a long put.' },
   { type: 'callout', label: 'Why the strike matters more than the direction', text: "Getting the direction right is only half the trade. Pick a strike that does not fit your actual goal — expecting a slow grind but buying a cheap OTM lotto strike, say — and you can be completely right on direction and still lose money to time decay before the move shows up." },
   { type: 'scenario', title: 'Right on direction, wrong on strike', setup: 'A trader is confident a stock will grind slowly higher over the next month and buys a far OTM call because it is cheap.', whatHappened: 'The stock does grind higher, exactly as predicted — but slowly. Time decay eats the cheap OTM option faster than the slow move can add value, and it expires worthless despite the correct call on direction.', takeaway: "A cheap strike is not a shortcut — it is a different bet entirely, one that needs a fast, large move to pay off. Matching the strike to the expected speed and size of the move matters as much as the direction itself." },
 ];

@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { db, communityPostsTable, communityPostReactionsTable, communitySignalsTable, memberFollowsTable, usersTable, subscriptionsTable } from "../lib/db.js";
-import { eq, desc, gte, lt, and, inArray } from "drizzle-orm";
+import { eq, desc, gte, lt, and, or, ne, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
@@ -14,13 +14,36 @@ const GRACE_PERIOD_DAYS = 5;
 // keyboard).
 const ALLOWED_REACTIONS = ["👍", "🔥", "💯", "😂", "🚀", "📉"];
 
-// Community chat is a rolling 90-day window — older posts are filtered out
-// of reads and periodically purged from the DB so the table doesn't grow
-// unbounded and old chatter doesn't linger indefinitely.
+// Community chat (Signals + Community Chat threads) is a rolling 90-day
+// window — older posts are filtered out of reads and periodically purged
+// from the DB so the table doesn't grow unbounded and old chatter doesn't
+// linger indefinitely.
 const RETENTION_DAYS = 90;
 const RETENTION_MS = RETENTION_DAYS * 24 * 60 * 60 * 1000;
 function retentionCutoff(): Date {
   return new Date(Date.now() - RETENTION_MS);
+}
+
+// The News thread gets its own, shorter window: news articles stop being
+// relevant well before Signals/Community Chat posts do, so a stale month-old
+// headline sitting in the feed is just clutter — auto-remove News posts
+// older than 30 days on the same cleanup pass instead of waiting the full
+// 90 days.
+const NEWS_RETENTION_DAYS = 30;
+const NEWS_RETENTION_MS = NEWS_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+function newsRetentionCutoff(): Date {
+  return new Date(Date.now() - NEWS_RETENTION_MS);
+}
+
+// Per-thread retention condition shared by the read query (pass `gte` for
+// "still within its window") and the cleanup job (pass `lt` for "past its
+// window, delete it") — one place decides which cutoff applies to which
+// thread, so the two call sites can never drift out of sync with each other.
+function retentionCondition(cutoffComparator: typeof gte | typeof lt) {
+  return or(
+    and(eq(communityPostsTable.thread, "News"), cutoffComparator(communityPostsTable.createdAt, newsRetentionCutoff())),
+    and(ne(communityPostsTable.thread, "News"), cutoffComparator(communityPostsTable.createdAt, retentionCutoff())),
+  );
 }
 
 let cleanupStarted = false;
@@ -31,9 +54,9 @@ function startRetentionCleanup(): void {
   const runCleanup = () => {
     void db
       .delete(communityPostsTable)
-      .where(lt(communityPostsTable.createdAt, retentionCutoff()))
+      .where(retentionCondition(lt))
       .then(() => {
-        logger.info({ retentionDays: RETENTION_DAYS }, "Community post retention cleanup ran");
+        logger.info({ retentionDays: RETENTION_DAYS, newsRetentionDays: NEWS_RETENTION_DAYS }, "Community post retention cleanup ran");
       })
       .catch((err) => {
         logger.warn({ err }, "Community post retention cleanup failed");
@@ -95,8 +118,9 @@ const router = Router();
 
 // GET /api/community — fetch posts with author name (all threads), newest first,
 // plus each post's reaction counts and which of them the requesting member
-// has tapped. Only returns posts within the last RETENTION_DAYS days; older
-// posts are periodically purged from the DB entirely (see
+// has tapped. Only returns posts within each thread's retention window
+// (RETENTION_DAYS for Signals/Community Chat, the shorter NEWS_RETENTION_DAYS
+// for News); older posts are periodically purged from the DB entirely (see
 // startRetentionCleanup above) — their reactions cascade-delete with them.
 router.get("/", requireAuth, requireActiveSubscription, async (req: Request, res: Response) => {
   try {
@@ -112,7 +136,7 @@ router.get("/", requireAuth, requireActiveSubscription, async (req: Request, res
       })
       .from(communityPostsTable)
       .leftJoin(usersTable, eq(communityPostsTable.authorId, usersTable.id))
-      .where(gte(communityPostsTable.createdAt, retentionCutoff()))
+      .where(retentionCondition(gte))
       .orderBy(desc(communityPostsTable.createdAt))
       .limit(200);
 
