@@ -7,6 +7,7 @@ import { requireAuth } from "../middlewares/requireAuth.js";
 import { aiRateLimit } from "../middlewares/rateLimit.js";
 import { checkProfanity } from "../lib/profanityFilter.js";
 import { reviewTradeChart, TradeReviewAIError } from "../services/tradeReviewAI.js";
+import { resolveLogoUrl } from "./market.js";
 
 const GRACE_PERIOD_DAYS = 5;
 
@@ -81,6 +82,7 @@ router.get("/", requireAuth, requireActiveSubscription, async (req: Request, res
         authorId: tradeReviewsTable.authorId,
         authorName: usersTable.name,
         avatarUrl: usersTable.avatarUrl,
+        symbol: tradeReviewsTable.symbol,
         imageDataUrl: tradeReviewsTable.imageDataUrl,
         description: tradeReviewsTable.description,
         bias: tradeReviewsTable.bias,
@@ -96,8 +98,13 @@ router.get("/", requireAuth, requireActiveSubscription, async (req: Request, res
       .orderBy(desc(tradeReviewsTable.createdAt))
       .limit(50);
 
+    // logoUrl is best-effort and computed on read, same pattern as the
+    // admin-curated signals feed and Community's Shared Signals — a review
+    // predating this field (symbol is null) just renders with no icon/label.
+    const reviews = rows.map((r) => ({ ...r, logoUrl: r.symbol ? resolveLogoUrl(r.symbol) : null }));
+
     const usage = await getUsage(req.dbUser!.id);
-    res.json({ reviews: rows, usage });
+    res.json({ reviews, usage });
   } catch (err) {
     logger.error(err, "Failed to fetch trade reviews");
     res.status(500).json({ error: "Failed to fetch trade reviews" });
@@ -111,12 +118,21 @@ router.get("/", requireAuth, requireActiveSubscription, async (req: Request, res
 // trust model than the auto-signals scanner, which does land as "Watching"
 // for review since those carry real position-sizing numbers).
 router.post("/", requireAuth, requireActiveSubscription, aiRateLimit, async (req: Request, res: Response) => {
-  const { imageDataUrl, description, bias } = req.body as {
+  const { symbol, imageDataUrl, description, bias } = req.body as {
+    symbol?: string;
     imageDataUrl?: string;
     description?: string;
     bias?: string;
   };
 
+  if (!symbol || !symbol.trim()) {
+    res.status(400).json({ error: "symbol is required" });
+    return;
+  }
+  if (symbol.trim().length > 12) {
+    res.status(400).json({ error: "symbol must be 12 characters or fewer" });
+    return;
+  }
   if (!imageDataUrl || typeof imageDataUrl !== "string" || !imageDataUrl.startsWith("data:image/")) {
     res.status(400).json({ error: "imageDataUrl must be a base64 image data URL" });
     return;
@@ -141,6 +157,7 @@ router.post("/", requireAuth, requireActiveSubscription, aiRateLimit, async (req
 
   const user = req.dbUser!;
   const trimmedDescription = description.trim();
+  const trimmedSymbol = symbol.trim().toUpperCase();
   const resolvedBias = bias as "Bullish" | "Bearish" | "Neutral";
 
   // Admins get unlimited reviews (they're moderating/testing, not consuming
@@ -163,6 +180,7 @@ router.post("/", requireAuth, requireActiveSubscription, aiRateLimit, async (req
     const review = {
       id: randomUUID(),
       authorId: user.id,
+      symbol: trimmedSymbol,
       imageDataUrl,
       description: trimmedDescription,
       bias: resolvedBias,
@@ -201,6 +219,7 @@ router.post("/", requireAuth, requireActiveSubscription, aiRateLimit, async (req
         createdAt: new Date(),
         authorName: user.name,
         avatarUrl: user.avatarUrl,
+        logoUrl: resolveLogoUrl(trimmedSymbol),
       },
       usage: await getUsage(user.id),
     });

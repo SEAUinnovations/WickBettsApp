@@ -20,8 +20,18 @@ export function Screen({
 }) {
   const colors = useColors();
   const { ScrollView } = require('react-native') as typeof import('react-native');
+  // The bottom tab bar renders with `position: 'absolute'` (see
+  // app/(tabs)/_layout.tsx) so it floats over screen content instead of
+  // reserving its own space — nothing pushes content up to clear it. Every
+  // scrollable screen already works around this with its own
+  // `contentStyle={{ paddingBottom: 108-110 }}`; this default covers any
+  // screen that doesn't, and (more importantly) covers the `scroll={false}`
+  // fixed-layout case, where there's no scrolling at all to reach past the
+  // tab bar — without it, a bottom-pinned button (e.g. Community's Trade
+  // Review / Shared Signals composer) renders fully underneath the tab bar,
+  // invisible and untappable.
   const body = (
-    <View style={[styles.screen, { backgroundColor: colors.background }]}>
+    <View style={[styles.screen, !scroll && styles.screenBottomClearance, { backgroundColor: colors.background }]}>
       {children}
     </View>
   );
@@ -204,7 +214,8 @@ export function Divider() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, paddingHorizontal: 20 },
-  scrollContent: { flexGrow: 1 },
+  screenBottomClearance: { paddingBottom: 110 },
+  scrollContent: { flexGrow: 1, paddingBottom: 110 },
   header: {
     minHeight: 86,
     paddingTop: 20,

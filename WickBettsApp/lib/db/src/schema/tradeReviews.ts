@@ -13,6 +13,12 @@ export const tradeReviewVerdictEnum = pgEnum("trade_review_verdict", ["Agrees", 
 export const tradeReviewsTable = pgTable("trade_reviews", {
   id: text("id").primaryKey(),
   authorId: text("author_id").notNull().references(() => usersTable.id),
+  // The ticker the review is about — mandatory on every new submission (see
+  // POST /api/trade-reviews' validation), so the Community feed can label
+  // and icon each card (via routes/market.ts's resolveLogoUrl). Nullable at
+  // the column level only so reviews submitted before this field existed
+  // don't need a backfill value; they just render without a ticker label.
+  symbol: text("symbol"),
   // Data URL (e.g. "data:image/jpeg;base64,...") — stored inline rather than
   // in external object storage to avoid standing up new storage
   // infrastructure/credentials for the first version of this feature.

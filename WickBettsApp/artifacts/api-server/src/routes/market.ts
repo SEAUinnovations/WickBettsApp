@@ -6,7 +6,7 @@ import { requireActiveSubscription } from "./signals.js";
 const router = Router();
 
 // ── Ticker universe ───────────────────────────────────────────────────────────
-type AssetClass = "etf" | "stocks";
+type AssetClass = "etf" | "stocks" | "index";
 // `domain` is only set for tickers that are a single real company — that's
 // what makes a domain-based logo (see resolveLogoUrl below) meaningful. ETFs
 // and macro instruments deliberately have no domain: a sector SPDR's "logo"
@@ -21,6 +21,15 @@ const EQUITY_TICKERS: Record<string, TickerMeta> = {
   QQQ:  { assetclass: "etf",    group: "indices", shortName: "Nasdaq 100 ETF" },
   IWM:  { assetclass: "etf",    group: "indices", shortName: "Russell 2000 ETF" },
   DIA:  { assetclass: "etf",    group: "indices", shortName: "Dow Jones ETF" },
+  // True index quotes (not ETF proxies) — Nasdaq's quote API serves these
+  // under assetclass=index rather than etf/stocks. VIX is the actual CBOE
+  // volatility index (VIXY below is only a futures-based ETF tracker of it);
+  // TNX is the CBOE 10-Year Treasury Note Yield index, quoted in yield*10
+  // (e.g. a 4.25% yield reads as "42.5") — the mobile Tracked Board divides
+  // it back down to a real percent for display, see formatPrice in
+  // app/(tabs)/index.tsx.
+  VIX:  { assetclass: "index",  group: "indices", shortName: "VIX" },
+  TNX:  { assetclass: "index",  group: "indices", shortName: "10Y Treasury" },
   // Macro / bonds — VIXY and UUP are also the confluence inputs the auto
   // signal scanner reads for its cross-asset "decision factor" (see
   // services/macroConfluence.ts); tracked here too so members can see the

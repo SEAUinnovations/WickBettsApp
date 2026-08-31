@@ -20,6 +20,11 @@ function changeColor(pct: number, positive: string, negative: string, neutral: s
 
 function formatPrice(price: number, symbol: string): string {
   if (symbol === 'BTC-USD') return `$${Math.round(price).toLocaleString()}`;
+  // VIX and the 10Y Treasury are index/yield levels, not dollar prices —
+  // showing them with a $ sign would be misleading. Nasdaq's TNX index is
+  // quoted as yield*10, so divide back down to a real percent.
+  if (symbol === 'VIX') return price.toFixed(2);
+  if (symbol === 'TNX') return `${(price / 10).toFixed(2)}%`;
   if (price >= 1000) return `$${price.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
   return `$${price.toFixed(2)}`;
 }

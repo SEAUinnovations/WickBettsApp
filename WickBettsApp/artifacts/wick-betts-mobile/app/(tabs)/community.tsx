@@ -48,6 +48,11 @@ interface TradeReview {
   authorId: string;
   authorName: string | null;
   avatarUrl?: string | null;
+  /** Mandatory on every new submission (enforced server-side); null only on
+   *  reviews posted before this field existed. */
+  symbol: string | null;
+  /** Best-effort logo image URL for `symbol`, resolved server-side. */
+  logoUrl?: string | null;
   imageDataUrl: string;
   description: string;
   bias: Bias;
@@ -202,6 +207,7 @@ export default function CommunityScreen() {
   const [tradeReviewsLoading, setTradeReviewsLoading] = useState(true);
   const [tradeReviewsError, setTradeReviewsError] = useState<string | null>(null);
   const [reviewImage, setReviewImage] = useState<{ uri: string; dataUrl: string } | null>(null);
+  const [reviewSymbol, setReviewSymbol] = useState('');
   const [reviewDescription, setReviewDescription] = useState('');
   const [reviewBias, setReviewBias] = useState<Bias>('Bullish');
   const [submittingReview, setSubmittingReview] = useState(false);
@@ -277,7 +283,7 @@ export default function CommunityScreen() {
   };
 
   const submitReview = async () => {
-    if (!reviewImage || !reviewDescription.trim() || submittingReview) return;
+    if (!reviewImage || !reviewSymbol.trim() || !reviewDescription.trim() || submittingReview) return;
     setSubmittingReview(true);
     try {
       const token = await getToken();
@@ -289,6 +295,7 @@ export default function CommunityScreen() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          symbol: reviewSymbol.trim().toUpperCase(),
           imageDataUrl: reviewImage.dataUrl,
           description: reviewDescription.trim(),
           bias: reviewBias,
@@ -321,6 +328,7 @@ export default function CommunityScreen() {
       setTradeReviews((prev) => [data.review, ...prev]);
       setReviewUsage(data.usage);
       setReviewImage(null);
+      setReviewSymbol('');
       setReviewDescription('');
       setReviewBias('Bullish');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -1012,6 +1020,17 @@ export default function CommunityScreen() {
                     )}
                   </View>
 
+                  {/* Ticker label — mandatory on every new submission (see
+                      submitReview above); older reviews posted before this
+                      field existed just omit the row rather than show a
+                      blank/placeholder ticker. */}
+                  {review.symbol ? (
+                    <View style={styles.tradeReviewTickerRow}>
+                      <TickerIcon symbol={review.symbol} logoUrl={review.logoUrl} size={20} />
+                      <Text style={[styles.signalAssetText, { color: colors.foreground }]}>{review.symbol}</Text>
+                    </View>
+                  ) : null}
+
                   {/* Nested Pressable: tapping the chart opens the full-screen
                       viewer instead of toggling the card, since RN resolves
                       touches to the innermost pressable rather than bubbling. */}
@@ -1128,6 +1147,11 @@ export default function CommunityScreen() {
                   </View>
                 ) : null}
                 <View style={styles.composerField}>
+                  <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Ticker</Text>
+                  <TickerAutocomplete value={reviewSymbol} onChangeText={setReviewSymbol} placeholder="Ticker, e.g. NVDA" testID="trade-review-ticker" />
+                </View>
+
+                <View style={styles.composerField}>
                   <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Chart screenshot</Text>
                   {reviewImage ? (
                     <View style={styles.reviewImagePreviewRow}>
@@ -1182,10 +1206,10 @@ export default function CommunityScreen() {
 
                 <Pressable
                   onPress={submitReview}
-                  disabled={!reviewImage || !reviewDescription.trim() || submittingReview}
+                  disabled={!reviewImage || !reviewSymbol.trim() || !reviewDescription.trim() || submittingReview}
                   style={[
                     styles.reviewSubmitButton,
-                    { backgroundColor: reviewImage && reviewDescription.trim() && !submittingReview ? colors.primary : colors.muted },
+                    { backgroundColor: reviewImage && reviewSymbol.trim() && reviewDescription.trim() && !submittingReview ? colors.primary : colors.muted },
                   ]}
                   accessibilityRole="button"
                 >
@@ -1193,8 +1217,8 @@ export default function CommunityScreen() {
                     <ActivityIndicator size="small" color={colors.mutedForeground} />
                   ) : (
                     <>
-                      <Ionicons name="sparkles-outline" size={15} color={reviewImage && reviewDescription.trim() ? colors.primaryForeground : colors.mutedForeground} />
-                      <Text style={[styles.reviewSubmitText, { color: reviewImage && reviewDescription.trim() ? colors.primaryForeground : colors.mutedForeground }]}>
+                      <Ionicons name="sparkles-outline" size={15} color={reviewImage && reviewSymbol.trim() && reviewDescription.trim() ? colors.primaryForeground : colors.mutedForeground} />
+                      <Text style={[styles.reviewSubmitText, { color: reviewImage && reviewSymbol.trim() && reviewDescription.trim() ? colors.primaryForeground : colors.mutedForeground }]}>
                         {submittingReview ? 'AI is reviewing...' : 'Submit for review'}
                       </Text>
                     </>
@@ -1398,6 +1422,7 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 13, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 40 },
   messageCard: { marginBottom: 12 },
   messageTop: { flexDirection: 'row', alignItems: 'center' },
+  tradeReviewTickerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
   avatar: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
   author: { fontSize: 13, fontFamily: 'Inter_700Bold' },

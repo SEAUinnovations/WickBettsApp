@@ -92,6 +92,13 @@
       "when": 1788176000000,
       "tag": "0012_community_starred_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1788185000000,
+      "tag": "0013_trade_review_symbol",
+      "breakpoints": true
     }
   ]
 }

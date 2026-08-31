@@ -5,8 +5,8 @@ import {
   ChevronLeft, ChevronRight, CircleHelp, Clock3, CreditCard, Crown, ExternalLink, Filter, Flame,
   Gamepad2, GraduationCap, Heart, Layers, LayoutDashboard, LoaderCircle, LockKeyhole,
   LogOut, MessageCircle, Newspaper, PanelLeft, Pencil, Percent, PlayCircle, Plus, Radio, Rocket, RotateCcw,
-  Settings, ShieldCheck, SlidersHorizontal, Sparkles, Star, Swords, Target, TrendingUp, Trophy,
-  UserRound, WalletCards, X, Chrome, Zap,
+  Settings, ShieldCheck, SlidersHorizontal, Sparkles, Star, Swords, Target, TrendingUp, Trash2, Trophy,
+  UserCheck, UserPlus, UserRound, WalletCards, X, Chrome, Zap,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ClerkProvider, SignIn, SignUp } from '@clerk/react';
@@ -25,7 +25,7 @@ const clerkProxyUrl = import.meta.env.PROD
 type Plan = 'signals' | 'mentorship' | 'membership';
 type SignalStatus = 'Active' | 'Watching' | 'Closed' | 'Stopped';
 type Direction = 'Long' | 'Short';
-type Thread = 'Signals' | 'News' | 'Community Chat';
+type Thread = 'Signals' | 'News' | 'Community Chat' | 'Shared Signals';
 
 type Member = {
   name: string; plan: Plan; joinedDate: string; timezone: string; nextBillingDate: string;
@@ -901,6 +901,23 @@ interface CommunityPost {
   authorName: string | null;
 }
 
+interface CommunitySignal {
+  id: string;
+  authorId: string;
+  authorName: string | null;
+  asset: string;
+  market: 'Stocks' | 'Crypto';
+  direction: 'Long' | 'Short';
+  entry: string;
+  target: string;
+  stop: string | null;
+  note: string;
+  status: 'Open' | 'Closed';
+  createdAt: string;
+  updatedAt: string;
+  logoUrl: string | null;
+}
+
 function communityTime(iso: string): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -910,6 +927,7 @@ function communityTime(iso: string): string {
 
 function CommunityPage() {
   const { getToken, user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [thread, setThread] = useState<Thread>('Signals');
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -918,7 +936,29 @@ function CommunityPage() {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
   const [reacted, setReacted] = useState<string[]>([]);
-  const threadCopy: Record<Thread,string> = { Signals:'Levels, entries, and the discipline around a setup.', News:'The macro and company context behind today\'s board.', 'Community Chat':'A considered place to compare notes with other members.' };
+  const threadCopy: Record<Thread,string> = { Signals:'Levels, entries, and the discipline around a setup.', News:'The macro and company context behind today\'s board.', 'Community Chat':'A considered place to compare notes with other members.', 'Shared Signals':'Member-posted trade ideas. Follow other members and share your own setups.' };
+
+  // Shared Signals — member-posted trade ideas, distinct from the Signals
+  // thread above (which is Wick's curated feed). Its own table/endpoints
+  // (GET/POST/PATCH/DELETE /api/community/signals, POST /api/community/follow/:id),
+  // already used by the mobile app — this just wires the same API into the
+  // website, which never had this tab.
+  const [sharedSignals, setSharedSignals] = useState<CommunitySignal[]>([]);
+  const [sharedLoading, setSharedLoading] = useState(true);
+  const [sharedError, setSharedError] = useState('');
+  const [following, setFollowing] = useState<string[]>([]);
+  const [signalScope, setSignalScope] = useState<'All' | 'Following'>('All');
+  const [followBusyId, setFollowBusyId] = useState<string | null>(null);
+  const [signalActionBusyId, setSignalActionBusyId] = useState<string | null>(null);
+  const [csAsset, setCsAsset] = useState('');
+  const [csMarket, setCsMarket] = useState<'Stocks' | 'Crypto'>('Stocks');
+  const [csDirection, setCsDirection] = useState<'Long' | 'Short'>('Long');
+  const [csEntry, setCsEntry] = useState('');
+  const [csTarget, setCsTarget] = useState('');
+  const [csStop, setCsStop] = useState('');
+  const [csNote, setCsNote] = useState('');
+  const [csSubmitting, setCsSubmitting] = useState(false);
+  const [csError, setCsError] = useState('');
 
   const fetchPosts = useCallback(async () => {
     setLoading(true);
@@ -940,6 +980,27 @@ function CommunityPage() {
   }, [getToken]);
 
   useEffect(() => { void fetchPosts(); }, [fetchPosts]);
+
+  const fetchSharedSignals = useCallback(async () => {
+    setSharedLoading(true);
+    setSharedError('');
+    try {
+      const token = await getToken();
+      const r = await fetch(apiPath('/community/signals'), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) { setSharedError('Could not load shared signals. Please try again.'); return; }
+      const data = await r.json() as { signals: CommunitySignal[]; following: string[] };
+      setSharedSignals(data.signals ?? []);
+      setFollowing(data.following ?? []);
+    } catch {
+      setSharedError('Could not load shared signals. Please try again.');
+    } finally {
+      setSharedLoading(false);
+    }
+  }, [getToken]);
+
+  useEffect(() => { void fetchSharedSignals(); }, [fetchSharedSignals]);
 
   const current = posts.filter((p) => p.thread === thread);
 
@@ -980,11 +1041,223 @@ function CommunityPage() {
     }
   };
 
-  return <div className="page"><PageHeading eyebrow="The room" title="Community." description="Three official threads. No feed to scroll forever." />
+  const removePost = async (postId: string) => {
+    if (postId.startsWith('optimistic-')) return;
+    if (!window.confirm('Delete this message?')) return;
+    const prev = posts;
+    setPosts((p) => p.filter((post) => post.id !== postId));
+    try {
+      const token = await getToken();
+      const r = await fetch(apiPath(`/community/${postId}`), {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) throw new Error('Failed');
+    } catch {
+      setPosts(prev);
+    }
+  };
+
+  const submitSharedSignal = async () => {
+    if (!csAsset.trim() || !csEntry.trim() || !csTarget.trim() || !csNote.trim() || csSubmitting) return;
+    setCsSubmitting(true);
+    setCsError('');
+    try {
+      const token = await getToken();
+      const r = await fetch(apiPath('/community/signals'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          asset: csAsset.trim().toUpperCase(),
+          market: csMarket,
+          direction: csDirection,
+          entry: csEntry.trim(),
+          target: csTarget.trim(),
+          stop: csStop.trim() || undefined,
+          note: csNote.trim(),
+        }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => null) as { error?: string } | null;
+        throw new Error(data?.error ?? 'Could not share your signal. Please try again.');
+      }
+      const data = await r.json() as { signal: CommunitySignal };
+      setSharedSignals((prev) => [data.signal, ...prev]);
+      setCsAsset(''); setCsEntry(''); setCsTarget(''); setCsStop(''); setCsNote('');
+    } catch (err) {
+      setCsError(err instanceof Error ? err.message : 'Could not share your signal. Please try again.');
+    } finally {
+      setCsSubmitting(false);
+    }
+  };
+
+  const toggleFollow = async (targetId: string) => {
+    if (followBusyId) return;
+    setFollowBusyId(targetId);
+    try {
+      const token = await getToken();
+      const r = await fetch(apiPath(`/community/follow/${targetId}`), {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) return;
+      const data = await r.json() as { following: boolean };
+      setFollowing((prev) => (data.following ? [...prev, targetId] : prev.filter((id) => id !== targetId)));
+    } finally {
+      setFollowBusyId(null);
+    }
+  };
+
+  const toggleSignalStatus = async (signal: CommunitySignal) => {
+    if (signalActionBusyId) return;
+    setSignalActionBusyId(signal.id);
+    const nextStatus = signal.status === 'Open' ? 'Closed' : 'Open';
+    try {
+      const token = await getToken();
+      const r = await fetch(apiPath(`/community/signals/${signal.id}`), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      if (!r.ok) return;
+      setSharedSignals((prev) => prev.map((s) => (s.id === signal.id ? { ...s, status: nextStatus } : s)));
+    } finally {
+      setSignalActionBusyId(null);
+    }
+  };
+
+  const deleteSharedSignal = async (signal: CommunitySignal) => {
+    if (signalActionBusyId) return;
+    if (!window.confirm(`Delete your ${signal.asset} shared signal?`)) return;
+    setSignalActionBusyId(signal.id);
+    try {
+      const token = await getToken();
+      const r = await fetch(apiPath(`/community/signals/${signal.id}`), {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!r.ok) return;
+      setSharedSignals((prev) => prev.filter((s) => s.id !== signal.id));
+    } finally {
+      setSignalActionBusyId(null);
+    }
+  };
+
+  const visibleSharedSignals = sharedSignals.filter(
+    (s) => signalScope === 'All' || following.includes(s.authorId) || s.authorId === user?.id,
+  );
+  const shareDisabled = !csAsset.trim() || !csEntry.trim() || !csTarget.trim() || !csNote.trim() || csSubmitting;
+
+  return <div className="page"><PageHeading eyebrow="The room" title="Community." description="Four official threads. No feed to scroll forever." />
     <section className="surface animate-in">
-      <div className="thread-tabs">{(['Signals','News','Community Chat'] as Thread[]).map((name) => <button key={name} className={`thread-tab ${thread === name ? 'active' : ''}`} onClick={() => setThread(name)} data-testid={`tab-thread-${name.toLowerCase().replace(' ','-')}`}>{name}</button>)}</div>
+      <div className="thread-tabs">{(['Signals','News','Community Chat','Shared Signals'] as Thread[]).map((name) => <button key={name} className={`thread-tab ${thread === name ? 'active' : ''}`} onClick={() => setThread(name)} data-testid={`tab-thread-${name.toLowerCase().replace(' ','-')}`}>{name}</button>)}</div>
       <p className="thread-description">{threadCopy[thread]}</p>
-      {loading ? (
+      {thread === 'Shared Signals' ? (
+        <>
+          <div className="filter-bar">
+            <button className={`filter-chip ${signalScope === 'All' ? 'selected' : ''}`} onClick={() => setSignalScope('All')} data-testid="filter-shared-scope-all">All</button>
+            <button className={`filter-chip ${signalScope === 'Following' ? 'selected' : ''}`} onClick={() => setSignalScope('Following')} data-testid="filter-shared-scope-following">Following ({following.length})</button>
+          </div>
+          {sharedLoading ? (
+            <div className="empty-state"><MessageCircle size={22} /><h3>Loading shared signals…</h3></div>
+          ) : sharedError ? (
+            <div className="empty-state">
+              <MessageCircle size={22} />
+              <h3>Something went wrong</h3>
+              <p>{sharedError}</p>
+              <button className="button button-dark" style={{ marginTop: 16 }} onClick={() => void fetchSharedSignals()} data-testid="button-retry-shared-signals">Try again</button>
+            </div>
+          ) : visibleSharedSignals.length === 0 ? (
+            <div className="empty-state">
+              <MessageCircle size={22} />
+              <h3>No shared signals yet</h3>
+              <p>{signalScope === 'Following' ? "You're not following anyone yet — switch to All to find members to follow." : 'Be the first to post one below.'}</p>
+            </div>
+          ) : (
+            <div className="messages">{visibleSharedSignals.map((s) => {
+              const author = s.authorName ?? 'Member';
+              const isOwn = s.authorId === user?.id;
+              const isFollowing = following.includes(s.authorId);
+              return (
+                <article className="message" key={s.id}>
+                  <div className="message-top">
+                    <div className="author"><span className="avatar">{initials(author)}</span><div><strong>{author}</strong><span>{communityTime(s.createdAt)}</span></div></div>
+                    {!isOwn && (
+                      <button
+                        className="button button-outline"
+                        style={{ minHeight: 30, padding: '5px 12px', fontSize: 10 }}
+                        disabled={followBusyId === s.authorId}
+                        onClick={() => void toggleFollow(s.authorId)}
+                        data-testid={`button-follow-${s.authorId}`}
+                      >
+                        {isFollowing ? <><UserCheck size={12} /> Following</> : <><UserPlus size={12} /> Follow</>}
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ margin: '15px 0 0 37px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span className="asset-name"><strong>{s.asset}</strong></span>
+                    <span className={`direction ${s.direction.toLowerCase()}`}>{s.direction}</span>
+                    <span className="option-tag">{s.market}</span>
+                    <span className={`status-pill ${s.status === 'Open' ? 'status-active' : 'status-closed'}`}>{s.status}</span>
+                  </div>
+                  <div style={{ margin: '12px 0 0 37px', display: 'flex', gap: 24 }}>
+                    <span className="signal-cell"><small>Entry</small>{s.entry}</span>
+                    <span className="signal-cell"><small>Target</small>{s.target}</span>
+                    {s.stop && <span className="signal-cell"><small>Stop</small>{s.stop}</span>}
+                  </div>
+                  <p className="message-text">{s.note}</p>
+                  {(isOwn || isAdmin) && (
+                    <div className="message-bottom">
+                      {isOwn && (
+                        <button className="reaction" onClick={() => void toggleSignalStatus(s)} disabled={signalActionBusyId === s.id} data-testid={`button-toggle-status-${s.id}`}>
+                          {s.status === 'Open' ? <Check size={11} /> : <RotateCcw size={11} />} {s.status === 'Open' ? 'Mark closed' : 'Reopen'}
+                        </button>
+                      )}
+                      <button className="reaction" onClick={() => void deleteSharedSignal(s)} disabled={signalActionBusyId === s.id} data-testid={`button-delete-shared-signal-${s.id}`}>
+                        <Trash2 size={11} /> {isOwn ? 'Delete' : 'Remove'}
+                      </button>
+                    </div>
+                  )}
+                </article>
+              );
+            })}</div>
+          )}
+          <div className="composer">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <input value={csAsset} onChange={(e) => setCsAsset(e.target.value)} placeholder="Ticker, e.g. NVDA" disabled={csSubmitting}
+                style={{ padding: 12, background: 'var(--input)', border: '1px solid var(--border)', color: 'var(--foreground)', outline: 'none', fontSize: 12 }}
+                data-testid="input-shared-signal-ticker" />
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {(['Stocks', 'Crypto'] as const).map((m) => (
+                  <button key={m} className={`filter-chip ${csMarket === m ? 'selected' : ''}`} onClick={() => setCsMarket(m)} disabled={csSubmitting} data-testid={`button-shared-signal-market-${m.toLowerCase()}`}>{m}</button>
+                ))}
+                {(['Long', 'Short'] as const).map((d) => (
+                  <button key={d} className={`filter-chip ${csDirection === d ? 'selected' : ''}`} onClick={() => setCsDirection(d)} disabled={csSubmitting} data-testid={`button-shared-signal-direction-${d.toLowerCase()}`}>{d}</button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={csEntry} onChange={(e) => setCsEntry(e.target.value)} placeholder="Entry" disabled={csSubmitting}
+                  style={{ flex: 1, padding: 12, background: 'var(--input)', border: '1px solid var(--border)', color: 'var(--foreground)', outline: 'none', fontSize: 12 }}
+                  data-testid="input-shared-signal-entry" />
+                <input value={csTarget} onChange={(e) => setCsTarget(e.target.value)} placeholder="Target" disabled={csSubmitting}
+                  style={{ flex: 1, padding: 12, background: 'var(--input)', border: '1px solid var(--border)', color: 'var(--foreground)', outline: 'none', fontSize: 12 }}
+                  data-testid="input-shared-signal-target" />
+                <input value={csStop} onChange={(e) => setCsStop(e.target.value)} placeholder="Stop (optional)" disabled={csSubmitting}
+                  style={{ flex: 1, padding: 12, background: 'var(--input)', border: '1px solid var(--border)', color: 'var(--foreground)', outline: 'none', fontSize: 12 }}
+                  data-testid="input-shared-signal-stop" />
+              </div>
+              <textarea value={csNote} onChange={(e) => setCsNote(e.target.value)} placeholder="Why are you in this trade?" disabled={csSubmitting} data-testid="input-shared-signal-note" />
+            </div>
+            {csError && <p className="checkout-error" style={{ marginTop: 8 }}>{csError}</p>}
+            <div className="composer-footer">
+              <span>Member-shared ideas, not reviewed by Wick Betts. Educational only.</span>
+              <button className="button button-primary" onClick={() => void submitSharedSignal()} disabled={shareDisabled} data-testid="button-share-signal">
+                {csSubmitting ? 'Sharing…' : <>Share to community <ArrowRight size={13} /></>}
+              </button>
+            </div>
+          </div>
+        </>
+      ) : loading ? (
         <div className="empty-state"><MessageCircle size={22} /><h3>Loading messages…</h3></div>
       ) : loadError ? (
         <div className="empty-state">
@@ -998,6 +1271,7 @@ function CommunityPage() {
       ) : (
         <div className="messages">{current.map((message) => {
           const author = message.authorName ?? 'Member';
+          const canRemove = message.authorId === user?.id || isAdmin;
           return (
             <article className="message" key={message.id}>
               <div className="message-top">
@@ -1006,6 +1280,11 @@ function CommunityPage() {
               <p className="message-text">{message.text}</p>
               <div className="message-bottom">
                 <button className={`reaction ${reacted.includes(message.id) ? 'reacted' : ''}`} onClick={() => setReacted(reacted.includes(message.id) ? reacted.filter((id) => id !== message.id) : [...reacted, message.id])} data-testid={`button-react-message-${message.id}`}><Heart size={11} /> {reacted.includes(message.id) ? 1 : 0}</button>
+                {canRemove && (
+                  <button className="reaction" onClick={() => void removePost(message.id)} data-testid={`button-delete-message-${message.id}`}>
+                    <Trash2 size={11} /> Delete
+                  </button>
+                )}
               </div>
             </article>
           );
