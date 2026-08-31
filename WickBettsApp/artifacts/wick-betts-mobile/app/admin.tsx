@@ -93,6 +93,14 @@ export default function AdminScreen() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [togglingStarId, setTogglingStarId] = useState<string | null>(null);
+
+  // Signals currently featured in the Community tab's Signals feed — capped
+  // at 4 server-side (see MAX_COMMUNITY_STARRED in routes/signals.ts), kept
+  // here just so the UI can disable the star action once the cap is hit
+  // instead of only finding out after a failed request.
+  const starredCount = signals.filter((s) => s.communityStarred).length;
+  const MAX_COMMUNITY_STARRED = 4;
 
   const isAdmin = user?.role === 'admin';
 
@@ -139,6 +147,19 @@ export default function AdminScreen() {
       setError(e instanceof Error ? e.message : 'Failed to update status. Try again.');
     } finally {
       setUpdatingStatusId(null);
+    }
+  };
+
+  const toggleCommunityStar = async (s: Signal) => {
+    setTogglingStarId(s.id);
+    setError('');
+    try {
+      await updateSignal(s.id, { communityStarred: !s.communityStarred });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update Community feature. Try again.');
+    } finally {
+      setTogglingStarId(null);
     }
   };
 
@@ -505,6 +526,9 @@ export default function AdminScreen() {
         <Text style={[styles.sectionTitle, styles.listHeading, { color: colors.foreground }]}>
           Published signals ({signals.length})
         </Text>
+        <Text style={[styles.footerNote, { marginTop: -6, marginBottom: 10, color: colors.mutedForeground }]}>
+          {starredCount}/{MAX_COMMUNITY_STARRED} featured in Community right now. Tap the bookmark on a signal to feature or unfeature it.
+        </Text>
         {signals.length === 0 ? (
           <View style={[styles.notice, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
             <Ionicons name="radio-outline" size={18} color={colors.mutedForeground} />
@@ -539,6 +563,27 @@ export default function AdminScreen() {
                   ) : null}
                 </View>
                 <View style={styles.rowActions}>
+                  <Pressable
+                    onPress={() => void toggleCommunityStar(s)}
+                    disabled={togglingStarId === s.id || (!s.communityStarred && starredCount >= MAX_COMMUNITY_STARRED)}
+                    style={[
+                      styles.editButton,
+                      { borderColor: colors.border },
+                      !s.communityStarred && starredCount >= MAX_COMMUNITY_STARRED && { opacity: 0.5 },
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={s.communityStarred ? `Remove ${s.asset} from Community` : `Feature ${s.asset} in Community`}
+                    testID={`toggle-community-star-${s.id}`}
+                  >
+                    <Ionicons
+                      name={s.communityStarred ? 'bookmark' : 'bookmark-outline'}
+                      size={14}
+                      color={colors.primary}
+                    />
+                    <Text style={[styles.editButtonText, { color: colors.primary }]}>
+                      {togglingStarId === s.id ? '…' : s.communityStarred ? 'Featured' : 'Feature'}
+                    </Text>
+                  </Pressable>
                   <Pressable
                     onPress={() => startEdit(s)}
                     style={[styles.editButton, { borderColor: colors.border }]}

@@ -76,6 +76,13 @@ export const signalsTable = pgTable("signals", {
   // major macro event (FOMC/CPI/jobs report) or the symbol's own earnings date.
   newsAlert: boolean("news_alert").notNull().default(false),
   newsAlertNote: text("news_alert_note"),
+  // Admin-curated "featured in Community" flag — distinct from `newsAlert`
+  // above (which reuses a star icon in the admin list for an unrelated
+  // "near a news event" warning). When true, this signal appears in the
+  // Community tab's Signals feed for every member. Capped at 4 concurrently
+  // true rows at a time — enforced in the PATCH /api/signals/:id handler,
+  // not at the schema level.
+  communityStarred: boolean("community_starred").notNull().default(false),
 });
 
 export const insertSignalSchema = createInsertSchema(signalsTable).omit({ createdAt: true });

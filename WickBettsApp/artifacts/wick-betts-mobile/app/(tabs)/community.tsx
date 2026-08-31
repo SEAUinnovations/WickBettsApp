@@ -9,6 +9,7 @@ import { TickerAutocomplete } from '@/components/TickerAutocomplete';
 import { TickerIcon } from '@/components/TickerIcon';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
+import { useSignals, type Signal } from '@/context/SignalContext';
 import { API_BASE } from '@/lib/apiUrl';
 
 type Thread = 'Signals' | 'News' | 'Community Chat' | 'Trade Review' | 'Shared Signals';
@@ -93,11 +94,93 @@ function formatTime(iso: string): string {
   }
 }
 
+// Read-only card for a signal an admin has starred into the Community
+// feed. Deliberately a separate, simpler component from (tabs)/signals.tsx's
+// SignalCard rather than a shared import — this one has no admin controls
+// (advance status / remove / watchlist), always shows full contract detail
+// instead of expand-to-reveal, and this feed is capped at 4 items so there's
+// no list-performance reason to keep it any more complex than it needs to be.
+function StarredSignalCard({ signal }: { signal: Signal }) {
+  const colors = useColors();
+  return (
+    <Card style={styles.messageCard}>
+      <View style={styles.messageTop}>
+        <TickerIcon symbol={signal.asset} logoUrl={signal.logoUrl} size={40} />
+        <View style={{ flex: 1, marginLeft: 10 }}>
+          <View style={styles.starredTitleRow}>
+            <Text style={[styles.author, { color: colors.foreground }]}>{signal.asset}</Text>
+            {signal.isOption ? <Tag>{signal.optionType ?? 'OPTION'}</Tag> : null}
+            <Tag tone="orange">{signal.style || 'Swing'}</Tag>
+            <Tag tone={signal.direction === 'Long' ? 'green' : 'orange'}>{signal.direction}</Tag>
+          </View>
+          <Text style={[styles.time, { color: colors.mutedForeground }]}>
+            {signal.market}{signal.sector ? ` · ${signal.sector}` : ''} · {signal.timeframe}
+          </Text>
+        </View>
+        <Ionicons name="bookmark" size={16} color={colors.primary} accessibilityLabel="Featured in Community" />
+      </View>
+
+      {signal.isOption ? (
+        <View style={[styles.starredContractBox, { backgroundColor: colors.muted }]}>
+          <Text style={[styles.starredContractLabel, { color: colors.primary }]}>CONTRACT</Text>
+          <Text style={[styles.starredContractName, { color: colors.foreground }]}>{signal.contract}</Text>
+          <View style={styles.starredContractMetaRow}>
+            <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>Expiry {signal.expiration}</Text>
+            <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>Strike {signal.strike}</Text>
+            <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>Premium {signal.premium}</Text>
+          </View>
+          <View style={styles.starredContractMetaRow}>
+            <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>Bid {signal.bid ?? '—'}</Text>
+            <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>Ask {signal.ask ?? '—'}</Text>
+            <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>IV {signal.impliedVolatility ?? '—'}</Text>
+          </View>
+          <View style={styles.starredContractMetaRow}>
+            <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>Δ {signal.delta?.toFixed(2) ?? '—'}</Text>
+            <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>Γ {signal.gamma?.toFixed(3) ?? '—'}</Text>
+            <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>Θ {signal.theta?.toFixed(2) ?? '—'}</Text>
+            <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>V {signal.vega?.toFixed(2) ?? '—'}</Text>
+          </View>
+          {signal.openInterest ? (
+            <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground, marginTop: 4 }]}>Open interest {signal.openInterest}</Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      <View style={[styles.starredLevelsRow, { borderTopColor: colors.border }]}>
+        <View>
+          <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>{signal.isOption ? 'Debit' : 'Entry'}</Text>
+          <Text style={[styles.starredLevelValue, { color: colors.foreground }]}>{signal.entry}</Text>
+        </View>
+        <View>
+          <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Take profit</Text>
+          <Text style={[styles.starredLevelValue, { color: colors.accent }]}>{signal.target}</Text>
+        </View>
+        {signal.stop ? (
+          <View>
+            <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Stop loss</Text>
+            <Text style={[styles.starredLevelValue, { color: colors.destructive }]}>{signal.stop}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <Text style={[styles.messageText, { color: colors.mutedForeground }]}>{signal.analysis}</Text>
+    </Card>
+  );
+}
+
 export default function CommunityScreen() {
   const router = useRouter();
   const colors = useColors();
   const { getToken, user, buyTradeReviewCredit } = useAuth();
   const isAdmin = user?.role === 'admin';
+  // Community's "Signals" tab surfaces up to 4 admin-featured signals (see
+  // communityStarred in lib/db/src/schema/signals.ts) with full contract
+  // detail — reuses the same SignalProvider/context the main Signals tab
+  // and Signal Studio already run on, so no separate fetch is needed here.
+  const { signals: allSignals, isLoading: signalsLoading } = useSignals();
+  const starredSignals = allSignals
+    .filter((s) => s.communityStarred && s.status !== 'Closed' && s.status !== 'Stopped')
+    .slice(0, 4);
   const [thread, setThread] = useState<Thread>('Signals');
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,7 +189,9 @@ export default function CommunityScreen() {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
 
-  const tabs: Thread[] = ['Signals', 'News', 'Community Chat', 'Shared Signals', 'Trade Review'];
+  // 'News' removed from Community's own tab bar — the app already has a
+  // dedicated News tab in the bottom nav, so this one was redundant.
+  const tabs: Thread[] = ['Signals', 'Community Chat', 'Shared Signals', 'Trade Review'];
 
   // Trade Review has its own backing store (separate endpoint/table from
   // the plain-text community posts, since it carries an image + structured
@@ -651,7 +736,22 @@ export default function CommunityScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-      {thread === 'Shared Signals' ? (
+      {thread === 'Signals' ? (
+        <ScrollView style={styles.messageList} showsVerticalScrollIndicator={false}>
+          <Text style={[styles.starredSectionHeader, { color: colors.mutedForeground }]}>
+            Featured setups — up to 4 signals the desk has starred for the whole community, full contract detail included.
+          </Text>
+          {signalsLoading ? (
+            <ActivityIndicator color={colors.primary} style={styles.spinner} />
+          ) : starredSignals.length === 0 ? (
+            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+              No signals starred for Community right now. Check back soon.
+            </Text>
+          ) : (
+            starredSignals.map((signal) => <StarredSignalCard key={signal.id} signal={signal} />)
+          )}
+        </ScrollView>
+      ) : thread === 'Shared Signals' ? (
         <>
           {/* Following / All scope pills */}
           <View style={styles.signalScopeRow}>
@@ -1219,6 +1319,15 @@ const styles = StyleSheet.create({
   author: { fontSize: 13, fontFamily: 'Inter_700Bold' },
   time: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 2 },
   messageText: { fontSize: 13, lineHeight: 19, fontFamily: 'Inter_400Regular', marginTop: 14 },
+  starredSectionHeader: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 18, marginBottom: 14 },
+  starredTitleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
+  starredContractBox: { borderRadius: 12, padding: 12, marginTop: 14 },
+  starredContractLabel: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1.2, marginBottom: 5 },
+  starredContractName: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  starredContractMetaRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
+  starredContractMetaText: { fontSize: 10, fontFamily: 'Inter_400Regular' },
+  starredLevelsRow: { flexDirection: 'row', gap: 20, marginTop: 14, paddingTop: 14, borderTopWidth: 1 },
+  starredLevelValue: { fontSize: 14, fontFamily: 'Inter_700Bold', marginTop: 4 },
   reactionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 },
   reactionChip: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5 },
   reactionEmoji: { fontSize: 13 },

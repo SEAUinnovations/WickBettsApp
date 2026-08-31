@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { db, signalsTable, subscriptionsTable } from "../lib/db.js";
-import { eq, desc, ne } from "drizzle-orm";
+import { eq, desc, ne, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { logger } from "../lib/logger.js";
 import { fanOutSignalNotification } from "../utils/pushNotifications.js";
@@ -73,6 +73,12 @@ router.get("/", requireAuth, requireActiveSubscription, async (req: Request, res
 
 const VALID_STYLES = ["Day Trade", "Swing", "Buy & Hold", "LEAPS"] as const;
 type SignalStyle = (typeof VALID_STYLES)[number];
+
+// Max signals that can be featured in the Community tab's Signals feed at
+// once (see communityStarred on signalsTable) — kept small on purpose so
+// the feed stays a curated highlight reel, not a second copy of the full
+// member feed.
+const MAX_COMMUNITY_STARRED = 4;
 
 // POST /api/signals — publish a signal (admin only)
 router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) => {
@@ -184,6 +190,7 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
     strike?: string | null; premium?: string | null; bid?: string | null; ask?: string | null;
     impliedVolatility?: string | null; delta?: number | null; gamma?: number | null;
     theta?: number | null; vega?: number | null; openInterest?: string | null;
+    communityStarred?: boolean | null;
   };
 
   const validStatus = ["Active", "Watching", "Closed", "Stopped"];
@@ -221,6 +228,9 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
       res.status(400).json({ error: `${field} must be a finite number or null` }); return;
     }
   }
+  if (body.communityStarred != null && typeof body.communityStarred !== "boolean") {
+    res.status(400).json({ error: "communityStarred must be a boolean" }); return;
+  }
 
   const updates: Record<string, unknown> = {};
   const include = (key: string, val: unknown) => { if (val !== undefined) updates[key] = val; };
@@ -234,7 +244,7 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   include("premium", body.premium); include("bid", body.bid); include("ask", body.ask);
   include("impliedVolatility", body.impliedVolatility); include("delta", body.delta);
   include("gamma", body.gamma); include("theta", body.theta); include("vega", body.vega);
-  include("openInterest", body.openInterest);
+  include("openInterest", body.openInterest); include("communityStarred", body.communityStarred);
 
   if (Object.keys(updates).length === 0) {
     res.status(400).json({ error: "No fields to update" });
@@ -242,6 +252,23 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   }
 
   try {
+    // Enforce the Community-feed cap here rather than at the schema level:
+    // only checked when a signal is newly being turned on (flipping an
+    // already-starred signal's other fields, or un-starring, must never be
+    // blocked by this).
+    if (updates.communityStarred === true) {
+      const alreadyStarred = await db
+        .select({ id: signalsTable.id })
+        .from(signalsTable)
+        .where(and(eq(signalsTable.communityStarred, true), ne(signalsTable.id, id)));
+      if (alreadyStarred.length >= MAX_COMMUNITY_STARRED) {
+        res.status(400).json({
+          error: `Only ${MAX_COMMUNITY_STARRED} signals can be starred for Community at once — unstar one first.`,
+        });
+        return;
+      }
+    }
+
     const before = await db
       .select({ status: signalsTable.status })
       .from(signalsTable)

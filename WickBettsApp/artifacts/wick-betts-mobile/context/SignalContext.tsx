@@ -60,6 +60,8 @@ export interface Signal {
   newsAlertNote?: string;
   /** Best-effort logo image URL for `asset`, resolved server-side; null/absent falls back to an initials badge. */
   logoUrl?: string | null;
+  /** Admin-curated "featured in Community" flag — shows in the Community tab's Signals feed for every member (capped at 4 at once server-side). Distinct from `newsAlert`. */
+  communityStarred?: boolean;
 }
 
 interface ApiSignal {
@@ -95,6 +97,7 @@ interface ApiSignal {
   newsAlert?: boolean;
   newsAlertNote?: string;
   logoUrl?: string | null;
+  communityStarred?: boolean;
 }
 
 const STORAGE_KEY_PREFIX = '@wick-betts/signals-v2';
@@ -167,6 +170,7 @@ function mapApiSignal(s: ApiSignal): Signal {
     newsAlert: s.newsAlert,
     newsAlertNote: s.newsAlertNote,
     logoUrl: s.logoUrl,
+    communityStarred: s.communityStarred,
   };
 }
 
