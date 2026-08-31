@@ -19,6 +19,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { SignalProvider } from '@/context/SignalContext';
+import { NotificationsProvider } from '@/context/NotificationsContext';
 import { AUTH_DOMAIN } from '@/lib/apiUrl';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
@@ -109,6 +110,7 @@ function RootLayoutNav() {
       <Stack.Screen name="admin/mentorship" options={{ headerShown: false }} />
       <Stack.Screen name="admin/referrals" options={{ headerShown: false }} />
       <Stack.Screen name="contact" options={{ headerShown: false }} />
+      <Stack.Screen name="notifications" options={{ headerShown: false }} />
     </Stack>
   );
 }
@@ -139,9 +141,11 @@ export default function RootLayout() {
                 <KeyboardProvider>
                   <AuthProvider>
                     <SignalProvider>
-                      <AuthGate>
-                        <RootLayoutNav />
-                      </AuthGate>
+                      <NotificationsProvider>
+                        <AuthGate>
+                          <RootLayoutNav />
+                        </AuthGate>
+                      </NotificationsProvider>
                     </SignalProvider>
                   </AuthProvider>
                 </KeyboardProvider>

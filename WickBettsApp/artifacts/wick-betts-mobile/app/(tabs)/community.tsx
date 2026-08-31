@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -10,6 +10,7 @@ import { TickerIcon } from '@/components/TickerIcon';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
 import { useSignals, type Signal } from '@/context/SignalContext';
+import { useNotifications } from '@/context/NotificationsContext';
 import { API_BASE } from '@/lib/apiUrl';
 
 type Thread = 'Signals' | 'News' | 'Community Chat' | 'Trade Review' | 'Shared Signals';
@@ -178,6 +179,7 @@ export default function CommunityScreen() {
   // detail — reuses the same SignalProvider/context the main Signals tab
   // and Signal Studio already run on, so no separate fetch is needed here.
   const { signals: allSignals, isLoading: signalsLoading } = useSignals();
+  const { unreadCount } = useNotifications();
   const starredSignals = allSignals
     .filter((s) => s.communityStarred && s.status !== 'Closed' && s.status !== 'Stopped')
     .slice(0, 4);
@@ -218,6 +220,14 @@ export default function CommunityScreen() {
   // composer (screenshot + bias + setup + submit) eating most of the
   // available height and squeezing the feed down to a sliver.
   const [composerOpen, setComposerOpen] = useState(false);
+  // Which review card (if any) is expanded to show its full AI read. Cards
+  // render collapsed by default so a member can scan many past reviews at
+  // once; tapping a card opens just that one.
+  const [expandedReviewId, setExpandedReviewId] = useState<string | null>(null);
+  // Chart screenshot currently shown full-screen, or null when the viewer
+  // is closed. Tapping a review's image opens it here instead of expanding
+  // the card, so the two gestures never fight each other.
+  const [enlargedImageUrl, setEnlargedImageUrl] = useState<string | null>(null);
 
   const fetchTradeReviews = useCallback(async () => {
     try {
@@ -684,7 +694,7 @@ export default function CommunityScreen() {
     // That nested-scroll bug is the root cause of the feed feeling
     // "bunched together" and of newly-submitted results being unreachable.
     <Screen scroll={false}>
-      <Header eyebrow="Wick Betts / Members only" title="Community" action="Alerts" onAction={() => router.push('/news')} />
+      <Header eyebrow="Wick Betts / Members only" title="Community" action="Alerts" onAction={() => router.push('/notifications')} badge={unreadCount} />
       <Text style={[styles.description, { color: colors.mutedForeground }]}>
         One community. No noise. Keep the conversation useful.
       </Text>
@@ -970,9 +980,12 @@ export default function CommunityScreen() {
                 No trades submitted yet. Drop a chart screenshot below and the AI will review it instantly.
               </Text>
             ) : (
-              tradeReviews.map((review) => (
+              tradeReviews.map((review) => {
+                const isExpanded = review.id === expandedReviewId;
+                return (
                 <Card
                   key={review.id}
+                  onPress={() => setExpandedReviewId((prev) => (prev === review.id ? null : review.id))}
                   style={[
                     styles.messageCard,
                     review.id === highlightReviewId && { borderColor: colors.primary, borderWidth: 2 },
@@ -999,24 +1012,54 @@ export default function CommunityScreen() {
                     )}
                   </View>
 
-                  <Image source={{ uri: review.imageDataUrl }} style={styles.chartImage} resizeMode="cover" />
-
-                  <Text style={[styles.messageText, { color: colors.mutedForeground }]}>{review.description}</Text>
-
-                  <View style={[styles.aiReviewBox, { backgroundColor: colors.muted }]}>
-                    <View style={styles.aiReviewHeader}>
-                      <Text style={[styles.aiReviewLabel, { color: colors.primary }]}>AI READ</Text>
-                      <Tag tone={verdictTone(review.aiVerdict)}>{review.aiVerdict} with bias</Tag>
+                  {/* Nested Pressable: tapping the chart opens the full-screen
+                      viewer instead of toggling the card, since RN resolves
+                      touches to the innermost pressable rather than bubbling. */}
+                  <Pressable
+                    onPress={() => setEnlargedImageUrl(review.imageDataUrl)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Enlarge chart screenshot"
+                  >
+                    <Image source={{ uri: review.imageDataUrl }} style={styles.chartImage} resizeMode="cover" />
+                    <View style={styles.expandImageHint}>
+                      <Ionicons name="expand-outline" size={13} color="#fff" />
                     </View>
-                    <Text style={[styles.aiReviewText, { color: colors.foreground }]}>{review.aiTechnicalRead}</Text>
-                    <Text style={[styles.aiReviewText, { color: colors.mutedForeground, marginTop: 8 }]}>{review.aiBiasExplanation}</Text>
-                    <View style={[styles.riskNote, { borderTopColor: colors.border }]}>
-                      <Ionicons name="warning-outline" size={13} color={colors.destructive} />
-                      <Text style={[styles.riskNoteText, { color: colors.mutedForeground }]}>{review.aiRiskNote}</Text>
+                  </Pressable>
+
+                  <Text
+                    style={[styles.messageText, { color: colors.mutedForeground }]}
+                    numberOfLines={isExpanded ? undefined : 2}
+                  >
+                    {review.description}
+                  </Text>
+
+                  {isExpanded ? (
+                    <View style={[styles.aiReviewBox, { backgroundColor: colors.muted }]}>
+                      <View style={styles.aiReviewHeader}>
+                        <Text style={[styles.aiReviewLabel, { color: colors.primary }]}>AI READ</Text>
+                        <Tag tone={verdictTone(review.aiVerdict)}>{review.aiVerdict} with bias</Tag>
+                      </View>
+                      <Text style={[styles.aiReviewText, { color: colors.foreground }]}>{review.aiTechnicalRead}</Text>
+                      <Text style={[styles.aiReviewText, { color: colors.mutedForeground, marginTop: 8 }]}>{review.aiBiasExplanation}</Text>
+                      <View style={[styles.riskNote, { borderTopColor: colors.border }]}>
+                        <Ionicons name="warning-outline" size={13} color={colors.destructive} />
+                        <Text style={[styles.riskNoteText, { color: colors.mutedForeground }]}>{review.aiRiskNote}</Text>
+                      </View>
+                      <View style={styles.collapseHintRow}>
+                        <Ionicons name="chevron-up" size={13} color={colors.mutedForeground} />
+                        <Text style={[styles.collapseHintText, { color: colors.mutedForeground }]}>Tap to collapse</Text>
+                      </View>
                     </View>
-                  </View>
+                  ) : (
+                    <View style={styles.collapseHintRow}>
+                      <Ionicons name="sparkles-outline" size={13} color={colors.primary} />
+                      <Text style={[styles.collapseHintText, { color: colors.primary }]}>Tap for AI read & risk note</Text>
+                      <Ionicons name="chevron-down" size={13} color={colors.primary} />
+                    </View>
+                  )}
                 </Card>
-              ))
+                );
+              })
             )}
           </ScrollView>
 
@@ -1025,28 +1068,50 @@ export default function CommunityScreen() {
               to) the full screen; expands only when a member wants to add
               a new review. */}
           <View style={[styles.reviewComposer, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Pressable
-              onPress={() => setComposerOpen((open) => !open)}
-              style={styles.composerToggleRow}
-              accessibilityRole="button"
-              accessibilityState={{ expanded: composerOpen }}
-              accessibilityLabel={composerOpen ? 'Collapse new trade review form' : 'Expand new trade review form'}
-            >
-              <View style={styles.composerToggleLeft}>
-                <Ionicons name="add-circle-outline" size={18} color={colors.primary} />
-                <Text style={[styles.composerToggleText, { color: colors.foreground }]}>New trade review</Text>
-                {!composerOpen && reviewUsage && user?.role !== 'admin' ? (
-                  <Text style={[styles.composerToggleSubtext, { color: colors.mutedForeground }]} numberOfLines={1}>
+            {composerOpen ? (
+              <Pressable
+                onPress={() => setComposerOpen(false)}
+                style={styles.composerToggleRow}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: true }}
+                accessibilityLabel="Collapse new trade review form"
+              >
+                <View style={styles.composerToggleLeft}>
+                  <Ionicons name="add-circle-outline" size={18} color={colors.primary} />
+                  <Text style={[styles.composerToggleText, { color: colors.foreground }]}>New trade review</Text>
+                </View>
+                <Ionicons name="chevron-up" size={18} color={colors.mutedForeground} />
+              </Pressable>
+            ) : (
+              <>
+                {/* A real button, not just a tappable bar, per member feedback
+                    that the collapsed toggle didn't read as a clear
+                    call-to-action for starting a new review. */}
+                <Pressable
+                  onPress={() => setComposerOpen(true)}
+                  style={({ pressed }) => [
+                    styles.newReviewButton,
+                    { backgroundColor: colors.primary },
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: false }}
+                  accessibilityLabel="Create new trade review"
+                >
+                  <Ionicons name="add-circle" size={18} color={colors.primaryForeground} />
+                  <Text style={[styles.newReviewButtonText, { color: colors.primaryForeground }]}>New Trade Review</Text>
+                </Pressable>
+                {reviewUsage && user?.role !== 'admin' ? (
+                  <Text style={[styles.composerToggleSubtext, styles.newReviewSubtext, { color: colors.mutedForeground }]} numberOfLines={1}>
                     {reviewUsage.freeRemaining > 0
-                      ? `· ${reviewUsage.freeRemaining} free left`
+                      ? `${reviewUsage.freeRemaining} free review${reviewUsage.freeRemaining === 1 ? '' : 's'} left`
                       : reviewUsage.credits > 0
-                        ? `· ${reviewUsage.credits} credit${reviewUsage.credits === 1 ? '' : 's'} left`
-                        : '· $2.50 each'}
+                        ? `${reviewUsage.credits} credit${reviewUsage.credits === 1 ? '' : 's'} left`
+                        : '$2.50 each'}
                   </Text>
                 ) : null}
-              </View>
-              <Ionicons name={composerOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.mutedForeground} />
-            </Pressable>
+              </>
+            )}
 
             {composerOpen ? (
               <>
@@ -1294,6 +1359,25 @@ export default function CommunityScreen() {
         </>
       )}
       </KeyboardAvoidingView>
+
+      {/* Full-screen chart viewer — opened by tapping a trade review's
+          screenshot. Lives at the screen root (not inside the feed
+          ScrollView) since Modal renders in its own native layer. */}
+      <Modal
+        visible={!!enlargedImageUrl}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEnlargedImageUrl(null)}
+      >
+        <Pressable style={styles.imageViewerBackdrop} onPress={() => setEnlargedImageUrl(null)} accessibilityRole="button" accessibilityLabel="Close chart viewer">
+          <Pressable style={styles.imageViewerClose} onPress={() => setEnlargedImageUrl(null)} accessibilityRole="button" accessibilityLabel="Close">
+            <Ionicons name="close" size={20} color="#fff" />
+          </Pressable>
+          {enlargedImageUrl ? (
+            <Image source={{ uri: enlargedImageUrl }} style={styles.imageViewerImage} resizeMode="contain" />
+          ) : null}
+        </Pressable>
+      </Modal>
     </Screen>
   );
 }
@@ -1336,12 +1420,21 @@ const styles = StyleSheet.create({
   input: { flex: 1, minHeight: 40, maxHeight: 72, fontSize: 12, fontFamily: 'Inter_400Regular', paddingTop: 10 },
   sendButton: { height: 42, width: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   chartImage: { width: '100%', height: 190, borderRadius: 12, marginTop: 12, backgroundColor: '#171321' },
+  expandImageHint: { position: 'absolute', right: 8, bottom: 8, width: 26, height: 26, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
   aiReviewBox: { borderRadius: 12, padding: 12, marginTop: 14 },
   aiReviewHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 6 },
   aiReviewLabel: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
   aiReviewText: { fontSize: 12, lineHeight: 18, fontFamily: 'Inter_400Regular' },
   riskNote: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, borderTopWidth: 1, marginTop: 10, paddingTop: 10 },
   riskNoteText: { flex: 1, fontSize: 11, lineHeight: 16, fontFamily: 'Inter_400Regular' },
+  collapseHintRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 10 },
+  collapseHintText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  newReviewButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 13, borderRadius: 13 },
+  newReviewButtonText: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  newReviewSubtext: { textAlign: 'center', marginTop: 7 },
+  imageViewerBackdrop: { flex: 1, backgroundColor: 'rgba(4,3,8,0.96)', alignItems: 'center', justifyContent: 'center' },
+  imageViewerClose: { position: 'absolute', top: 56, right: 20, width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center', zIndex: 1 },
+  imageViewerImage: { width: '100%', height: '70%' },
   keyboardAvoider: { flex: 1 },
   reviewComposer: { borderWidth: 1, borderRadius: 17, padding: 14, marginTop: 8, gap: 14 },
   composerToggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

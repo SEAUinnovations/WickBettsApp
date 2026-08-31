@@ -9,6 +9,7 @@ import { LapsedRecovery, SubscribePanel } from '@/components/Billing';
 import { useColors } from '@/hooks/useColors';
 import { useAuth, type Plan } from '@/context/AuthContext';
 import { useSignals, type Signal, type SignalStatus } from '@/context/SignalContext';
+import { useNotifications } from '@/context/NotificationsContext';
 import { useWatchlist } from '@/hooks/useWatchlist';
 
 // 'Buy & Hold' is intentionally not a filter pill on its own — every stock
@@ -56,6 +57,7 @@ export default function SignalsScreen() {
   const colors = useColors();
   const { subscription, user } = useAuth();
   const { signals, isLoading, isSubscriptionRequired, error, refresh, updateSignal, deleteSignal } = useSignals();
+  const { unreadCount } = useNotifications();
   const { items: watchlistItems, saving: watchlistSaving, addItem: addWatchlistItem } = useWatchlist();
   const isAdmin = user?.role === 'admin';
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -162,7 +164,7 @@ export default function SignalsScreen() {
 
   return (
     <Screen contentStyle={styles.content}>
-      <Header eyebrow="Wick Betts / Intelligence" title="Signals" action="Alerts" onAction={() => router.push('/news')} />
+      <Header eyebrow="Wick Betts / Intelligence" title="Signals" action="Alerts" onAction={() => router.push('/notifications')} badge={unreadCount} />
 
       {/* Subscription required gate */}
       {isSubscriptionRequired ? (

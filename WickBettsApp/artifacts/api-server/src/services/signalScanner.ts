@@ -7,6 +7,7 @@ import { fetchStockDailyBars, fetchCryptoDailyBars } from "./marketHistory.js";
 import { fetchFuturesHourlyBars, resampleTo4Hour } from "./intradayData.js";
 import { screenSymbol, type ScreenResult } from "./technicalAnalysis.js";
 import { blackScholes, pickExpiration, pickStrike, formatExpirationLabel, formatExpirationCode } from "./optionsModel.js";
+import { fetchOptionsChain, selectContract, contractMidPrice, type ChainContract } from "./optionsChain.js";
 import { getNewsAlert, fomcWithinRange } from "./economicCalendar.js";
 import { getMacroConfluence, type MacroConfluence } from "./macroConfluence.js";
 import { sendDailyDayTradeDigest } from "../utils/emailNotifications.js";
@@ -79,6 +80,26 @@ const DEDUP_WINDOW_DAYS = 14;
 // thresholds), so a dedicated pass forces it when the normal pass falls
 // short, same as MIN_SIGNALS_PER_RUN forces at least one signal overall.
 const LEAPS_MIN_PER_RUN = 2;
+
+// Real-chain / classification rules for stock options plays (see
+// buildStockOptionSignal). $20/share = $2,000 per 100-share contract — the
+// ceiling the scanner enforces on any options call-out, whether the price
+// comes from a real quote (preferred) or, when no live chain is available,
+// the modeled Black-Scholes estimate — so a member is never pointed at a
+// contract more expensive than that to size into.
+const MAX_CONTRACT_PREMIUM = 20;
+// A contract's published style is driven by its ACTUAL expiration, not the
+// scanner's target window: real options chains don't always have an
+// expiration near the ideal LEAPS-conviction target (smaller/less liquid
+// names especially list fewer dated-out expirations), so a setup aiming for
+// 6mo+ conviction can still end up on the nearest real expiration that's
+// actually available. Under this many days out counts as a Swing options
+// play; this many days or more counts as a LEAPS one.
+const SWING_LEAP_THRESHOLD_DAYS = 182; // ~6 months
+// How far past the ideal OTM strike the modeled fallback (used only when no
+// real chain data is available at all) is willing to push in order to bring
+// the modeled premium under MAX_CONTRACT_PREMIUM.
+const MAX_MODELED_OTM_PERCENT = 0.25;
 
 /**
  * Curated universe for the day-trade scan (runDayTradeScan) — CME index and
@@ -269,17 +290,19 @@ function rsiMagnitude(rsi: number, direction: "Long" | "Short"): string {
  * the same `trendAligned`/`strictMatch` fields already computed by
  * technicalAnalysis.ts, reused rather than adding a new indicator.
  *
- * Stocks: never "Swing" anymore — a stock play is fundamentally "buy the
- * shares," not a timed options trade (per the user: a stock signal should
- * just show the stock price and entry, "because it's buy and hold"). A
+ * Stocks: this function itself only ever picks between "LEAPS" (attempt an
+ * options play) and "Buy & Hold" (plain shares, no options contract) — a
  * trend-aligned setup that also clears the strict technical thresholds is
- * high enough conviction to justify a longer-dated LEAPS contract (the one
- * remaining case where a stock signal IS an options contract — that's what
- * LEAPS means by definition). Every other stock setup — including
- * counter-trend ones, which used to become a short-dated Swing options
- * play — is a Buy & Hold spot position instead: real conviction in the
- * direction (or, for a counter-trend read, that context is still disclosed
- * in the thesis text — see buildAnalysisText), but no options contract.
+ * high enough conviction to justify a longer-dated options contract; every
+ * other stock setup is a Buy & Hold spot position instead (real conviction
+ * in the direction, or for a counter-trend read that context is disclosed
+ * in the thesis text — see buildAnalysisText — but no options contract).
+ * What buildStockOptionSignal actually PUBLISHES for the "LEAPS" case can
+ * still come back styled "Swing": it searches a real options chain anchored
+ * on a 6mo+ target, but a real chain doesn't always have an expiration that
+ * far out for every ticker, so the final style reflects whatever expiration
+ * was actually available (see SWING_LEAP_THRESHOLD_DAYS), not this
+ * function's up-front guess.
  *
  * Crypto: unaffected by the above — there's no crypto options builder in
  * this app at all, so Swing here just means a short-dated spot Long/Short
@@ -387,47 +410,142 @@ function buildProjectionNote(
   return { text, targetGreeks, stopGreeks };
 }
 
+/**
+ * Builds a stock options signal for the LEAPS-conviction gate (trend-aligned
+ * + strict technical match — see pickStyle). Tries a REAL options chain
+ * first (optionsChain.ts, Yahoo Finance) so the published contract's
+ * strike/expiration/bid/ask/open interest/IV are real market data, not a
+ * guess; only falls back to a modeled Black-Scholes contract when no real
+ * chain is available at all (symbol not optionable, fetch failure, etc.).
+ *
+ * The persisted `style` (Swing vs LEAPS) is decided from the ACTUAL
+ * expiration landed on — see SWING_LEAP_THRESHOLD_DAYS — not assumed up
+ * front, since a real chain doesn't always have an expiration near the
+ * ideal 6-12mo conviction target. Every contract, real or modeled, is kept
+ * at or under MAX_CONTRACT_PREMIUM per share ($2,000/contract); if nothing
+ * available clears that cap, this returns null and the caller skips the
+ * candidate entirely rather than publish an unaffordable contract.
+ */
 async function buildStockOptionSignal(
   c: Candidate,
   newsAlert: { flagged: boolean; note: string | null },
   confluence: MacroConfluence,
   fomcInWindow: boolean,
-  style: "Swing" | "LEAPS",
-) {
+): Promise<ReturnType<typeof buildOptionSignalRecord> | null> {
+  const { screen } = c;
+  const optionType: "Call" | "Put" = c.screen.direction === "Long" ? "Call" : "Put";
+  const idealStrike = pickStrike(screen.price, c.screen.direction);
+
+  // Ideal search window: a Friday near the conviction-scaled month mark
+  // from leapsMonthsOut (6/8/12mo) — the thesis this scanner is built
+  // around is a multi-month one, so this is always the FIRST thing tried,
+  // real chain permitting. What actually gets published can still land
+  // under 6 months (see the doc comment above) when that's genuinely the
+  // best a real chain offers for this ticker.
+  const anchorDays = Math.round(leapsMonthsOut(screen) * 30.44);
+  const targetMinDays = Math.max(anchorDays - 14, 30);
+  const targetMaxDays = anchorDays + 14;
+
+  let strike = idealStrike;
+  let expirationDate = pickExpiration(new Date(), Math.max(anchorDays - 7, 180), anchorDays + 7);
+  let iv = screen.realizedVol && screen.realizedVol > 0 ? screen.realizedVol : 0.4;
+  let premiumOverride: number | null = null;
+  let realQuote: ChainContract | null = null;
+
+  const chain = await fetchOptionsChain(c.symbol, targetMinDays, targetMaxDays);
+  if (chain) {
+    const picked = selectContract(chain, optionType, idealStrike, MAX_CONTRACT_PREMIUM);
+    if (picked) {
+      realQuote = picked;
+      strike = picked.strike;
+      expirationDate = picked.expirationDate;
+      if (picked.impliedVolatility > 0) iv = picked.impliedVolatility;
+      premiumOverride = contractMidPrice(picked);
+    }
+  }
+
+  // No real contract under the cap (no chain at all, or every real strike
+  // priced above MAX_CONTRACT_PREMIUM) — fall back to the modeled contract,
+  // pushing the strike further OTM as needed to bring the MODELED premium
+  // under the same cap. If even the maximum allowed OTM push can't get
+  // there (very high-priced/high-IV underlying), skip this candidate
+  // entirely rather than publish something over budget.
+  if (!realQuote) {
+    let otmPercent = 0.03;
+    let modeled = blackScholes(screen.price, strike, Math.round((expirationDate.getTime() - Date.now()) / 86_400_000), iv, optionType);
+    while (modeled.price > MAX_CONTRACT_PREMIUM && otmPercent < MAX_MODELED_OTM_PERCENT) {
+      otmPercent += 0.02;
+      strike = pickStrike(screen.price, c.screen.direction, otmPercent);
+      const dteNow = Math.round((expirationDate.getTime() - Date.now()) / 86_400_000);
+      modeled = blackScholes(screen.price, strike, dteNow, iv, optionType);
+    }
+    if (modeled.price > MAX_CONTRACT_PREMIUM) {
+      logger.info(
+        { symbol: c.symbol, modeledPremium: modeled.price.toFixed(2) },
+        "Skipped stock options signal — no real chain available and the modeled contract couldn't be brought under the premium cap",
+      );
+      return null;
+    }
+    premiumOverride = modeled.price;
+  }
+
+  const dte = Math.max(Math.round((expirationDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000)), 1);
+  const finalStyle: SignalStyle = dte < SWING_LEAP_THRESHOLD_DAYS ? "Swing" : "LEAPS";
+  const isLongHorizon = finalStyle === "LEAPS";
+
+  return buildOptionSignalRecord({
+    c,
+    newsAlert,
+    confluence,
+    fomcInWindow,
+    optionType,
+    strike,
+    expirationDate,
+    dte,
+    iv,
+    premium: premiumOverride!,
+    realQuote,
+    style: finalStyle,
+    isLongHorizon,
+  });
+}
+
+function buildOptionSignalRecord(args: {
+  c: Candidate;
+  newsAlert: { flagged: boolean; note: string | null };
+  confluence: MacroConfluence;
+  fomcInWindow: boolean;
+  optionType: "Call" | "Put";
+  strike: number;
+  expirationDate: Date;
+  dte: number;
+  iv: number;
+  premium: number;
+  realQuote: ChainContract | null;
+  style: SignalStyle;
+  isLongHorizon: boolean;
+}) {
+  const { c, newsAlert, confluence, fomcInWindow, optionType, strike, expirationDate, dte, iv, premium, realQuote, style, isLongHorizon } = args;
   const { screen } = c;
   const isFallback = !screen.strictMatch;
-  const isLeaps = style === "LEAPS";
-  const optionType: "Call" | "Put" = c.screen.direction === "Long" ? "Call" : "Put";
-  // Swing stays the original 7-14 DTE window. LEAPS targets a Friday near
-  // the conviction-scaled month mark from leapsMonthsOut, clamped to never
-  // land under 6 months out.
-  const expirationDate = isLeaps
-    ? (() => {
-        const anchorDays = Math.round(leapsMonthsOut(screen) * 30.44);
-        return pickExpiration(new Date(), Math.max(anchorDays - 7, 180), anchorDays + 7);
-      })()
-    : pickExpiration(new Date(), 7, 14);
-  const dte = Math.round((expirationDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
-  const strike = pickStrike(screen.price, c.screen.direction);
-  const iv = screen.realizedVol && screen.realizedVol > 0 ? screen.realizedVol : 0.4;
 
   const entryGreeks = blackScholes(screen.price, strike, dte, iv, optionType);
   // Target: underlying reaches the opposite level (resistance for a call
   // setup, support for a put setup), option re-priced at that spot with a
   // few fewer days on the clock. Stop: underlying breaks back through the
-  // level that defined the setup in the first place. LEAPS extrapolates
-  // the same near-term support/resistance move out further (a multi-month
-  // thesis should be sized on a bigger expected move than a 1-2 week
-  // swing) and gives the underlying more room before invalidating the
-  // thesis on the way there.
-  const targetSpot = isLeaps
+  // level that defined the setup in the first place. A long-horizon
+  // (LEAPS-classified) contract extrapolates the same near-term
+  // support/resistance move out further (a multi-month thesis should be
+  // sized on a bigger expected move than a short swing) and gives the
+  // underlying more room before invalidating the thesis on the way there.
+  const targetSpot = isLongHorizon
     ? c.screen.direction === "Long"
       ? screen.price + (screen.resistance - screen.price) * 3
       : screen.price - (screen.price - screen.support) * 3
     : c.screen.direction === "Long"
       ? screen.resistance
       : screen.support;
-  const stopSpot = isLeaps
+  const stopSpot = isLongHorizon
     ? c.screen.direction === "Long"
       ? screen.support * 0.95
       : screen.resistance * 1.05
@@ -448,7 +566,11 @@ async function buildStockOptionSignal(
   const targetGreeks = projection.targetGreeks;
   const stopGreeks = projection.stopGreeks;
 
-  const contract = `${c.symbol} ${formatExpirationCode(expirationDate)} ${strike} ${optionType === "Call" ? "C" : "P"}`;
+  const contractLabel = `${c.symbol} ${formatExpirationCode(expirationDate)} ${strike} ${optionType === "Call" ? "C" : "P"}`;
+
+  const dataSourceNote = realQuote
+    ? ` Strike/expiration/bid-ask/open interest/IV below are from a LIVE options chain quote — still verify current pricing before publishing, as quotes move.`
+    : ` Premium and Greeks below are MODELED (Black-Scholes off ${(iv * 100).toFixed(0)}% realized volatility) — no live quote was available for this contract, so verify real bid/ask before publishing.`;
 
   return {
     id: randomUUID(),
@@ -457,7 +579,7 @@ async function buildStockOptionSignal(
     market: "Stocks" as const,
     direction: c.screen.direction,
     status: "Watching" as const,
-    entry: `$${entryGreeks.price.toFixed(2)}`,
+    entry: `$${premium.toFixed(2)}`,
     target: `$${targetGreeks.price.toFixed(2)}`,
     stop: `$${stopGreeks.price.toFixed(2)}`,
     timeframe: `${formatExpirationLabel(expirationDate)} expiry`,
@@ -465,26 +587,27 @@ async function buildStockOptionSignal(
     style,
     analysis:
       buildAnalysisText(c, isFallback, confluence, fomcInWindow) +
-      ` Premium and Greeks below are MODELED (Black-Scholes off ${(iv * 100).toFixed(0)}% realized volatility) — there is no live options-chain data source configured, so verify real bid/ask before publishing. ` +
+      dataSourceNote +
+      ` ${style} contract (${dte} days to expiration, cap $${MAX_CONTRACT_PREMIUM.toFixed(2)}/share = $${(MAX_CONTRACT_PREMIUM * 100).toFixed(0)}/contract). ` +
       projection.text +
-      (isLeaps
-        ? ` Structured as a longer-dated LEAPS position (${formatExpirationLabel(expirationDate)}, ~${dte} days out) to give the trend room to play out rather than timing a short-term bounce — size and expect price swings accordingly given the extended time horizon.`
-        : "") +
+      (isLongHorizon
+        ? ` Structured as a longer-dated position (${formatExpirationLabel(expirationDate)}, ~${dte} days out) to give the trend room to play out rather than timing a short-term bounce — size and expect price swings accordingly given the extended time horizon.`
+        : ` Shorter-dated than this scan's ideal 6mo+ LEAPS target — that's what was actually available on the live chain for this ticker, so this is classified as a Swing options play instead.`) +
       (newsAlert.flagged ? ` ⚠ ${newsAlert.note}` : ""),
     isOption: true,
     optionType,
-    contract,
+    contract: contractLabel,
     expiration: formatExpirationLabel(expirationDate),
     strike: `$${strike.toFixed(2)}`,
-    premium: `$${entryGreeks.price.toFixed(2)}`,
-    bid: `$${Math.max(entryGreeks.price - 0.05, 0.01).toFixed(2)}`,
-    ask: `$${(entryGreeks.price + 0.05).toFixed(2)}`,
+    premium: `$${premium.toFixed(2)}`,
+    bid: realQuote && realQuote.bid > 0 ? `$${realQuote.bid.toFixed(2)}` : `$${Math.max(premium - 0.05, 0.01).toFixed(2)}`,
+    ask: realQuote && realQuote.ask > 0 ? `$${realQuote.ask.toFixed(2)}` : `$${(premium + 0.05).toFixed(2)}`,
     impliedVolatility: `${(iv * 100).toFixed(1)}%`,
     delta: Number(entryGreeks.delta.toFixed(3)),
     gamma: Number(entryGreeks.gamma.toFixed(4)),
     theta: Number(entryGreeks.theta.toFixed(3)),
     vega: Number(entryGreeks.vega.toFixed(3)),
-    openInterest: null,
+    openInterest: realQuote && realQuote.openInterest > 0 ? String(realQuote.openInterest) : null,
     source: "auto" as const,
     newsAlert: newsAlert.flagged,
     newsAlertNote: newsAlert.note,
@@ -858,13 +981,26 @@ export async function runSignalScan(): Promise<void> {
         c.market === "Stocks"
           ? style === "Buy & Hold"
             ? buildStockBuyHoldSignal(c, newsAlert, confluence, fomcInWindow)
-            : await buildStockOptionSignal(c, newsAlert, confluence, fomcInWindow, style)
+            : await buildStockOptionSignal(c, newsAlert, confluence, fomcInWindow)
           : buildCryptoSpotSignal(c, newsAlert, confluence, fomcInWindow, style === "LEAPS" ? "Swing" : style);
+
+      // buildStockOptionSignal can come back null when no real chain
+      // contract (and no modeled fallback) clears MAX_CONTRACT_PREMIUM —
+      // skip this candidate rather than publish an unaffordable contract or
+      // crash the insert on a null record.
+      if (!record) {
+        logger.info({ symbol: c.symbol }, "Skipped auto signal insert — no affordable options contract available for this candidate");
+        continue;
+      }
 
       try {
         await db.insert(signalsTable).values(record as never);
         inserted.push(c.symbol);
-        if (style === "LEAPS") leapsInserted++;
+        // Use the record's own (possibly real-chain-driven) style rather
+        // than the pre-computed `style` var — see buildStockOptionSignal's
+        // doc comment on why the final Swing/LEAPS classification can
+        // differ from what was targeted.
+        if (record.style === "LEAPS") leapsInserted++;
       } catch (err) {
         logger.error({ err, symbol: c.symbol }, "Failed to insert auto-generated signal");
       }
@@ -896,11 +1032,21 @@ export async function runSignalScan(): Promise<void> {
         windowEnd.setUTCDate(windowEnd.getUTCDate() + 14);
         const newsAlert = await getNewsAlert(c.symbol, c.market, new Date(), windowEnd);
         const fomcInWindow = fomcInWindowFor(c.market);
-        const record = await buildStockOptionSignal(c, newsAlert, confluence, fomcInWindow, "LEAPS");
+        const record = await buildStockOptionSignal(c, newsAlert, confluence, fomcInWindow);
+        if (!record) {
+          logger.info({ symbol: c.symbol }, "Skipped LEAPS top-up insert — no affordable options contract available for this candidate");
+          continue;
+        }
         try {
           await db.insert(signalsTable).values(record as never);
           inserted.push(c.symbol);
-          leapsInserted++;
+          // Only counts toward the LEAPS quota if the real chain actually
+          // landed on a 6mo+ expiration — see buildStockOptionSignal's doc
+          // comment. A Swing-classified result here still gets published
+          // (a real, affordable, trend-aligned setup is still worth
+          // publishing), it just doesn't satisfy this top-up pass, so the
+          // loop keeps trying further candidates.
+          if (record.style === "LEAPS") leapsInserted++;
         } catch (err) {
           logger.error({ err, symbol: c.symbol }, "Failed to insert LEAPS top-up signal");
         }

@@ -85,4 +85,9 @@ export {
   insertReferralSchema,
   type InsertReferral,
   type Referral,
+  // In-app notification feed (the bell in components/WickUI.tsx's Header)
+  notificationsTable,
+  insertNotificationSchema,
+  type InsertNotification,
+  type Notification,
 } from "@workspace/db";

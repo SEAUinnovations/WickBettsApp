@@ -1,5 +1,6 @@
+import { randomUUID } from "crypto";
 import { Expo, type ExpoPushMessage } from "expo-server-sdk";
-import { db, usersTable, subscriptionsTable } from "../lib/db.js";
+import { db, usersTable, subscriptionsTable, notificationsTable } from "../lib/db.js";
 import { eq, and, isNotNull, or } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 
@@ -24,6 +25,35 @@ export interface SignalSummary {
  * response is never delayed or blocked.
  */
 export async function fanOutSignalNotification(signal: SignalSummary): Promise<void> {
+  const typeLabel = signal.isOption
+    ? ` ${signal.optionType ?? "Option"}`
+    : "";
+  const title = `New ${signal.direction}${typeLabel}: ${signal.asset}`;
+  const body = `${signal.market} · Tap to see the full setup`;
+
+  // Persist to the in-app notification feed (the bell in
+  // components/WickUI.tsx's Header) regardless of whether anyone has a
+  // registered push token — this is what makes the bell show every alert
+  // even for members without OS push permissions enabled, or on web, not
+  // just whoever happens to get the device push below.
+  try {
+    await db.insert(notificationsTable).values({
+      id: randomUUID(),
+      type: "signal",
+      title,
+      body,
+      data: JSON.stringify({
+        asset: signal.asset,
+        direction: signal.direction,
+        market: signal.market,
+        isOption: signal.isOption,
+        optionType: signal.optionType ?? null,
+      }),
+    });
+  } catch (err) {
+    logger.error({ err }, "Failed to record in-app notification for signal");
+  }
+
   try {
     // Fetch eligible recipients in a single query
     const rows = await db
@@ -53,15 +83,11 @@ export async function fanOutSignalNotification(signal: SignalSummary): Promise<v
       return;
     }
 
-    const typeLabel = signal.isOption
-      ? ` ${signal.optionType ?? "Option"}`
-      : "";
-
     const messages: ExpoPushMessage[] = validTokens.map((token) => ({
       to: token,
       sound: "default" as const,
-      title: `New ${signal.direction}${typeLabel}: ${signal.asset}`,
-      body: `${signal.market} · Tap to see the full setup`,
+      title,
+      body,
       data: { type: "signal", asset: signal.asset },
       priority: "high" as const,
     }));

@@ -85,6 +85,13 @@
       "when": 1786687600000,
       "tag": "0011_community_signals",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788176000000,
+      "tag": "0012_community_starred_notifications",
+      "breakpoints": true
     }
   ]
 }

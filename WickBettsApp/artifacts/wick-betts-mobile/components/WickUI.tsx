@@ -43,11 +43,14 @@ export function Header({
   title,
   action,
   onAction,
+  badge,
 }: {
   eyebrow: string;
   title: string;
   action?: string;
   onAction?: (event: GestureResponderEvent) => void;
+  /** Unread count shown as a dot (or small number, capped at 9+) on the bell. Omit or pass 0 to show nothing. */
+  badge?: number;
 }) {
   const colors = useColors();
   return (
@@ -59,6 +62,7 @@ export function Header({
       {action && onAction ? (
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel={badge ? `${action}, ${badge} unread` : action}
           onPress={onAction}
           style={({ pressed }) => [
             styles.iconButton,
@@ -67,6 +71,11 @@ export function Header({
           ]}
         >
           <Ionicons name="notifications-outline" size={19} color={colors.accent} />
+          {badge ? (
+            <View style={[styles.badge, { backgroundColor: '#E5484D', borderColor: colors.secondary }]}>
+              <Text style={styles.badgeText}>{badge > 9 ? '9+' : badge}</Text>
+            </View>
+          ) : null}
         </Pressable>
       ) : null}
     </View>
@@ -223,6 +232,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
+  },
+  badge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  badgeText: {
+    fontSize: 9,
+    lineHeight: 11,
+    fontFamily: 'Inter_700Bold',
+    color: '#fff',
   },
   sectionLabel: {
     fontSize: 11,

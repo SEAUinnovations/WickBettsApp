@@ -7,6 +7,7 @@ import { useColors } from '@/hooks/useColors';
 import { useMarketData, type QuoteItem } from '@/hooks/useMarketData';
 import { useAuth } from '@/context/AuthContext';
 import { useWatchlist } from '@/hooks/useWatchlist';
+import { useNotifications } from '@/context/NotificationsContext';
 import { Card, Header, Metric, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
 import { TickerAutocomplete } from '@/components/TickerAutocomplete';
 import { SubscribePanel } from '@/components/Billing';
@@ -26,6 +27,7 @@ function formatPrice(price: number, symbol: string): string {
 export default function HomeScreen() {
   const router = useRouter();
   const colors = useColors();
+  const { unreadCount } = useNotifications();
   const { data: market, loading: marketLoading } = useMarketData();
   const { user, subscription } = useAuth();
   const { items: watchlistItems, loading: watchlistLoading, saving: watchlistSaving, error: watchlistError, addItem, removeItem } = useWatchlist();
@@ -105,7 +107,8 @@ export default function HomeScreen() {
         eyebrow={`Wick Betts / ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}`}
         title="Good morning."
         action="Alerts"
-        onAction={() => router.push('/news')}
+        onAction={() => router.push('/notifications')}
+        badge={unreadCount}
       />
 
       {/* Status banner */}

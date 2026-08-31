@@ -24,6 +24,13 @@ export const usersTable = pgTable("users", {
   notifySignals: boolean("notify_signals").notNull().default(true),
   /** Whether to send push + email alerts for major news (default off) */
   notifyNews: boolean("notify_news").notNull().default(false),
+  // Drives the notification bell's unread badge (see routes/notifications.ts):
+  // an alert counts as unread if notifications.createdAt is newer than this.
+  // Defaults to now() rather than null specifically so this doesn't
+  // retroactively mark every notification ever sent as "unread" the moment
+  // this column is added — existing members start caught up, and only see a
+  // badge for alerts sent after they had this column.
+  lastSeenNotificationsAt: timestamp("last_seen_notifications_at").notNull().defaultNow(),
   // Paid overage balance for Review My Trade: each subscriber gets 4 free
   // reviews per rolling 7-day window (enforced in routes/tradeReviews.ts by
   // counting recent rows, not by a separate counter here — see

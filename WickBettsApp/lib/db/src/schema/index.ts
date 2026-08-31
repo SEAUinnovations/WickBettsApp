@@ -10,3 +10,4 @@ export * from "./communityPostReactions";
 export * from "./communitySignals";
 export * from "./tickets";
 export * from "./referrals";
+export * from "./notifications";
