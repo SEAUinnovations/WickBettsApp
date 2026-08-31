@@ -163,6 +163,27 @@ export default function AdminScreen() {
     }
   };
 
+  // Featuring a signal is instant (low-risk, additive) — but the bookmark
+  // toggling straight back off on a second tap meant a stray double-tap
+  // could silently unfeature a signal with no way to notice. Same
+  // confirm-then-act pattern as confirmDelete below: starring stays
+  // one-tap, unstarring needs a confirmation.
+  const confirmUnstar = (s: Signal) => {
+    const label = `Remove ${s.asset} from Community?`;
+    if (Platform.OS === 'web') {
+      if (window.confirm(label)) void toggleCommunityStar(s);
+      return;
+    }
+    Alert.alert(
+      'Remove from Community',
+      `${label} It'll stop showing in the Community tab's featured signals.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: () => void toggleCommunityStar(s) },
+      ],
+    );
+  };
+
   const doDelete = async (s: Signal) => {
     setDeletingId(s.id);
     setError('');
@@ -564,7 +585,7 @@ export default function AdminScreen() {
                 </View>
                 <View style={styles.rowActions}>
                   <Pressable
-                    onPress={() => void toggleCommunityStar(s)}
+                    onPress={() => (s.communityStarred ? confirmUnstar(s) : void toggleCommunityStar(s))}
                     disabled={togglingStarId === s.id || (!s.communityStarred && starredCount >= MAX_COMMUNITY_STARRED)}
                     style={[
                       styles.editButton,
