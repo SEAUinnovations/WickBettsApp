@@ -128,6 +128,11 @@ export default function CommunityScreen() {
   // Briefly highlights the just-submitted review so it's unmistakable that
   // new results landed, even if the scroll-into-view above is subtle.
   const [highlightReviewId, setHighlightReviewId] = useState<string | null>(null);
+  // Collapsed by default so the feed's `flex: 1` ScrollView gets nearly the
+  // whole screen to show trade review history, instead of the always-open
+  // composer (screenshot + bias + setup + submit) eating most of the
+  // available height and squeezing the feed down to a sliver.
+  const [composerOpen, setComposerOpen] = useState(false);
 
   const fetchTradeReviews = useCallback(async () => {
     try {
@@ -225,10 +230,12 @@ export default function CommunityScreen() {
       setReviewBias('Bullish');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      // The new review lands at the top of the feed — dismiss the keyboard
-      // and scroll there so the AI result is actually visible instead of
+      // The new review lands at the top of the feed — dismiss the keyboard,
+      // collapse the composer so the feed expands back to full height, and
+      // scroll there so the AI result is actually visible instead of
       // silently landing off-screen above the composer.
       Keyboard.dismiss();
+      setComposerOpen(false);
       setHighlightReviewId(data.review.id);
       setTimeout(() => reviewFeedRef.current?.scrollTo({ y: 0, animated: true }), 60);
       setTimeout(() => setHighlightReviewId((current) => (current === data.review.id ? null : current)), 4000);
@@ -913,96 +920,126 @@ export default function CommunityScreen() {
             )}
           </ScrollView>
 
-          {/* Submit composer */}
+          {/* Submit composer — collapsible. Minimized to a single tappable
+              bar by default so the feed above is free to expand to (close
+              to) the full screen; expands only when a member wants to add
+              a new review. */}
           <View style={[styles.reviewComposer, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            {reviewUsage && user?.role !== 'admin' ? (
-              <View style={styles.usageRow}>
-                <Ionicons name="pulse-outline" size={12} color={colors.mutedForeground} />
-                <Text style={[styles.usageText, { color: colors.mutedForeground }]}>
-                  {reviewUsage.freeRemaining > 0
-                    ? `${reviewUsage.freeRemaining} free review${reviewUsage.freeRemaining === 1 ? '' : 's'} left this week`
-                    : reviewUsage.credits > 0
-                      ? `Free reviews used — ${reviewUsage.credits} purchased credit${reviewUsage.credits === 1 ? '' : 's'} left`
-                      : 'Free reviews used this week — $2.50 for another'}
-                </Text>
+            <Pressable
+              onPress={() => setComposerOpen((open) => !open)}
+              style={styles.composerToggleRow}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: composerOpen }}
+              accessibilityLabel={composerOpen ? 'Collapse new trade review form' : 'Expand new trade review form'}
+            >
+              <View style={styles.composerToggleLeft}>
+                <Ionicons name="add-circle-outline" size={18} color={colors.primary} />
+                <Text style={[styles.composerToggleText, { color: colors.foreground }]}>New trade review</Text>
+                {!composerOpen && reviewUsage && user?.role !== 'admin' ? (
+                  <Text style={[styles.composerToggleSubtext, { color: colors.mutedForeground }]} numberOfLines={1}>
+                    {reviewUsage.freeRemaining > 0
+                      ? `· ${reviewUsage.freeRemaining} free left`
+                      : reviewUsage.credits > 0
+                        ? `· ${reviewUsage.credits} credit${reviewUsage.credits === 1 ? '' : 's'} left`
+                        : '· $2.50 each'}
+                  </Text>
+                ) : null}
               </View>
-            ) : null}
-            <View style={styles.composerField}>
-              <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Chart screenshot</Text>
-              {reviewImage ? (
-                <View style={styles.reviewImagePreviewRow}>
-                  <Image source={{ uri: reviewImage.uri }} style={styles.reviewImagePreview} />
-                  <Pressable onPress={() => setReviewImage(null)} accessibilityRole="button" style={styles.removeImageButton}>
-                    <Ionicons name="close-circle" size={20} color={colors.mutedForeground} />
-                  </Pressable>
+              <Ionicons name={composerOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.mutedForeground} />
+            </Pressable>
+
+            {composerOpen ? (
+              <>
+                {reviewUsage && user?.role !== 'admin' ? (
+                  <View style={styles.usageRow}>
+                    <Ionicons name="pulse-outline" size={12} color={colors.mutedForeground} />
+                    <Text style={[styles.usageText, { color: colors.mutedForeground }]}>
+                      {reviewUsage.freeRemaining > 0
+                        ? `${reviewUsage.freeRemaining} free review${reviewUsage.freeRemaining === 1 ? '' : 's'} left this week`
+                        : reviewUsage.credits > 0
+                          ? `Free reviews used — ${reviewUsage.credits} purchased credit${reviewUsage.credits === 1 ? '' : 's'} left`
+                          : 'Free reviews used this week — $2.50 for another'}
+                    </Text>
+                  </View>
+                ) : null}
+                <View style={styles.composerField}>
+                  <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Chart screenshot</Text>
+                  {reviewImage ? (
+                    <View style={styles.reviewImagePreviewRow}>
+                      <Image source={{ uri: reviewImage.uri }} style={styles.reviewImagePreview} />
+                      <Pressable onPress={() => setReviewImage(null)} accessibilityRole="button" style={styles.removeImageButton}>
+                        <Ionicons name="close-circle" size={20} color={colors.mutedForeground} />
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <Pressable
+                      onPress={() => void pickReviewImage()}
+                      style={[styles.attachButton, { borderColor: colors.border }]}
+                      accessibilityRole="button"
+                    >
+                      <Ionicons name="camera-outline" size={16} color={colors.primary} />
+                      <Text style={[styles.attachButtonText, { color: colors.primary }]}>Attach chart screenshot</Text>
+                    </Pressable>
+                  )}
                 </View>
-              ) : (
+
+                <View style={styles.composerField}>
+                  <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Your bias</Text>
+                  <View style={styles.biasRow}>
+                    {(['Bullish', 'Bearish', 'Neutral'] as Bias[]).map((b) => (
+                      <Pressable
+                        key={b}
+                        onPress={() => setReviewBias(b)}
+                        style={[
+                          styles.biasChip,
+                          { backgroundColor: reviewBias === b ? colors.primary : colors.background, borderColor: colors.border },
+                        ]}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[styles.biasChipText, { color: reviewBias === b ? colors.primaryForeground : colors.mutedForeground }]}>{b}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+
+                <View style={styles.composerField}>
+                  <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Your setup</Text>
+                  <TextInput
+                    value={reviewDescription}
+                    onChangeText={setReviewDescription}
+                    placeholder="Describe your setup and why you're taking it..."
+                    placeholderTextColor={colors.mutedForeground}
+                    style={[styles.reviewInput, { color: colors.foreground, borderColor: colors.border }]}
+                    multiline
+                    editable={!submittingReview}
+                  />
+                </View>
+
                 <Pressable
-                  onPress={() => void pickReviewImage()}
-                  style={[styles.attachButton, { borderColor: colors.border }]}
+                  onPress={submitReview}
+                  disabled={!reviewImage || !reviewDescription.trim() || submittingReview}
+                  style={[
+                    styles.reviewSubmitButton,
+                    { backgroundColor: reviewImage && reviewDescription.trim() && !submittingReview ? colors.primary : colors.muted },
+                  ]}
                   accessibilityRole="button"
                 >
-                  <Ionicons name="camera-outline" size={16} color={colors.primary} />
-                  <Text style={[styles.attachButtonText, { color: colors.primary }]}>Attach chart screenshot</Text>
+                  {submittingReview ? (
+                    <ActivityIndicator size="small" color={colors.mutedForeground} />
+                  ) : (
+                    <>
+                      <Ionicons name="sparkles-outline" size={15} color={reviewImage && reviewDescription.trim() ? colors.primaryForeground : colors.mutedForeground} />
+                      <Text style={[styles.reviewSubmitText, { color: reviewImage && reviewDescription.trim() ? colors.primaryForeground : colors.mutedForeground }]}>
+                        {submittingReview ? 'AI is reviewing...' : 'Submit for review'}
+                      </Text>
+                    </>
+                  )}
                 </Pressable>
-              )}
-            </View>
-
-            <View style={styles.composerField}>
-              <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Your bias</Text>
-              <View style={styles.biasRow}>
-                {(['Bullish', 'Bearish', 'Neutral'] as Bias[]).map((b) => (
-                  <Pressable
-                    key={b}
-                    onPress={() => setReviewBias(b)}
-                    style={[
-                      styles.biasChip,
-                      { backgroundColor: reviewBias === b ? colors.primary : colors.background, borderColor: colors.border },
-                    ]}
-                    accessibilityRole="button"
-                  >
-                    <Text style={[styles.biasChipText, { color: reviewBias === b ? colors.primaryForeground : colors.mutedForeground }]}>{b}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-
-            <View style={styles.composerField}>
-              <Text style={[styles.composerFieldLabel, { color: colors.mutedForeground }]}>Your setup</Text>
-              <TextInput
-                value={reviewDescription}
-                onChangeText={setReviewDescription}
-                placeholder="Describe your setup and why you're taking it..."
-                placeholderTextColor={colors.mutedForeground}
-                style={[styles.reviewInput, { color: colors.foreground, borderColor: colors.border }]}
-                multiline
-                editable={!submittingReview}
-              />
-            </View>
-
-            <Pressable
-              onPress={submitReview}
-              disabled={!reviewImage || !reviewDescription.trim() || submittingReview}
-              style={[
-                styles.reviewSubmitButton,
-                { backgroundColor: reviewImage && reviewDescription.trim() && !submittingReview ? colors.primary : colors.muted },
-              ]}
-              accessibilityRole="button"
-            >
-              {submittingReview ? (
-                <ActivityIndicator size="small" color={colors.mutedForeground} />
-              ) : (
-                <>
-                  <Ionicons name="sparkles-outline" size={15} color={reviewImage && reviewDescription.trim() ? colors.primaryForeground : colors.mutedForeground} />
-                  <Text style={[styles.reviewSubmitText, { color: reviewImage && reviewDescription.trim() ? colors.primaryForeground : colors.mutedForeground }]}>
-                    {submittingReview ? 'AI is reviewing...' : 'Submit for review'}
-                  </Text>
-                </>
-              )}
-            </Pressable>
-            <Text style={[styles.reviewDisclaimer, { color: colors.mutedForeground }]}>
-              Educational only, not financial advice. Estimates may vary.
-            </Text>
+                <Text style={[styles.reviewDisclaimer, { color: colors.mutedForeground }]}>
+                  Educational only, not financial advice. Estimates may vary.
+                </Text>
+              </>
+            ) : null}
           </View>
         </>
       ) : (
@@ -1198,6 +1235,10 @@ const styles = StyleSheet.create({
   riskNoteText: { flex: 1, fontSize: 11, lineHeight: 16, fontFamily: 'Inter_400Regular' },
   keyboardAvoider: { flex: 1 },
   reviewComposer: { borderWidth: 1, borderRadius: 17, padding: 14, marginTop: 8, gap: 14 },
+  composerToggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  composerToggleLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 },
+  composerToggleText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  composerToggleSubtext: { fontSize: 12, fontFamily: 'Inter_400Regular', flexShrink: 1 },
   composerField: { gap: 6 },
   composerFieldLabel: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1, textTransform: 'uppercase' },
   usageRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
