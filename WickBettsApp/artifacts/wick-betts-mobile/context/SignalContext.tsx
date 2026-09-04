@@ -42,6 +42,8 @@ export interface Signal {
   isOption: boolean;
   optionType?: OptionType;
   contract?: string;
+  /** Quantity of `contract` to trade — options/LEAPS only in the UI, always defaults to 1 server-side. */
+  contractAmount?: number;
   expiration?: string;
   strike?: string;
   premium?: string;
@@ -53,6 +55,8 @@ export interface Signal {
   theta?: number;
   vega?: number;
   openInterest?: string;
+  /** Optional chart screenshot data URL to go with "Wick's Read" (`analysis` below). */
+  analysisImageDataUrl?: string | null;
   /** 'manual' (admin-authored) or 'auto' (produced by the scheduled signal scanner). */
   source?: string;
   /** "Keep in mind" star: trade window overlaps a major macro event or the symbol's earnings date. */
@@ -82,6 +86,7 @@ interface ApiSignal {
   isOption: boolean;
   optionType?: string;
   contract?: string;
+  contractAmount?: number;
   expiration?: string;
   strike?: string;
   premium?: string;
@@ -93,6 +98,7 @@ interface ApiSignal {
   theta?: number;
   vega?: number;
   openInterest?: string;
+  analysisImageDataUrl?: string | null;
   source?: string;
   newsAlert?: boolean;
   newsAlertNote?: string;
@@ -155,6 +161,7 @@ function mapApiSignal(s: ApiSignal): Signal {
     isOption: s.isOption,
     optionType: s.optionType as OptionType | undefined,
     contract: s.contract,
+    contractAmount: s.contractAmount,
     expiration: s.expiration,
     strike: s.strike,
     premium: s.premium,
@@ -166,6 +173,7 @@ function mapApiSignal(s: ApiSignal): Signal {
     theta: s.theta,
     vega: s.vega,
     openInterest: s.openInterest,
+    analysisImageDataUrl: s.analysisImageDataUrl,
     source: s.source,
     newsAlert: s.newsAlert,
     newsAlertNote: s.newsAlertNote,
@@ -181,7 +189,18 @@ interface SignalContextValue {
   signals: Signal[];
   isLoading: boolean;
   isSubscriptionRequired: boolean;
+  /** True when the member has an active subscription but it's Membership —
+   *  Signals is not included on that plan, so the tab should prompt an
+   *  upgrade rather than the generic "pick a plan" screen. */
+  isSignalsPlanRequired: boolean;
   error: string | null;
+  /** The ≤4 admin-curated signals featured in the Community tab (see
+   *  communityStarred below). Fetched independently of `signals` above —
+   *  it comes from a separate endpoint gated only by an active subscription
+   *  of any plan, not requireSignalsPlan, so Membership subscribers (who
+   *  are blocked from the full feed) still see this curated reel. */
+  communitySignals: Signal[];
+  isCommunitySignalsLoading: boolean;
   refresh: () => Promise<void>;
   addSignal: (signal: SignalInput) => Promise<void>;
   /** Admin: PATCH an existing signal (full field set or a partial like status). */
@@ -197,14 +216,19 @@ export function SignalProvider({ children }: { children: ReactNode }) {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubscriptionRequired, setIsSubscriptionRequired] = useState(false);
+  const [isSignalsPlanRequired, setIsSignalsPlanRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [communitySignals, setCommunitySignals] = useState<Signal[]>([]);
+  const [isCommunitySignalsLoading, setIsCommunitySignalsLoading] = useState(true);
   const storageKey = getStorageKey(user?.id);
+  const communityStorageKey = storageKey ? `${storageKey}:community-starred` : null;
 
   const fetchSignals = useCallback(async () => {
     if (!isSignedIn || !storageKey) {
       setSignals([]);
       setError(null);
       setIsSubscriptionRequired(false);
+      setIsSignalsPlanRequired(false);
       setIsLoading(false);
       return;
     }
@@ -214,25 +238,32 @@ export function SignalProvider({ children }: { children: ReactNode }) {
       setSignals([]);
       setError(null);
       setIsSubscriptionRequired(false);
+      setIsSignalsPlanRequired(false);
       setIsLoading(false);
       return;
     }
     setIsLoading(true);
     setError(null);
     setIsSubscriptionRequired(false);
+    setIsSignalsPlanRequired(false);
     try {
       const res = await fetch(`${API_BASE}/signals`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.status === 403) {
         const json = (await res.json()) as { code?: string };
-        if (json.code === 'SUBSCRIPTION_REQUIRED') {
-          setIsSubscriptionRequired(true);
+        if (json.code === 'SUBSCRIPTION_REQUIRED' || json.code === 'SIGNALS_PLAN_REQUIRED') {
+          if (json.code === 'SIGNALS_PLAN_REQUIRED') {
+            setIsSignalsPlanRequired(true);
+          } else {
+            setIsSubscriptionRequired(true);
+          }
           setSignals([]);
           // Purge any signals cached from a previous, entitled session. Without
-          // this, a lapsed subscriber who later hits a transient network error
-          // (not another 403) would fall into the offline-cache branch below
-          // and see stale paid content despite no longer being entitled to it.
+          // this, a lapsed (or Membership-only) subscriber who later hits a
+          // transient network error (not another 403) would fall into the
+          // offline-cache branch below and see stale paid content despite no
+          // longer being entitled to it.
           void AsyncStorage.removeItem(storageKey);
           return;
         }
@@ -261,11 +292,64 @@ export function SignalProvider({ children }: { children: ReactNode }) {
     }
   }, [getToken, isSignedIn, storageKey]);
 
+  // Separate fetch for the Community tab's curated "starred" reel — hits
+  // /signals/community-starred, which is gated by any active subscription
+  // (not requireSignalsPlan), so a Membership-only member still gets this
+  // even while `fetchSignals` above is 403'ing them off the full feed.
+  const fetchCommunitySignals = useCallback(async () => {
+    if (!isSignedIn || !communityStorageKey) {
+      setCommunitySignals([]);
+      setIsCommunitySignalsLoading(false);
+      return;
+    }
+    const token = await getToken();
+    if (!token) {
+      setCommunitySignals([]);
+      setIsCommunitySignalsLoading(false);
+      return;
+    }
+    setIsCommunitySignalsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/signals/community-starred`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.status === 403) {
+        // No active subscription at all — Community itself is gated
+        // elsewhere, but fail safe here too rather than surfacing a
+        // confusing error inside an already-inaccessible tab.
+        setCommunitySignals([]);
+        void AsyncStorage.removeItem(communityStorageKey);
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = (await res.json()) as { signals: ApiSignal[] };
+      const mapped = json.signals.map(mapApiSignal);
+      setCommunitySignals(mapped);
+      void AsyncStorage.setItem(communityStorageKey, JSON.stringify(mapped));
+    } catch {
+      try {
+        const cached = await AsyncStorage.getItem(communityStorageKey);
+        if (cached) {
+          const parsed = JSON.parse(cached) as Signal[];
+          if (Array.isArray(parsed)) setCommunitySignals(parsed);
+        }
+      } catch {
+        /* ignore */
+      }
+    } finally {
+      setIsCommunitySignalsLoading(false);
+    }
+  }, [getToken, isSignedIn, communityStorageKey]);
+
   // Refresh when the authenticated user changes so cached member data never
   // leaks between sessions.
   useEffect(() => {
     void fetchSignals();
   }, [fetchSignals, user?.id]);
+
+  useEffect(() => {
+    void fetchCommunitySignals();
+  }, [fetchCommunitySignals, user?.id]);
 
   const addSignal = useCallback(async (signal: Omit<Signal, 'id' | 'postedAt'>) => {
     const token = await getToken();
@@ -284,7 +368,8 @@ export function SignalProvider({ children }: { children: ReactNode }) {
     }
     // Refresh from the server so the newly published signal appears
     await fetchSignals();
-  }, [getToken, fetchSignals]);
+    void fetchCommunitySignals();
+  }, [getToken, fetchSignals, fetchCommunitySignals]);
 
   const updateSignal = useCallback(async (id: string, patch: Partial<SignalInput>) => {
     const token = await getToken();
@@ -302,7 +387,8 @@ export function SignalProvider({ children }: { children: ReactNode }) {
       throw new Error(err.error ?? 'Failed to update signal');
     }
     await fetchSignals();
-  }, [getToken, fetchSignals]);
+    void fetchCommunitySignals();
+  }, [getToken, fetchSignals, fetchCommunitySignals]);
 
   const deleteSignal = useCallback(async (id: string) => {
     const token = await getToken();
@@ -316,20 +402,36 @@ export function SignalProvider({ children }: { children: ReactNode }) {
       throw new Error(err.error ?? 'Failed to delete signal');
     }
     await fetchSignals();
-  }, [getToken, fetchSignals]);
+    void fetchCommunitySignals();
+  }, [getToken, fetchSignals, fetchCommunitySignals]);
 
   const value = useMemo(
     () => ({
       signals,
       isLoading,
       isSubscriptionRequired,
+      isSignalsPlanRequired,
       error,
+      communitySignals,
+      isCommunitySignalsLoading,
       refresh: fetchSignals,
       addSignal,
       updateSignal,
       deleteSignal,
     }),
-    [signals, isLoading, isSubscriptionRequired, error, fetchSignals, addSignal, updateSignal, deleteSignal],
+    [
+      signals,
+      isLoading,
+      isSubscriptionRequired,
+      isSignalsPlanRequired,
+      error,
+      communitySignals,
+      isCommunitySignalsLoading,
+      fetchSignals,
+      addSignal,
+      updateSignal,
+      deleteSignal,
+    ],
   );
 
   return <SignalContext.Provider value={value}>{children}</SignalContext.Provider>;

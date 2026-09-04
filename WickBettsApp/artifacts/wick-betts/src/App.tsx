@@ -35,9 +35,9 @@ type Signal = {
   id: string; asset: string; market: 'Stocks' | 'Crypto'; direction: Direction; entry: string;
   target: string; stop: string; timeframe: string; risk: string; status: SignalStatus;
   postedAt?: string; createdAt?: string; analysis: string; isOption?: boolean; optionType?: string;
-  contract?: string; expiration?: string; strike?: string; premium?: string; bid?: string; ask?: string;
+  contract?: string; contractAmount?: number; expiration?: string; strike?: string; premium?: string; bid?: string; ask?: string;
   impliedVolatility?: string; delta?: number; gamma?: number; theta?: number; vega?: number;
-  openInterest?: string;
+  openInterest?: string; analysisImageDataUrl?: string | null;
 };
 type NewsPost = {
   id: string; headline: string; category: string; summary: string; whyItMatters: string;
@@ -240,7 +240,7 @@ function Landing() {
               <span className="eyebrow">The full membership</span><h3>Membership</h3>
               <div className="price">Premium <small>/ month</small></div>
               <p className="plan-detail">A complete member path for desks that want broad platform access in one subscription.</p>
-              <ul className="plan-list"><li>Community access — private threads with the desk and other members</li><li>Full Learning tab — beginner-to-expert lessons and arcade games</li><li>Trade reviews with the desk</li><li>Daily signals and market news</li><li>Manage or upgrade anytime from your billing portal</li></ul>
+              <ul className="plan-list"><li>Community access — private threads with the desk and other members</li><li>Full Learning tab — beginner-to-expert lessons and arcade games</li><li>Trade reviews with the desk</li><li>Signal alert emails and market news — upgrade to Signals for the full feed with exact entries and exits</li><li>Manage or upgrade anytime from your billing portal</li></ul>
               <button className="button button-dark" data-testid="button-plan-membership" onClick={() => void handlePlan('membership')} disabled={checkoutLoading !== null}>
                 {checkoutLoading === 'membership' ? 'Redirecting…' : 'Join membership'} <ArrowRight size={14} />
               </button>
@@ -582,6 +582,11 @@ function SignalsPage() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loadError, setLoadError] = useState('');
   const [subRequired, setSubRequired] = useState(false);
+  // Membership doesn't include the Signals feed (exact entries/targets/
+  // stops/contract detail) — only the Signals and Mentorship plans do. See
+  // requireSignalsPlan in artifacts/api-server/src/routes/signals.ts.
+  const [planUpgradeRequired, setPlanUpgradeRequired] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -592,6 +597,11 @@ function SignalsPage() {
         });
         if (r.status === 403) {
           const body = await r.json() as { code?: string };
+          if (body.code === 'SIGNALS_PLAN_REQUIRED') {
+            setPlanUpgradeRequired(true);
+            setSignals([]);
+            return;
+          }
           if (body.code === 'SUBSCRIPTION_REQUIRED') {
             setSubRequired(true);
             setSignals([]);
@@ -606,6 +616,28 @@ function SignalsPage() {
       }
     })();
   }, [getToken]);
+
+  if (planUpgradeRequired) {
+    const doUpgrade = async () => {
+      setUpgrading(true);
+      try { await startCheckout('signals'); } finally { setUpgrading(false); }
+    };
+    return <div className="page">
+      <PageHeading eyebrow="The daily desk" title="Signals." />
+      <div className="surface animate-in" style={{ padding: 40, textAlign: 'center' }}>
+        <LockKeyhole size={28} style={{ margin: '0 auto 16px', display: 'block', opacity: 0.4 }} />
+        <h3 style={{ marginBottom: 8 }}>Upgrade your subscription</h3>
+        <p className="muted" style={{ maxWidth: 380, margin: '0 auto 24px', lineHeight: 1.6 }}>
+          This page gives exact contract entries, exits, and setup detail — included on the Signals and Mentorship plans, not on Membership.
+        </p>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+          <button className="button button-dark" onClick={() => void doUpgrade()} disabled={upgrading}>
+            <ArrowRight size={13} /> {upgrading ? 'Loading…' : 'Upgrade to Signals · $250'}
+          </button>
+        </div>
+      </div>
+    </div>;
+  }
 
   if (subRequired) {
     const isPastDue = subscription?.status === 'past_due';
@@ -672,9 +704,17 @@ function SignalsPage() {
                   <span>Θ {signal.theta?.toFixed(2)}</span>
                   <span>V {signal.vega?.toFixed(2)}</span>
                   {signal.contract && <span className="mono">{signal.contract}</span>}
+                  <span>× {signal.contractAmount ?? 1} contract{(signal.contractAmount ?? 1) === 1 ? '' : 's'}</span>
                 </div>
               )}
               <p className="signal-analysis">{signal.analysis}</p>
+              {signal.analysisImageDataUrl && (
+                <img
+                  src={signal.analysisImageDataUrl}
+                  alt={`${signal.asset} chart`}
+                  style={{ width: '100%', maxHeight: 260, objectFit: 'cover', borderRadius: 12, marginTop: 10 }}
+                />
+              )}
             </div>
           )}
         </div>
@@ -2340,17 +2380,19 @@ type SignalForm = {
   asset: string; market: 'Stocks' | 'Crypto'; direction: 'Long' | 'Short';
   status: SignalStatus; timeframe: string; entry: string; target: string;
   stop: string; risk: string; analysis: string; isOption: boolean;
-  optionType: 'Call' | 'Put'; contract: string; expiration: string; strike: string;
+  optionType: 'Call' | 'Put'; contract: string; contractAmount: string; expiration: string; strike: string;
   premium: string; bid: string; ask: string; impliedVolatility: string;
   delta: string; gamma: string; theta: string; vega: string; openInterest: string;
+  /** Optional chart screenshot for "Wick's Read" — a data URL, or null when none is attached. */
+  analysisImage: string | null;
 };
 
 const blankSignalForm: SignalForm = {
   asset: '', market: 'Stocks', direction: 'Long', status: 'Active',
   timeframe: '', entry: '', target: '', stop: '', risk: 'Medium', analysis: '',
-  isOption: false, optionType: 'Call', contract: '', expiration: '', strike: '',
+  isOption: false, optionType: 'Call', contract: '', contractAmount: '1', expiration: '', strike: '',
   premium: '', bid: '', ask: '', impliedVolatility: '', delta: '', gamma: '',
-  theta: '', vega: '', openInterest: '',
+  theta: '', vega: '', openInterest: '', analysisImage: null,
 };
 
 function AdminSignalForm({
@@ -2380,6 +2422,19 @@ function AdminSignalForm({
   const Seg = ({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) => (
     <button type="button" className={`sf-seg ${active ? 'sf-seg-on' : ''}`} onClick={onClick}>{label}</button>
   );
+
+  const onPickAnalysisImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('read failed'));
+      reader.readAsDataURL(file);
+    }).catch(() => null);
+    if (dataUrl) upd('analysisImage', dataUrl);
+  };
 
   return (
     <div className="surface animate-in" style={{padding:'28px 32px',marginBottom:24}}>
@@ -2432,9 +2487,13 @@ function AdminSignalForm({
           <SF label="Expiration" name="expiration" placeholder="Aug 22, 2026" />
         </div>
         <div className="sf-grid-3">
+          <SF label="Contracts" name="contractAmount" placeholder="1" />
           <SF label="Strike" name="strike" placeholder="$130.00" />
           <SF label="Premium" name="premium" placeholder="$3.42" />
-          <SF label="Bid / Ask" name="bid" placeholder="$3.38" />
+        </div>
+        <div className="sf-grid-2">
+          <SF label="Bid" name="bid" placeholder="$3.38" />
+          <SF label="Ask" name="ask" placeholder="$3.46" />
         </div>
         <div className="sf-section-label" style={{marginTop:4}}>Greeks & liquidity (at entry)</div>
         <div className="sf-grid-4">
@@ -2443,16 +2502,37 @@ function AdminSignalForm({
           <SF label="Gamma Γ" name="gamma" placeholder="0.018" />
           <SF label="Theta Θ" name="theta" placeholder="-0.11" />
         </div>
-        <div className="sf-grid-3">
+        <div className="sf-grid-2">
           <SF label="Vega V" name="vega" placeholder="0.19" />
           <SF label="Open interest" name="openInterest" placeholder="18,420" />
-          <SF label="Ask" name="ask" placeholder="$3.46" />
         </div>
       </>)}
 
       {/* Analysis */}
       <div className="sf-section-label" style={{marginTop:8}}>Wick's read</div>
       <SF label="Analysis" name="analysis" placeholder="Explain the setup, context, and invalidation level..." multiline />
+      <div className="sf-field">
+        <label className="sf-label">Chart screenshot (optional)</label>
+        <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
+          {form.analysisImage && (
+            <div style={{position:'relative'}}>
+              <img src={form.analysisImage} alt="Chart screenshot preview" style={{width:140,height:90,objectFit:'cover',borderRadius:10,border:'1px solid var(--border)'}} />
+              <button
+                type="button"
+                onClick={() => upd('analysisImage', null)}
+                aria-label="Remove chart screenshot"
+                style={{position:'absolute',top:-8,right:-8,width:22,height:22,borderRadius:11,border:'1px solid var(--border)',background:'var(--card)',cursor:'pointer',display:'grid',placeItems:'center'}}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+          <label className="button button-outline" style={{fontSize:12,cursor:'pointer'}}>
+            <Camera size={13} /> {form.analysisImage ? 'Change screenshot' : 'Attach chart screenshot'}
+            <input type="file" accept="image/*" onChange={(e) => void onPickAnalysisImage(e)} style={{display:'none'}} data-testid="input-analysis-image" />
+          </label>
+        </div>
+      </div>
 
       <div style={{display:'flex',gap:10,marginTop:8,alignItems:'center'}}>
         <button className="button button-dark" onClick={onSubmit} disabled={submitting} data-testid="button-publish-signal">
@@ -2561,7 +2641,8 @@ function AdminSignalsPage() {
       timeframe: s.timeframe, entry: s.entry, target: s.target, stop: s.stop,
       risk: s.risk, analysis: s.analysis, isOption: s.isOption ?? false,
       optionType: (s.optionType as 'Call' | 'Put') ?? 'Call',
-      contract: s.contract ?? '', expiration: s.expiration ?? '', strike: s.strike ?? '',
+      contract: s.contract ?? '', contractAmount: s.contractAmount != null ? String(s.contractAmount) : '1',
+      expiration: s.expiration ?? '', strike: s.strike ?? '',
       premium: s.premium ?? '', bid: s.bid ?? '', ask: s.ask ?? '',
       impliedVolatility: s.impliedVolatility ?? '',
       delta: s.delta != null ? String(s.delta) : '',
@@ -2569,6 +2650,7 @@ function AdminSignalsPage() {
       theta: s.theta != null ? String(s.theta) : '',
       vega: s.vega != null ? String(s.vega) : '',
       openInterest: s.openInterest ?? '',
+      analysisImage: s.analysisImageDataUrl ?? null,
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -2598,6 +2680,10 @@ function AdminSignalsPage() {
       ? {
           optionType: form.optionType,
           contract: optStr(form.contract, true),
+          // Only a genuine positive number changes contractAmount — same
+          // "leave as-is / default to 1 unless specified" behavior the API
+          // enforces (it rejects an explicit null, so this never sends one).
+          contractAmount: form.contractAmount.trim() && Number(form.contractAmount) > 0 ? Math.round(Number(form.contractAmount)) : undefined,
           expiration: optStr(form.expiration),
           strike: optStr(form.strike),
           premium: optStr(form.premium),
@@ -2632,6 +2718,9 @@ function AdminSignalsPage() {
       status: form.status, entry: form.entry.trim(), target: form.target.trim(),
       stop: form.stop.trim(), timeframe: form.timeframe.trim(), risk: form.risk.trim(),
       analysis: form.analysis.trim(), isOption: form.isOption,
+      // Wick's Read screenshot applies to every signal, not just options —
+      // null explicitly clears a previously attached one on edit.
+      analysisImageDataUrl: form.analysisImage,
       ...optionFields,
     };
     try {

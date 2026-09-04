@@ -28,17 +28,19 @@ const STYLE_OPTIONS: SignalStyle[] = ['Day Trade', 'Swing', 'Buy & Hold', 'LEAPS
 type FormState = {
   asset: string; sector: string; market: SignalMarket; direction: SignalDirection; status: SignalStatus; style: SignalStyle;
   timeframe: string; entry: string; target: string; stop: string; risk: string; analysis: string;
-  isOption: boolean; optionType: OptionType; contract: string; expiration: string; strike: string;
+  isOption: boolean; optionType: OptionType; contract: string; contractAmount: string; expiration: string; strike: string;
   premium: string; bid: string; ask: string; impliedVolatility: string;
   delta: string; gamma: string; theta: string; vega: string; openInterest: string;
+  /** Optional chart screenshot for "Wick's Read" — a data URL, or null when none is attached. */
+  analysisImage: string | null;
 };
 
 const initialForm: FormState = {
   asset: '', sector: '', market: 'Stocks', direction: 'Long', status: 'Active', style: 'Swing',
   timeframe: '', entry: '', target: '', stop: '', risk: 'Medium', analysis: '',
-  isOption: true, optionType: 'Call', contract: '', expiration: '', strike: '',
+  isOption: true, optionType: 'Call', contract: '', contractAmount: '1', expiration: '', strike: '',
   premium: '', bid: '', ask: '', impliedVolatility: '', delta: '', gamma: '',
-  theta: '', vega: '', openInterest: '',
+  theta: '', vega: '', openInterest: '', analysisImage: null,
 };
 
 /** ~N months out from today, formatted for the Expiration field. */
@@ -66,6 +68,7 @@ function formFromSignal(s: Signal): FormState {
     isOption: s.isOption,
     optionType: s.optionType ?? 'Call',
     contract: s.contract ?? '',
+    contractAmount: s.contractAmount != null ? String(s.contractAmount) : '1',
     expiration: s.expiration ?? '',
     strike: s.strike ?? '',
     premium: s.premium ?? '',
@@ -77,6 +80,7 @@ function formFromSignal(s: Signal): FormState {
     theta: s.theta != null ? String(s.theta) : '',
     vega: s.vega != null ? String(s.vega) : '',
     openInterest: s.openInterest ?? '',
+    analysisImage: s.analysisImageDataUrl ?? null,
   };
 }
 
@@ -220,9 +224,33 @@ export default function AdminScreen() {
     () =>
       [form.asset, form.timeframe, form.entry, form.target, form.analysis].every((v) => v.trim().length > 0) &&
       (form.style === 'Buy & Hold' || form.stop.trim().length > 0) &&
-      (!form.isOption || [form.contract, form.expiration, form.strike, form.premium, form.impliedVolatility, form.delta, form.gamma, form.theta, form.vega].every((v) => v.trim().length > 0)),
+      (!form.isOption || [form.contract, form.expiration, form.strike, form.premium, form.impliedVolatility, form.delta, form.gamma, form.theta, form.vega].every((v) => v.trim().length > 0)) &&
+      // Contracts defaults to 1 and isn't required, but if the admin did type
+      // something it has to actually be a usable positive whole number.
+      (!form.isOption || form.contractAmount.trim() === '' || (Number.isFinite(Number(form.contractAmount)) && Number(form.contractAmount) > 0)),
     [form],
   );
+
+  const pickAnalysisImage = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission needed', 'Allow photo library access to attach a chart screenshot.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.7,
+      base64: true,
+    });
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    if (!asset.base64) {
+      Alert.alert("Couldn't read image", 'Try a different screenshot.');
+      return;
+    }
+    const mime = asset.mimeType ?? 'image/jpeg';
+    update('analysisImage', `data:${mime};base64,${asset.base64}`);
+  };
 
   const pickScreenshot = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -281,6 +309,9 @@ export default function AdminScreen() {
     isOption: form.isOption,
     optionType: form.isOption ? form.optionType : undefined,
     contract: form.isOption ? form.contract.trim().toUpperCase() : undefined,
+    contractAmount: form.isOption
+      ? (form.contractAmount.trim() && Number(form.contractAmount) > 0 ? Math.round(Number(form.contractAmount)) : 1)
+      : undefined,
     expiration: form.isOption ? form.expiration.trim() : undefined,
     strike: form.isOption ? form.strike.trim() : undefined,
     premium: form.isOption ? form.premium.trim() : undefined,
@@ -292,6 +323,7 @@ export default function AdminScreen() {
     theta: form.isOption ? Number(form.theta) : undefined,
     vega: form.isOption ? Number(form.vega) : undefined,
     openInterest: form.isOption ? form.openInterest.trim() : undefined,
+    analysisImageDataUrl: form.analysisImage,
   });
 
   const publish = async () => {
@@ -502,7 +534,8 @@ export default function AdminScreen() {
               <Segment active={form.optionType === 'Put'} label="Put" onPress={() => update('optionType', 'Put')} />
             </View>
             <Field label="Contract" value={form.contract} onChangeText={(v) => update('contract', v)} placeholder="NVDA 22 AUG 26 130 C" />
-            <View style={styles.twoCol}>
+            <View style={styles.threeCol}>
+              <Field label="Contracts" value={form.contractAmount} onChangeText={(v) => update('contractAmount', v)} placeholder="1" keyboardType="number-pad" />
               <Field label="Expiration" value={form.expiration} onChangeText={(v) => update('expiration', v)} placeholder="Aug 22, 2026" />
               <Field label="Strike" value={form.strike} onChangeText={(v) => update('strike', v)} placeholder="$130.00" />
             </View>
@@ -533,6 +566,32 @@ export default function AdminScreen() {
         {/* Analysis */}
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Wick's read</Text>
         <Field label="Analysis" value={form.analysis} onChangeText={(v) => update('analysis', v)} placeholder="Explain the setup, context, and invalidation..." multiline />
+        <View style={styles.field}>
+          <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Chart screenshot (optional)</Text>
+          {form.analysisImage ? (
+            <View style={styles.analysisImagePreviewRow}>
+              <Image source={{ uri: form.analysisImage }} style={styles.analysisImagePreview} resizeMode="cover" />
+              <Pressable
+                onPress={() => update('analysisImage', null)}
+                style={[styles.analysisImageRemove, { backgroundColor: colors.card, borderColor: colors.border }]}
+                accessibilityRole="button"
+                accessibilityLabel="Remove chart screenshot"
+              >
+                <Ionicons name="close" size={14} color={colors.destructive} />
+              </Pressable>
+            </View>
+          ) : null}
+          <Pressable
+            onPress={() => void pickAnalysisImage()}
+            style={[styles.scanButton, { backgroundColor: colors.secondary, borderColor: colors.border }]}
+            accessibilityRole="button"
+          >
+            <Ionicons name="image-outline" size={16} color={colors.primary} />
+            <Text style={[styles.scanButtonText, { color: colors.primary }]}>
+              {form.analysisImage ? 'Change screenshot' : 'Attach chart screenshot'}
+            </Text>
+          </Pressable>
+        </View>
 
         {error ? <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
 
@@ -714,7 +773,7 @@ function SelectField({ label, value, options, onChange }: { label: string; value
   );
 }
 
-function Field({ label, value, onChangeText, placeholder, multiline = false, keyboardType = 'default' }: { label: string; value: string; onChangeText: (v: string) => void; placeholder: string; multiline?: boolean; keyboardType?: 'default' | 'decimal-pad' }) {
+function Field({ label, value, onChangeText, placeholder, multiline = false, keyboardType = 'default' }: { label: string; value: string; onChangeText: (v: string) => void; placeholder: string; multiline?: boolean; keyboardType?: 'default' | 'decimal-pad' | 'number-pad' }) {
   const colors = useColors();
   return (
     <View style={styles.field}>
@@ -767,6 +826,9 @@ const styles = StyleSheet.create({
   optionText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   greeksNote: { borderRadius: 10, padding: 10, marginBottom: 12 },
   greeksNoteText: { fontSize: 10, fontFamily: 'Inter_400Regular', lineHeight: 15 },
+  analysisImagePreviewRow: { position: 'relative', marginBottom: 10 },
+  analysisImagePreview: { width: '100%', height: 160, borderRadius: 12 },
+  analysisImageRemove: { position: 'absolute', top: 8, right: 8, width: 26, height: 26, borderRadius: 13, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   error: { fontSize: 11, fontFamily: 'Inter_600SemiBold', marginBottom: 12, lineHeight: 16 },
   footerNote: { fontSize: 10, lineHeight: 15, textAlign: 'center', fontFamily: 'Inter_400Regular', marginTop: 14, paddingHorizontal: 8 },
   gate: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 32 },

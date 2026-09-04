@@ -1,11 +1,11 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Card, Header, Screen, SectionLabel, Tag } from '@/components/WickUI';
 import { TickerIcon } from '@/components/TickerIcon';
-import { LapsedRecovery, SubscribePanel } from '@/components/Billing';
+import { LapsedRecovery, SubscribePanel, UpgradeSignalsButton } from '@/components/Billing';
 import { useColors } from '@/hooks/useColors';
 import { useAuth, type Plan } from '@/context/AuthContext';
 import { useSignals, type Signal, type SignalStatus } from '@/context/SignalContext';
@@ -56,7 +56,7 @@ export default function SignalsScreen() {
   const router = useRouter();
   const colors = useColors();
   const { subscription, user } = useAuth();
-  const { signals, isLoading, isSubscriptionRequired, error, refresh, updateSignal, deleteSignal } = useSignals();
+  const { signals, isLoading, isSubscriptionRequired, isSignalsPlanRequired, error, refresh, updateSignal, deleteSignal } = useSignals();
   const { unreadCount } = useNotifications();
   const { items: watchlistItems, saving: watchlistSaving, addItem: addWatchlistItem } = useWatchlist();
   const isAdmin = user?.role === 'admin';
@@ -166,8 +166,21 @@ export default function SignalsScreen() {
     <Screen contentStyle={styles.content}>
       <Header eyebrow="Wick Betts / Intelligence" title="Signals" action="Alerts" onAction={() => router.push('/notifications')} badge={unreadCount} />
 
-      {/* Subscription required gate */}
-      {isSubscriptionRequired ? (
+      {/* Membership doesn't include the Signals feed — prompt an upgrade
+          instead of the generic "pick a plan" screen below. */}
+      {isSignalsPlanRequired ? (
+        <Card style={styles.gateCard}>
+          <Ionicons name="lock-closed-outline" size={28} color={colors.primary} style={styles.gateIcon} />
+          <Text style={[styles.gateTitle, styles.gateCenter, { color: colors.foreground }]}>Upgrade your subscription</Text>
+          <Text style={[styles.gateText, { color: colors.mutedForeground }]}>
+            This page gives exact contract entries, exits, and setup detail — included on the Signals and Mentorship plans, not on Membership.
+          </Text>
+          <View style={styles.gateActions}>
+            <UpgradeSignalsButton />
+          </View>
+        </Card>
+      ) : /* Subscription required gate */
+      isSubscriptionRequired ? (
         <Card style={styles.gateCard}>
           <Ionicons name="lock-closed-outline" size={28} color={colors.primary} style={styles.gateIcon} />
           <Text style={[styles.gateTitle, styles.gateCenter, { color: colors.foreground }]}>
@@ -435,6 +448,7 @@ function SignalCard({
           <Text style={[styles.contractLabel, { color: colors.primary }]}>CONTRACT</Text>
           <Text style={[styles.contractName, { color: colors.foreground }]}>{signal.contract}</Text>
           <View style={styles.contractMeta}>
+            <Text style={[styles.contractMetaText, { color: colors.mutedForeground }]}>Contracts {signal.contractAmount ?? 1}</Text>
             <Text style={[styles.contractMetaText, { color: colors.mutedForeground }]}>Expiry {signal.expiration}</Text>
             <Text style={[styles.contractMetaText, { color: colors.mutedForeground }]}>Strike {signal.strike}</Text>
             <Text style={[styles.contractMetaText, { color: colors.mutedForeground }]}>Premium {signal.premium}</Text>
@@ -465,6 +479,9 @@ function SignalCard({
           <View style={[styles.analysis, { backgroundColor: colors.muted }]}>
             <Text style={[styles.analysisLabel, { color: colors.primary }]}>WICK&apos;S READ</Text>
             <Text style={[styles.analysisText, { color: colors.mutedForeground }]}>{signal.analysis}</Text>
+            {signal.analysisImageDataUrl ? (
+              <Image source={{ uri: signal.analysisImageDataUrl }} style={styles.analysisChartImage} resizeMode="cover" />
+            ) : null}
           </View>
           <Text style={[styles.postedAt, { color: colors.mutedForeground }]}>
             {signal.postedAt}
@@ -536,7 +553,7 @@ const styles = StyleSheet.create({
   contract: { borderRadius: 12, padding: 12, marginTop: 15 },
   contractLabel: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1.2, marginBottom: 5 },
   contractName: { fontSize: 14, fontFamily: 'Inter_700Bold' },
-  contractMeta: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
+  contractMeta: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 6, marginTop: 8 },
   contractMetaText: { fontSize: 10, fontFamily: 'Inter_400Regular' },
   levels: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, marginTop: 16, paddingTop: 14 },
   levelLabel: { fontSize: 10, fontFamily: 'Inter_500Medium', marginBottom: 4 },
@@ -557,6 +574,7 @@ const styles = StyleSheet.create({
   analysis: { padding: 12, borderRadius: 12, marginTop: 15 },
   analysisLabel: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 1, marginBottom: 6 },
   analysisText: { fontSize: 12, lineHeight: 18, fontFamily: 'Inter_400Regular' },
+  analysisChartImage: { width: '100%', height: 180, borderRadius: 10, marginTop: 12 },
   postedAt: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 11 },
   emptyCard: { alignItems: 'center', paddingVertical: 28, marginBottom: 14 },
   emptyTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', marginTop: 10 },

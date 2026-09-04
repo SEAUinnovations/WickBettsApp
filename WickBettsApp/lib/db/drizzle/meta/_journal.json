@@ -99,6 +99,13 @@
       "when": 1788185000000,
       "tag": "0013_trade_review_symbol",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788200000000,
+      "tag": "0014_signal_contract_amount_and_image",
+      "breakpoints": true
     }
   ]
 }

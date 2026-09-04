@@ -152,6 +152,28 @@ export function SubscribePanel() {
   );
 }
 
+/** "Upgrade to Signals" checkout for members on the Membership plan (which
+ *  doesn't include the exact-entries Signals feed — see requireSignalsPlan
+ *  in routes/signals.ts). */
+export function UpgradeSignalsButton() {
+  const { loading, error, runCheckout } = useBillingActions();
+  return (
+    <View style={styles.stack}>
+      <Text style={styles.stripeNote}>Secure checkout opens in Stripe.</Text>
+      <ActionButton
+        onPress={() => void runCheckout('signals')}
+        icon="pulse-outline"
+        busy={loading === 'signals'}
+        disabled={loading !== null}
+        testID="upgrade-signals"
+      >
+        Upgrade to Signals · $250
+      </ActionButton>
+      <ErrorLine message={error} />
+    </View>
+  );
+}
+
 /** "Upgrade to mentorship" checkout for members on the signals plan. */
 export function UpgradeMentorshipButton() {
   const { loading, error, runCheckout } = useBillingActions();

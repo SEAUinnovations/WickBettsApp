@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean, real, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, real, integer, pgEnum } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { usersTable } from "./users";
@@ -56,6 +56,12 @@ export const signalsTable = pgTable("signals", {
   isOption: boolean("is_option").notNull().default(false),
   optionType: optionTypeEnum("option_type"),
   contract: text("contract"),
+  // How many contracts the setup is sized for. Only meaningful for options/
+  // LEAPS signals (contract is a single free-text descriptor like "NVDA 22
+  // AUG 26 130 C" — this is the quantity of that contract to trade), but the
+  // column always defaults to 1 for every signal so it never needs a
+  // backfill and reads never have to null-check it.
+  contractAmount: integer("contract_amount").notNull().default(1),
   expiration: text("expiration"),
   strike: text("strike"),
   premium: text("premium"),
@@ -67,6 +73,12 @@ export const signalsTable = pgTable("signals", {
   theta: real("theta"),
   vega: real("vega"),
   openInterest: text("open_interest"),
+  // Optional chart screenshot to go with "Wick's Read" (the `analysis`
+  // write-up below) — a data URL (e.g. "data:image/jpeg;base64,...") stored
+  // inline, same approach as trade_reviews.image_data_url, so no separate
+  // object storage had to be stood up for this. Nullable: most signals are
+  // text-only: this is an optional visual aid, not a requirement.
+  analysisImageDataUrl: text("analysis_image_data_url"),
   createdBy: text("created_by").references(() => usersTable.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   // 'manual' (admin-authored) or 'auto' (produced by the scheduled signal

@@ -131,6 +131,7 @@ function StarredSignalCard({ signal }: { signal: Signal }) {
           <Text style={[styles.starredContractLabel, { color: colors.primary }]}>CONTRACT</Text>
           <Text style={[styles.starredContractName, { color: colors.foreground }]}>{signal.contract}</Text>
           <View style={styles.starredContractMetaRow}>
+            <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>Contracts {signal.contractAmount ?? 1}</Text>
             <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>Expiry {signal.expiration}</Text>
             <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>Strike {signal.strike}</Text>
             <Text style={[styles.starredContractMetaText, { color: colors.mutedForeground }]}>Premium {signal.premium}</Text>
@@ -170,6 +171,9 @@ function StarredSignalCard({ signal }: { signal: Signal }) {
       </View>
 
       <Text style={[styles.messageText, { color: colors.mutedForeground }]}>{signal.analysis}</Text>
+      {signal.analysisImageDataUrl ? (
+        <Image source={{ uri: signal.analysisImageDataUrl }} style={styles.chartImage} resizeMode="cover" />
+      ) : null}
     </Card>
   );
 }
@@ -181,12 +185,15 @@ export default function CommunityScreen() {
   const isAdmin = user?.role === 'admin';
   // Community's "Signals" tab surfaces up to 4 admin-featured signals (see
   // communityStarred in lib/db/src/schema/signals.ts) with full contract
-  // detail — reuses the same SignalProvider/context the main Signals tab
-  // and Signal Studio already run on, so no separate fetch is needed here.
-  const { signals: allSignals, isLoading: signalsLoading } = useSignals();
+  // detail. This comes from its own fetch (communitySignals, backed by
+  // GET /signals/community-starred) rather than the main Signals tab's
+  // `signals` — that feed is gated to Signals/Mentorship plans only, but
+  // this curated Community reel stays available to any active subscriber,
+  // Membership included.
+  const { communitySignals, isCommunitySignalsLoading: signalsLoading } = useSignals();
   const { unreadCount } = useNotifications();
-  const starredSignals = allSignals
-    .filter((s) => s.communityStarred && s.status !== 'Closed' && s.status !== 'Stopped')
+  const starredSignals = communitySignals
+    .filter((s) => s.status !== 'Closed' && s.status !== 'Stopped')
     .slice(0, 4);
   const [thread, setThread] = useState<Thread>('Signals');
   const [posts, setPosts] = useState<CommunityPost[]>([]);
@@ -1433,7 +1440,7 @@ const styles = StyleSheet.create({
   starredContractBox: { borderRadius: 12, padding: 12, marginTop: 14 },
   starredContractLabel: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1.2, marginBottom: 5 },
   starredContractName: { fontSize: 14, fontFamily: 'Inter_700Bold' },
-  starredContractMetaRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
+  starredContractMetaRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 6, marginTop: 8 },
   starredContractMetaText: { fontSize: 10, fontFamily: 'Inter_400Regular' },
   starredLevelsRow: { flexDirection: 'row', gap: 20, marginTop: 14, paddingTop: 14, borderTopWidth: 1 },
   starredLevelValue: { fontSize: 14, fontFamily: 'Inter_700Bold', marginTop: 4 },

@@ -44,15 +44,69 @@ export async function requireActiveSubscription(req: Request, res: Response, nex
   next();
 }
 
+// The Signals tab itself (exact entries/targets/stops/contract detail) is
+// NOT included on the base Membership plan — Membership gets community
+// access, the Learning tab, trade reviews, and signal-alert EMAILS (see
+// fanOutSignalEmail in utils/emailNotifications.ts, which is plan-blind by
+// design), but not the live feed of exact calls. Only the "signals" and
+// "mentorship" plans (mentorship is sold as "everything in Signals" plus
+// more) unlock this feed. This mirrors requireMentorshipPlan in
+// mentorship.ts, just with a different target plan set, and is deliberately
+// its OWN gate rather than a change to requireActiveSubscription above —
+// Community/News/Market/Trade Reviews stay on "any active plan" as before.
+const SIGNALS_FEED_PLANS = ["signals", "mentorship"] as const;
+
+export async function requireSignalsPlan(req: Request, res: Response, next: () => void) {
+  const user = req.dbUser!;
+  if (user.role === "admin") {
+    next();
+    return;
+  }
+
+  const subs = await db
+    .select()
+    .from(subscriptionsTable)
+    .where(eq(subscriptionsTable.userId, user.id));
+
+  const now = new Date();
+  const graceCutoff = new Date(now.getTime() - GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
+  const isEntitled = (s: (typeof subs)[number]) => {
+    if (s.status === "active" || s.status === "trialing") return true;
+    if (s.status === "past_due" && s.currentPeriodEnd && new Date(s.currentPeriodEnd) >= graceCutoff) return true;
+    return false;
+  };
+
+  const hasAnyEntitledSub = subs.some(isEntitled);
+  const hasSignalsPlan = subs.some((s) => (SIGNALS_FEED_PLANS as readonly string[]).includes(s.plan) && isEntitled(s));
+
+  if (hasSignalsPlan) {
+    next();
+    return;
+  }
+
+  if (!hasAnyEntitledSub) {
+    logger.warn({ userId: user.id }, "Signals gate blocked access — no active or grace-period subscription");
+    res.status(403).json({ error: "Active subscription required", code: "SUBSCRIPTION_REQUIRED" });
+    return;
+  }
+
+  // Subscribed, but on a plan that doesn't include the Signals feed
+  // (Membership) — a distinct code so the client can show an upgrade
+  // prompt instead of the generic "pick a plan" screen.
+  logger.warn({ userId: user.id }, "Signals gate blocked access — active subscription does not include the Signals plan");
+  res.status(403).json({ error: "Upgrade to Signals to view exact entries, targets, and contract detail.", code: "SIGNALS_PLAN_REQUIRED" });
+}
+
 const router = Router();
 
-// GET /api/signals — member feed (requires auth + active sub). "Watching" is
-// an auto-generated candidate awaiting admin review (see signalScanner.ts /
+// GET /api/signals — member feed (requires auth + a Signals-tier
+// subscription — see requireSignalsPlan above). "Watching" is an
+// auto-generated candidate awaiting admin review (see signalScanner.ts /
 // the PATCH handler below) — it must never reach subscribers, only the
 // moment it's promoted to "Active" is a live, admin-reviewed call. Admins
 // still see every status so they have something to review in the first
 // place.
-router.get("/", requireAuth, requireActiveSubscription, async (req: Request, res: Response) => {
+router.get("/", requireAuth, requireSignalsPlan, async (req: Request, res: Response) => {
   const user = req.dbUser!;
   const rows =
     user.role === "admin"
@@ -80,6 +134,30 @@ type SignalStyle = (typeof VALID_STYLES)[number];
 // member feed.
 const MAX_COMMUNITY_STARRED = 4;
 
+// GET /api/signals/community-starred — the small (≤4), admin-curated
+// "featured in Community" highlight reel. Deliberately gated by
+// requireActiveSubscription (any active plan) rather than
+// requireSignalsPlan above: Membership subscribers don't get the full
+// Signals tab feed, but they DO keep community access, and this curated
+// reel is part of Community, not the Signals tab. Excludes "Watching" for
+// non-admins for the same reason the main feed does — those are
+// auto-generated candidates awaiting review, never meant to reach members.
+router.get("/community-starred", requireAuth, requireActiveSubscription, async (req: Request, res: Response) => {
+  const user = req.dbUser!;
+  const rows = await db
+    .select()
+    .from(signalsTable)
+    .where(
+      user.role === "admin"
+        ? eq(signalsTable.communityStarred, true)
+        : and(eq(signalsTable.communityStarred, true), ne(signalsTable.status, "Watching"))
+    )
+    .orderBy(desc(signalsTable.createdAt))
+    .limit(MAX_COMMUNITY_STARRED);
+  const signals = rows.map((s) => ({ ...s, logoUrl: resolveLogoUrl(s.asset) }));
+  res.json({ signals });
+});
+
 // POST /api/signals — publish a signal (admin only)
 router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const body = req.body as {
@@ -88,11 +166,22 @@ router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) 
     asset?: string | null; sector?: string | null; market?: "Stocks" | "Crypto" | null; direction?: "Long" | "Short" | null;
     entry?: string | null; target?: string | null; stop?: string | null; timeframe?: string | null;
     risk?: string | null; analysis?: string | null; isOption?: boolean | null;
-    optionType?: "Call" | "Put" | null; contract?: string | null; expiration?: string | null;
+    optionType?: "Call" | "Put" | null; contract?: string | null; contractAmount?: number | null;
+    expiration?: string | null;
     strike?: string | null; premium?: string | null; bid?: string | null; ask?: string | null;
     impliedVolatility?: string | null; delta?: number | null; gamma?: number | null;
     theta?: number | null; vega?: number | null; openInterest?: string | null;
+    analysisImageDataUrl?: string | null;
   };
+
+  if (body.contractAmount != null && (typeof body.contractAmount !== "number" || !Number.isFinite(body.contractAmount) || body.contractAmount <= 0)) {
+    res.status(400).json({ error: "contractAmount must be a positive number" });
+    return;
+  }
+  if (body.analysisImageDataUrl != null && (typeof body.analysisImageDataUrl !== "string" || !body.analysisImageDataUrl.startsWith("data:image/"))) {
+    res.status(400).json({ error: "analysisImageDataUrl must be a base64 image data URL" });
+    return;
+  }
 
   const style: SignalStyle = body.style && VALID_STYLES.includes(body.style) ? body.style : "Swing";
   // Buy & Hold is a long-term spot thesis with no hard stop-loss by design
@@ -141,6 +230,9 @@ router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) 
       isOption: body.isOption ?? undefined,
       optionType: body.optionType ?? undefined,
       contract: body.contract ?? undefined,
+      // Contracts is options/LEAPS-only in the UI, but the column always
+      // defaults to 1 regardless of isOption — see the schema comment.
+      contractAmount: body.contractAmount != null ? Math.round(body.contractAmount) : undefined,
       expiration: body.expiration ?? undefined,
       strike: body.strike ?? undefined,
       premium: body.premium ?? undefined,
@@ -152,6 +244,7 @@ router.post("/", requireAuth, requireAdmin, async (req: Request, res: Response) 
       theta: body.theta ?? undefined,
       vega: body.vega ?? undefined,
       openInterest: body.openInterest ?? undefined,
+      analysisImageDataUrl: body.analysisImageDataUrl ?? undefined,
       createdBy: user.id,
     };
     await db.insert(signalsTable).values(signal);
@@ -186,11 +279,13 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
     asset?: string | null; sector?: string | null; market?: "Stocks" | "Crypto" | null; direction?: "Long" | "Short" | null;
     entry?: string | null; target?: string | null; stop?: string | null; timeframe?: string | null;
     risk?: string | null; analysis?: string | null; isOption?: boolean | null;
-    optionType?: "Call" | "Put" | null; contract?: string | null; expiration?: string | null;
+    optionType?: "Call" | "Put" | null; contract?: string | null; contractAmount?: number | null;
+    expiration?: string | null;
     strike?: string | null; premium?: string | null; bid?: string | null; ask?: string | null;
     impliedVolatility?: string | null; delta?: number | null; gamma?: number | null;
     theta?: number | null; vega?: number | null; openInterest?: string | null;
     communityStarred?: boolean | null;
+    analysisImageDataUrl?: string | null;
   };
 
   const validStatus = ["Active", "Watching", "Closed", "Stopped"];
@@ -231,6 +326,12 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   if (body.communityStarred != null && typeof body.communityStarred !== "boolean") {
     res.status(400).json({ error: "communityStarred must be a boolean" }); return;
   }
+  if (body.contractAmount != null && (typeof body.contractAmount !== "number" || !Number.isFinite(body.contractAmount) || body.contractAmount <= 0)) {
+    res.status(400).json({ error: "contractAmount must be a positive number" }); return;
+  }
+  if (body.analysisImageDataUrl != null && (typeof body.analysisImageDataUrl !== "string" || !body.analysisImageDataUrl.startsWith("data:image/"))) {
+    res.status(400).json({ error: "analysisImageDataUrl must be a base64 image data URL" }); return;
+  }
 
   const updates: Record<string, unknown> = {};
   const include = (key: string, val: unknown) => { if (val !== undefined) updates[key] = val; };
@@ -240,11 +341,20 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   include("stop", body.stop); include("timeframe", body.timeframe); include("risk", body.risk);
   include("analysis", body.analysis); include("isOption", body.isOption);
   include("optionType", body.optionType); include("contract", body.contract);
+  // contractAmount is skipped (not reset) when omitted from the body — only
+  // an explicit positive number changes it, same "leave as-is unless given a
+  // value" behavior as every other field here. null was already rejected
+  // above, so whatever survives to here is a genuine number to round and set.
+  include("contractAmount", body.contractAmount != null ? Math.round(body.contractAmount) : undefined);
   include("expiration", body.expiration); include("strike", body.strike);
   include("premium", body.premium); include("bid", body.bid); include("ask", body.ask);
   include("impliedVolatility", body.impliedVolatility); include("delta", body.delta);
   include("gamma", body.gamma); include("theta", body.theta); include("vega", body.vega);
   include("openInterest", body.openInterest); include("communityStarred", body.communityStarred);
+  // analysisImageDataUrl DOES accept an explicit null here (unlike
+  // contractAmount above) — that's how an admin removes a previously
+  // attached chart screenshot from Wick's Read without touching anything else.
+  include("analysisImageDataUrl", body.analysisImageDataUrl);
 
   if (Object.keys(updates).length === 0) {
     res.status(400).json({ error: "No fields to update" });
