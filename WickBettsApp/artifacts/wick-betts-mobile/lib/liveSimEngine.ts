@@ -12,8 +12,8 @@
  * owning the simulation rules.
  */
 
-export type SimTimeframe = '1m' | '5m' | '15m';
-export const SIM_TIMEFRAMES: SimTimeframe[] = ['1m', '5m', '15m'];
+export type SimTimeframe = '1m' | '5m' | '15m' | '30m' | '1h';
+export const SIM_TIMEFRAMES: SimTimeframe[] = ['1m', '5m', '15m', '30m', '1h'];
 
 export interface SimCandle {
   /** Simulated epoch ms — not wall-clock time, just a monotonically increasing axis label. */
@@ -71,14 +71,24 @@ export const SIM_QTY_PRESETS = [1, 3, 5, 10, 15] as const;
 // How many candles stay in the visible rolling window.
 export const SIM_VISIBLE_CANDLES = 44;
 
-// Wall-clock pacing per timeframe: how often a live tick nudges the forming
-// candle, and how many ticks make up one candle before it closes and a new
-// one opens. Slower timeframes take a bit longer per candle so switching
-// tabs feels distinct, without actually waiting real minutes per candle.
-export const SIM_TIMEFRAME_CONFIG: Record<SimTimeframe, { tickMs: number; ticksPerCandle: number }> = {
-  '1m': { tickMs: 450, ticksPerCandle: 5 },
-  '5m': { tickMs: 550, ticksPerCandle: 7 },
-  '15m': { tickMs: 650, ticksPerCandle: 9 },
+// Each timeframe has two independent notions of "time" that must not be
+// conflated:
+//   - tickMs / ticksPerCandle: wall-clock pacing — how often a live tick
+//     nudges the forming candle, and how many ticks make up one candle
+//     before it closes and a new one opens. Slower timeframes take a bit
+//     longer per candle so switching tabs feels distinct, without actually
+//     making the member wait real minutes per candle.
+//   - candleDurationMs: the simulated time-axis increment each candle
+//     represents — i.e. what the '1m'/'5m'/'15m'/'30m'/'1h' label actually
+//     means. This is what advances a candle's `time` field (via
+//     seedSimCandles' stepMs and openSimCandle's time argument), completely
+//     independent of how fast it's rendered ticking on screen.
+export const SIM_TIMEFRAME_CONFIG: Record<SimTimeframe, { tickMs: number; ticksPerCandle: number; candleDurationMs: number }> = {
+  '1m': { tickMs: 450, ticksPerCandle: 5, candleDurationMs: 60_000 },
+  '5m': { tickMs: 500, ticksPerCandle: 6, candleDurationMs: 5 * 60_000 },
+  '15m': { tickMs: 550, ticksPerCandle: 7, candleDurationMs: 15 * 60_000 },
+  '30m': { tickMs: 600, ticksPerCandle: 8, candleDurationMs: 30 * 60_000 },
+  '1h': { tickMs: 650, ticksPerCandle: 9, candleDurationMs: 60 * 60_000 },
 };
 
 /** Box-Muller transform — a plain uniform random walk makes candle bodies look spiky and unnatural; this gives a bell curve of step sizes like a real (simulated) price series. */

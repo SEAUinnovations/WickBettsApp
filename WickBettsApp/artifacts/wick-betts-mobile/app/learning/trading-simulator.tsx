@@ -59,7 +59,7 @@ interface SessionSeed {
 function createSession(timeframe: SimTimeframe): SessionSeed {
   const startPrice = randomSimStartPrice();
   const volatility = volatilityForPrice(startPrice);
-  const candles = seedSimCandles(SIM_VISIBLE_CANDLES, startPrice, volatility, Date.now(), SIM_TIMEFRAME_CONFIG[timeframe].tickMs);
+  const candles = seedSimCandles(SIM_VISIBLE_CANDLES, startPrice, volatility, Date.now(), SIM_TIMEFRAME_CONFIG[timeframe].candleDurationMs);
   return { ticker: pickTicker(), startPrice, volatility, candles };
 }
 
@@ -113,7 +113,7 @@ export default function TradingSimulatorScreen() {
         ticksRef.current += 1;
         if (ticksRef.current > config.ticksPerCandle) {
           ticksRef.current = 1;
-          const opened = openSimCandle(last.close, last.time + config.tickMs);
+          const opened = openSimCandle(last.close, last.time + config.candleDurationMs);
           const ticked = tickSimCandle(opened, session.volatility);
           return [...prev.slice(1), ticked];
         }
