@@ -577,6 +577,26 @@ a { color: inherit; text-decoration: none; }
 .video-chip span:nth-child(2) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .video-chip-duration { flex-shrink:0; color:var(--muted-foreground); font:9px var(--font-inter); }
 
+.news-sim { margin:16px 0; padding:20px; background:var(--muted); border-radius:14px; max-width:720px; }
+.news-sim-controls { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+.news-sim-time { margin:0 0 14px; }
+.news-sim-chart-wrap { margin:14px 0 8px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
+.news-sim-chart { display:block; }
+.news-sim-legend { display:flex; flex-wrap:wrap; gap:14px; margin:0 0 16px; color:var(--muted-foreground); font-size:10px; }
+.news-sim-legend span { display:inline-flex; align-items:center; gap:6px; }
+.news-sim-dot { width:9px; height:9px; border-radius:999px; display:inline-block; }
+.news-sim-dot--pre { background:var(--muted-foreground); }
+.news-sim-dot--spike { background:#FB7185; }
+.news-sim-dot--trend { background:#7AE2AA; }
+.news-sim-choice-row { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+.news-sim-outcomes { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:14px 0; }
+.news-sim-outcome-card { padding:14px 16px; background:var(--card); border:1px solid var(--border); border-radius:12px; }
+.news-sim-outcome-card--picked { border-color:var(--primary); }
+.news-sim-outcome-card p:last-child { margin:6px 0 0; color:var(--muted-foreground); font-size:11px; line-height:1.55; }
+.news-sim-outcome-value { margin:6px 0 0; font:700 20px var(--font-inter); }
+.news-sim-outcome-value--loss { color:#FB7185; }
+.news-sim-outcome-value--gain { color:#7AE2AA; }
+
 .game-panel { padding:32px; max-width:560px; margin:0 auto; text-align:center; }
 .game-topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; }
 .game-stat { display:inline-flex; align-items:center; gap:5px; font:600 12px var(--font-inter); color:var(--foreground); }

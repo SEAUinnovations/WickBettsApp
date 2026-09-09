@@ -1517,6 +1517,153 @@ function DefinitionCard({ title, children }: { title: string; children: React.Re
   return <div className="definition-card"><strong>{title}</strong><p>{children}</p></div>;
 }
 
+// ── Learning: news event simulator ────────────────────────────────────────────────
+interface NewsEventKind { id: string; label: string; short: string; typicalTime: string }
+const NEWS_EVENT_KINDS: NewsEventKind[] = [
+  { id: 'cpi', label: 'CPI — Consumer Price Index', short: 'CPI', typicalTime: '8:30 AM ET, monthly' },
+  { id: 'ppi', label: 'PPI — Producer Price Index', short: 'PPI', typicalTime: '8:30 AM ET, monthly' },
+  { id: 'nfp', label: 'NFP — Non-Farm Payrolls', short: 'NFP', typicalTime: '8:30 AM ET, first Friday' },
+  { id: 'fomc', label: 'FOMC Rate Decision', short: 'FOMC', typicalTime: '2:00 PM ET, ~8x/year' },
+];
+
+// Deterministic-shape, randomly-scaled price path: calm pre-release chop, a sharp
+// whipsaw against the eventual trend right at the release, then a real trend leg.
+function buildNewsPriceSeries(direction: 1 | -1) {
+  const pre: number[] = [100];
+  for (let i = 1; i < 9; i++) pre.push(pre[i - 1] + (Math.random() - 0.5) * 0.3);
+  const preEnd = pre[pre.length - 1];
+  const fakeoutExtreme = preEnd - direction * (1.5 + Math.random() * 0.7);
+  const spike = [
+    preEnd,
+    preEnd - direction * (0.8 + Math.random() * 0.3),
+    fakeoutExtreme,
+    fakeoutExtreme + direction * (0.9 + Math.random() * 0.3),
+    preEnd + direction * (0.3 + Math.random() * 0.3),
+    preEnd + direction * (0.7 + Math.random() * 0.2),
+  ];
+  const trendStart = spike[spike.length - 1];
+  const trend: number[] = [trendStart];
+  for (let i = 1; i < 9; i++) trend.push(trend[i - 1] + direction * (0.22 + Math.random() * 0.22));
+  return { pre, spike, trend, fakeoutExtreme, trendStart, trendEnd: trend[trend.length - 1], releaseChasePrice: spike[0] };
+}
+
+function NewsSimChart({ pre, spike, trend, revealSpike, revealTrend }: { pre: number[]; spike: number[]; trend: number[]; revealSpike: boolean; revealTrend: boolean }) {
+  const all = [...pre, ...spike, ...trend];
+  const min = Math.min(...all);
+  const max = Math.max(...all);
+  const pad = (max - min) * 0.15 || 1;
+  const w = 640; const h = 180;
+  const toX = (i: number) => (i / (all.length - 1)) * w;
+  const toY = (v: number) => h - ((v - (min - pad)) / (max - min + pad * 2)) * h;
+  const toPoints = (start: number, arr: number[]) => arr.map((v, i) => `${toX(start + i)},${toY(v)}`).join(' ');
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} className="news-sim-chart" preserveAspectRatio="none">
+      <line x1={toX(pre.length - 1)} y1={0} x2={toX(pre.length - 1)} y2={h} stroke="var(--border)" strokeDasharray="4 4" strokeWidth={1.5} />
+      <polyline points={toPoints(0, pre)} fill="none" stroke="var(--muted-foreground)" strokeWidth={2} />
+      {revealSpike && <polyline points={toPoints(pre.length - 1, [pre[pre.length - 1], ...spike])} fill="none" stroke="#FB7185" strokeWidth={2} />}
+      {revealTrend && <polyline points={toPoints(pre.length + spike.length - 1, [spike[spike.length - 1], ...trend])} fill="none" stroke="#7AE2AA" strokeWidth={2.5} />}
+    </svg>
+  );
+}
+
+function NewsEventSimulator(): React.ReactNode {
+  const [eventId, setEventId] = useState<string>('cpi');
+  const [stage, setStage] = useState<'setup' | 'pre' | 'spike' | 'result'>('setup');
+  const [series, setSeries] = useState(() => buildNewsPriceSeries(1));
+  const [choice, setChoice] = useState<'during' | 'wait' | null>(null);
+
+  const event = NEWS_EVENT_KINDS.find((e) => e.id === eventId) ?? NEWS_EVENT_KINDS[0];
+
+  const runSimulation = () => {
+    const dir: 1 | -1 = Math.random() > 0.5 ? 1 : -1;
+    setSeries(buildNewsPriceSeries(dir));
+    setChoice(null);
+    setStage('pre');
+  };
+
+  const reveal = () => setStage('spike');
+  const pick = (c: 'during' | 'wait') => { setChoice(c); setStage('result'); };
+
+  const lossDuring = Math.abs(series.releaseChasePrice - series.fakeoutExtreme);
+  const gainWaiting = Math.abs(series.trendEnd - series.trendStart);
+
+  return (
+    <div className="news-sim">
+      <div className="news-sim-controls">
+        {NEWS_EVENT_KINDS.map((e) => (
+          <button
+            key={e.id}
+            className={`filter-chip ${eventId === e.id ? 'selected' : ''}`}
+            onClick={() => setEventId(e.id)}
+            disabled={stage !== 'setup'}
+            data-testid={`button-news-event-${e.id}`}
+          >
+            {e.short}
+          </button>
+        ))}
+      </div>
+      <p className="muted tiny news-sim-time">{event.label} typically drops {event.typicalTime}.</p>
+
+      {stage === 'setup' && (
+        <button className="button button-primary" onClick={runSimulation} data-testid="button-run-news-sim">Run the simulation</button>
+      )}
+
+      {stage !== 'setup' && (
+        <>
+          <div className="news-sim-chart-wrap">
+            <NewsSimChart pre={series.pre} spike={series.spike} trend={series.trend} revealSpike={stage !== 'pre'} revealTrend={stage === 'result'} />
+          </div>
+          <div className="news-sim-legend">
+            <span><i className="news-sim-dot news-sim-dot--pre" /> Before release</span>
+            <span><i className="news-sim-dot news-sim-dot--spike" /> The release hits</span>
+            <span><i className="news-sim-dot news-sim-dot--trend" /> Real trend, after it settles</span>
+          </div>
+        </>
+      )}
+
+      {stage === 'pre' && (
+        <>
+          <p>{event.short} is about to print. Price has been quiet all morning — that is normal right before a scheduled release.</p>
+          <button className="button button-outline" onClick={reveal} data-testid="button-reveal-news-release">The number just printed — see the reaction</button>
+        </>
+      )}
+
+      {stage === 'spike' && (
+        <>
+          <p>The first move is violent and two-sided — this is exactly the moment it is tempting to jump in and chase it.</p>
+          <div className="news-sim-choice-row">
+            <button className="button button-primary" onClick={() => pick('during')} data-testid="button-news-choice-during">Chase the spike right now</button>
+            <button className="button button-outline" onClick={() => pick('wait')} data-testid="button-news-choice-wait">Wait for the trend to confirm</button>
+          </div>
+        </>
+      )}
+
+      {stage === 'result' && (
+        <>
+          <div className="news-sim-outcomes">
+            <div className={`news-sim-outcome-card ${choice === 'during' ? 'news-sim-outcome-card--picked' : ''}`}>
+              <span className="eyebrow">If you chased the spike</span>
+              <p className="news-sim-outcome-value news-sim-outcome-value--loss">−{lossDuring.toFixed(2)} pts</p>
+              <p>Entering right at the release means a real stop-loss usually gets run during the whipsaw — before the actual trend even starts.</p>
+            </div>
+            <div className={`news-sim-outcome-card ${choice === 'wait' ? 'news-sim-outcome-card--picked' : ''}`}>
+              <span className="eyebrow">If you waited for confirmation</span>
+              <p className="news-sim-outcome-value news-sim-outcome-value--gain">+{gainWaiting.toFixed(2)} pts</p>
+              <p>Letting the initial whipsaw resolve and entering once the trend is confirmed captures the real move with far less noise.</p>
+            </div>
+          </div>
+          <Callout label={choice === 'wait' ? 'Exactly right' : 'Worth remembering'}>
+            {choice === 'wait'
+              ? "That patience is the whole lesson — the trend after a release is usually cleaner and safer than the release itself."
+              : "It felt like the fast move, but the release itself is usually the riskiest few minutes of the day. The trend that follows is where the real, tradeable edge is."}
+          </Callout>
+          <button className="button button-outline" onClick={runSimulation} data-testid="button-news-sim-again">Run another scenario</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Learning: module bodies ────────────────────────────────────────────────────────
 function bodyWelcome(): React.ReactNode {
   return (
@@ -1605,6 +1752,27 @@ function bodyCandlestickEncyclopedia(): React.ReactNode {
   );
 }
 
+function bodyEconomicCalendar(): React.ReactNode {
+  return (
+    <>
+      <p>Not every trading day is equal. A handful of days each month, a scheduled economic report can move every market at once — regardless of what your chart's technicals say.</p>
+      <div className="definition-grid">
+        <DefinitionCard title="CPI — Consumer Price Index">The primary read on inflation. Measures the change in prices consumers pay for a basket of goods and services, released monthly. A hotter-than-expected print often pressures risk assets as traders price in tighter policy.</DefinitionCard>
+        <DefinitionCard title="PPI — Producer Price Index">Measures the change in prices producers receive for their output. It is a leading indicator for CPI — rising producer costs tend to get passed down to consumers a little later.</DefinitionCard>
+        <DefinitionCard title="NFP — Non-Farm Payrolls">Released the first Friday of most months, NFP measures the change in employed persons excluding farm, government, private household, and nonprofit workers. It is one of the single biggest volatility events on the calendar.</DefinitionCard>
+        <DefinitionCard title="FOMC — Rate Decision">The Federal Open Market Committee meets roughly eight times a year to set the federal funds rate. The rate decision, the statement, and the press conference that follows can each move price independently of each other.</DefinitionCard>
+      </div>
+      <LessonHeading>Why these days trade differently</LessonHeading>
+      <p>Right before a scheduled release, liquidity often thins out as market makers widen spreads and pull resting orders. The instant the number prints, that liquidity floods back in all at once — producing sharp, two-sided moves that can reverse direction two or three times before a real trend takes hold.</p>
+      <Callout label="Check the calendar first">
+        Before you plan a trade, know whether CPI, PPI, NFP, FOMC, or another high-impact release lands during your session. Free economic calendars list release times and consensus estimates well in advance — there is no excuse for being surprised by one.
+      </Callout>
+      <LessonHeading>The reaction matters more than the headline</LessonHeading>
+      <p>What matters is not just whether the actual number beat or missed consensus — it is how price actually reacts afterward. A "beat" can still sell off hard if the market had already priced in something even stronger.</p>
+    </>
+  );
+}
+
 function bodyIndicatorsToolkit(): React.ReactNode {
   return (
     <>
@@ -1668,6 +1836,35 @@ function bodyLiquidityAndStructure(): React.ReactNode {
   );
 }
 
+function bodyTradingAroundNews(): React.ReactNode {
+  return (
+    <>
+      <p>Every trader eventually feels the pull to jump on the first big candle after CPI, PPI, NFP, or an FOMC decision prints. It is also one of the fastest ways to give back a week of gains in a single trade.</p>
+      <LessonHeading>What actually happens in the first few minutes</LessonHeading>
+      <ul className="lesson-list">
+        <li>Spreads widen sharply, and slippage on entries and stops gets much worse</li>
+        <li>Price frequently whipsaws in both directions before settling on a real trend</li>
+        <li>Stop-losses on both sides of the market get run during that whipsaw</li>
+        <li>Many brokers and prop firms restrict or flag trading around high-impact releases entirely</li>
+      </ul>
+      <Callout label="The desk's rule">
+        Let the release fully play out and let the first move actually hold before you consider a trade. Chasing the initial candle means trading blind into the most chaotic few minutes of the entire session.
+      </Callout>
+      <LessonHeading>What to watch for instead</LessonHeading>
+      <ul className="lesson-list">
+        <li>Let the initial spike and whipsaw complete — often the first 5 to 15 minutes</li>
+        <li>Look for a clean break of structure in one direction, confirmed by a candle close</li>
+        <li>Wait for a retest or pullback that holds before entering in the direction of the now-established trend</li>
+        <li>Size and manage the trade with your normal risk framework — a news day is not a reason to abandon it</li>
+      </ul>
+      <LessonHeading>Practice the discipline</LessonHeading>
+      <p>The simulator below plays out a simplified CPI/PPI/NFP/FOMC-style release: a calm pre-release chop, a sharp two-sided whipsaw right at the print, then the real trend. Run it a few times and compare what happens if you chase the spike versus wait for the trend to confirm.</p>
+      <NewsEventSimulator />
+      <p className="muted tiny">This is a simplified simulation for practice, not a forecast of real markets. Get in the habit of checking the economic calendar every day and staying cautious of open positions when a high-impact release is on the schedule.</p>
+    </>
+  );
+}
+
 function bodyTradingThroughHistory(): React.ReactNode {
   return (
     <>
@@ -1723,6 +1920,7 @@ const LEARNING_MODULES: LearningModule[] = [
     { title: 'Candlestick Patterns Explained: Top 5 Patterns For Beginners', url: 'https://www.youtube.com/watch?v=qunnM_aQWQk', duration: '9:21' },
   ] },
   { id: 'candle-arcade', level: 'Intermediate', kind: 'game', title: 'Candle ID Arcade', tagline: 'Speed-round: name the pattern before the streak breaks.', minutes: 5, xp: 0, icon: Gamepad2 },
+  { id: 'economic-calendar-101', level: 'Intermediate', kind: 'lesson', title: 'Economic Data & the Calendar', tagline: 'CPI, PPI, NFP, and FOMC — the releases that move every market at once.', minutes: 7, xp: 60, icon: CalendarDays, body: bodyEconomicCalendar },
   { id: 'indicators-toolkit', level: 'Advanced', kind: 'lesson', title: 'Indicators 101: SMA & Friends', tagline: 'The Simple Moving Average — the math, the meaning, and the crossover signals.', minutes: 9, xp: 70, icon: Percent, body: bodyIndicatorsToolkit, videos: [
     { title: 'What Is The Simple Moving Average? (SMA) & How To Use It!', url: 'https://www.youtube.com/watch?v=TRy9InVeFc8', duration: '4:03' },
     { title: 'How to Use the Relative Strength Index (RSI)', url: 'https://www.youtube.com/watch?v=hbcCykbX14U', duration: '4:22' },
@@ -1734,6 +1932,7 @@ const LEARNING_MODULES: LearningModule[] = [
     { title: 'Liquidity Zones SIMPLIFIED', url: 'https://www.youtube.com/watch?v=0BOMeGq-J0I', duration: '8:38' },
     { title: 'High and Low Liquidity Zones in Trading Explained (Supply & Demand Basics)', url: 'https://www.youtube.com/watch?v=kAmPmTPJpg8', duration: '6:46' },
   ] },
+  { id: 'trading-around-news', level: 'Advanced', kind: 'lesson', title: 'Trading Around News Events', tagline: 'Why the first move after a release is usually the wrong one — and what to watch instead.', minutes: 9, xp: 70, icon: Newspaper, body: bodyTradingAroundNews },
   { id: 'trading-through-history', level: 'Expert', kind: 'lesson', title: 'A Short History of Trading', tagline: 'From Amsterdam warehouses to algorithms — how markets got here.', minutes: 8, xp: 70, icon: BookMarked, body: bodyTradingThroughHistory, videos: [
     { title: 'The Hidden History Behind the New York Stock Exchange', url: 'https://www.youtube.com/shorts/2_KM19rvW94', duration: '1:35' },
   ] },
