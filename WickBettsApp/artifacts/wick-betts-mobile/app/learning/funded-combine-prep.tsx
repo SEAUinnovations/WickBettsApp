@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Card, PrimaryButton, Screen } from '@/components/WickUI';
+import { BrokerLinksCard } from '@/components/BrokerLinksCard';
 import { CandleGlyph } from '@/components/CandleGlyph';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
@@ -191,6 +192,7 @@ export default function FundedCombinePrepScreen() {
             </Text>
           ) : null}
         </Card>
+        <BrokerLinksCard specialization="funded" />
       </Screen>
     );
   }

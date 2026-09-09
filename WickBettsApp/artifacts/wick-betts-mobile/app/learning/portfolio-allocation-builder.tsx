@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Card, PrimaryButton, Screen } from '@/components/WickUI';
+import { BrokerLinksCard } from '@/components/BrokerLinksCard';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
 import { loadLearningProgress, saveLearningProgress, type LearningProgress } from '@/lib/learningStorage';
@@ -228,6 +229,7 @@ export default function PortfolioAllocationBuilderScreen() {
             </Text>
           ) : null}
         </Card>
+        <BrokerLinksCard />
       </Screen>
     );
   }

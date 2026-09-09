@@ -189,6 +189,8 @@ export default function LearningScreen() {
       router.push('/learning/options-strike-lab');
     } else if (id === 'funded-combine-prep') {
       router.push('/learning/funded-combine-prep');
+    } else if (id === 'trading-simulator') {
+      router.push('/learning/trading-simulator');
     } else if (id === 'pattern-recognition') {
       router.push('/learning/pattern-recognition');
     } else if (id === 'portfolio-allocation-builder') {
@@ -338,7 +340,9 @@ export default function LearningScreen() {
                   ? `Best score: ${progress.optionsGame.bestScore}/8`
                   : mod.id === 'funded-combine-prep'
                     ? `Best peak: $${progress.fundedGame.bestEquity.toLocaleString()} · Ready ${progress.fundedGame.timesReady}×`
-                    : mod.id === 'pattern-recognition'
+                    : mod.id === 'trading-simulator'
+                      ? `Best equity: $${progress.liveSimGame.bestEquity.toLocaleString()} · ${progress.liveSimGame.plays} session(s)`
+                      : mod.id === 'pattern-recognition'
                       ? `Best score: ${progress.patternGame.bestScore}/6 · Best streak ${progress.patternGame.bestStreak}`
                       : mod.id === 'portfolio-allocation-builder'
                         ? `Best allocation score: ${progress.portfolioBuilderGame.bestScore}/100`

@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Card, PrimaryButton, Screen } from '@/components/WickUI';
+import { BrokerLinksCard } from '@/components/BrokerLinksCard';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
 import { TRIVIA_QUESTIONS, sampleArr, shuffleArr, type TriviaQuestion } from '@/lib/learningData';
@@ -114,6 +115,7 @@ export default function TriviaArenaScreen() {
             </Text>
           ) : null}
         </Card>
+        <BrokerLinksCard />
       </Screen>
     );
   }

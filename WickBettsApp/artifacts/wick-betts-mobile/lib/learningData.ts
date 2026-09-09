@@ -818,6 +818,7 @@ export const LEARNING_MODULES: LearningModule[] = [
   { id: 'zero-dte-options', level: 'Expert', kind: 'lesson', title: '0DTE Options: Same-Day Expiration', tagline: 'SPX and SPY 0DTE — why the returns and the losses can both be massive, and when to look.', minutes: 9, xp: 75, icon: 'alert-circle-outline', specialization: 'options', body: bodyZeroDte },
   { id: 'options-strike-lab', level: 'Expert', kind: 'game', title: 'Options Strike & Greeks Lab', tagline: 'Match the strike to the goal — Delta, Theta, and premium all in play.', minutes: 7, xp: 0, icon: 'infinite-outline', specialization: 'options' },
   { id: 'funded-combine-prep', level: 'Expert', kind: 'game', title: 'Funded Combine Prep', tagline: 'Optional: grow a paper account $3,000 without breaching a $2,000 trailing drawdown.', minutes: 10, xp: 0, icon: 'briefcase-outline', specialization: 'funded' },
+  { id: 'trading-simulator', level: 'Expert', kind: 'game', title: 'Live Trading Simulator', tagline: 'A live, always-moving simulated chart — place market buy/sell orders and watch balance and P&L update in real time.', minutes: 10, xp: 0, icon: 'pulse-outline', specialization: 'funded' },
   { id: 'pattern-recognition', level: 'Intermediate', kind: 'game', title: 'Pattern Recognition Trainer', tagline: 'Head & Shoulders, Double Top, Double Bottom — find the point that actually confirms each one.', minutes: 6, xp: 0, icon: 'trending-down-outline' },
   { id: 'portfolio-allocation-builder', level: 'Advanced', kind: 'game', title: 'Portfolio Allocation Builder', tagline: 'Split $10,000 across cash, options, and long-term holds — then see how each scenario plays out.', minutes: 8, xp: 0, icon: 'pie-chart-outline' },
   { id: 'risk-sizing-duel', level: 'Advanced', kind: 'game', title: 'Risk-Sizing Duel', tagline: 'Same positive edge, different risk per trade — find out why sizing decides who survives.', minutes: 7, xp: 0, icon: 'skull-outline' },
@@ -846,4 +847,55 @@ export function shuffleArr<T>(arr: T[]): T[] {
 
 export function sampleArr<T>(arr: T[], n: number): T[] {
   return shuffleArr(arr).slice(0, Math.min(n, arr.length));
+}
+
+// ── Broker / platform onboarding links ──────────────────────────────────────
+// Shown at the end of every lesson and arcade game as a "here's where to
+// actually do this" pointer once the member has learned the material. These
+// are plain outbound links to each company's own official site — WickBetts
+// doesn't operate, embed, or get a cut of any signup here, and none of this
+// is a recommendation or personalized advice; see BrokerLinksCard.tsx for
+// the disclaimer shown alongside them.
+export type BrokerCategory = 'stocks-options' | 'crypto' | 'funded';
+
+export interface BrokerLink {
+  name: string;
+  blurb: string;
+  url: string;
+}
+
+export const BROKER_LINKS: Record<BrokerCategory, BrokerLink[]> = {
+  'stocks-options': [
+    { name: 'Robinhood', blurb: 'Commission-free stocks, ETFs, and options.', url: 'https://robinhood.com' },
+    { name: 'Webull', blurb: 'Stocks, ETFs, and options with deeper charting tools.', url: 'https://www.webull.com' },
+  ],
+  crypto: [
+    { name: 'Coinbase', blurb: 'A regulated, beginner-friendly exchange to buy your first crypto.', url: 'https://www.coinbase.com' },
+    { name: 'Phantom', blurb: 'A self-custody wallet for Solana and other chains.', url: 'https://phantom.com' },
+    { name: 'MetaMask', blurb: 'The most widely used self-custody wallet for Ethereum and EVM chains.', url: 'https://metamask.io' },
+  ],
+  funded: [
+    { name: 'Topstep', blurb: 'The original futures funded-account evaluation.', url: 'https://www.topstep.com' },
+    { name: 'Lucid Trading Co', blurb: 'A futures prop firm known for fast payouts.', url: 'https://lucidtrading.com' },
+    { name: 'TakeProfitTrader', blurb: 'A trader-first futures prop firm, often shortened to TPT.', url: 'https://takeprofittrader.com' },
+    { name: 'Tradeify', blurb: 'A futures prop firm with instant-funding options.', url: 'https://tradeify.co' },
+  ],
+};
+
+/**
+ * Which broker/firm group(s) to show for a module's specialization.
+ *   - stocks & options -> Robinhood / Webull
+ *   - crypto -> Coinbase / Phantom / MetaMask
+ *   - futures & funded -> Topstep / Lucid / TakeProfitTrader / Tradeify
+ *     (this app's own Funded Accounts track is entirely futures-evaluation
+ *     content, so futures and funded share one group rather than splitting
+ *     out a separate plain-futures-broker list nobody asked for)
+ *   - untagged, foundational modules aren't tied to one market yet, so they
+ *     show all three groups.
+ */
+export function brokerCategoriesForSpecialization(spec: Specialization | undefined): BrokerCategory[] {
+  if (spec === 'stocks' || spec === 'options') return ['stocks-options'];
+  if (spec === 'crypto') return ['crypto'];
+  if (spec === 'funded' || spec === 'futures') return ['funded'];
+  return ['stocks-options', 'crypto', 'funded'];
 }

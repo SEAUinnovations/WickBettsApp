@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Card, PrimaryButton, Screen } from '@/components/WickUI';
+import { BrokerLinksCard } from '@/components/BrokerLinksCard';
 import { CandleGlyph } from '@/components/CandleGlyph';
 import { LessonDiagram } from '@/components/LessonDiagram';
 import { RichText } from '@/components/RichText';
@@ -148,6 +149,8 @@ export default function LessonScreen() {
           <Ionicons name="arrow-forward" size={14} color={colors.foreground} />
         </Pressable>
       </View>
+
+      <BrokerLinksCard specialization={moduleData.specialization} />
     </Screen>
   );
 }
