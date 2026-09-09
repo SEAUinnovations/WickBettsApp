@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
-import { Card, PrimaryButton, Tag } from '@/components/WickUI';
+import { Card, Metric, PrimaryButton, Tag } from '@/components/WickUI';
 import { TickerAutocomplete } from '@/components/TickerAutocomplete';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
@@ -88,7 +88,7 @@ export default function AdminScreen() {
   const router = useRouter();
   const colors = useColors();
   const { getToken, user } = useAuth();
-  const { signals, addSignal, updateSignal, deleteSignal } = useSignals();
+  const { signals, addSignal, updateSignal, deleteSignal, stats, verifySignal } = useSignals();
   const [form, setForm] = useState<FormState>(initialForm);
   const [error, setError] = useState('');
   const [published, setPublished] = useState(false);
@@ -98,6 +98,7 @@ export default function AdminScreen() {
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingStarId, setTogglingStarId] = useState<string | null>(null);
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
 
   // Signals currently featured in the Community tab's Signals feed — capped
   // at 4 server-side (see MAX_COMMUNITY_STARRED in routes/signals.ts), kept
@@ -186,6 +187,50 @@ export default function AdminScreen() {
         { text: 'Remove', style: 'destructive', onPress: () => void toggleCommunityStar(s) },
       ],
     );
+  };
+
+  // Scoreboard: pull price history since the call and check the 20%+ bar.
+  // Not an error when it can't (options/LEAPS, an untracked crypto asset,
+  // no bars yet) — that comes back as {verified:false, reason} and is
+  // surfaced the same way a successful check is, via an alert.
+  const runVerify = async (s: Signal) => {
+    setVerifyingId(s.id);
+    setError('');
+    try {
+      const outcome = await verifySignal(s.id);
+      if (!outcome.verified) {
+        Alert.alert('Could not auto-verify', outcome.reason);
+        return;
+      }
+      const { result } = outcome;
+      void Haptics.notificationAsync(
+        result.hitTarget ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Warning,
+      );
+      Alert.alert(
+        result.hitTarget ? `${s.asset} hit the bar 🎉` : `${s.asset}: not there yet`,
+        `Best move since the call: ${result.bestMovePercent > 0 ? '+' : ''}${result.bestMovePercent.toFixed(1)}%. Last checked: ${result.lastCheckedMovePercent > 0 ? '+' : ''}${result.lastCheckedMovePercent.toFixed(1)}% at $${result.lastCheckedPrice.toFixed(2)}.`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to verify signal. Try again.');
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  // Manual scoreboard override — the only path for options/LEAPS (the
+  // auto-checker never has historical premium data for those) and anything
+  // else the checker can't reach.
+  const markResult = async (s: Signal, resultTag: 'Green' | 'Missed' | 'Pending') => {
+    setVerifyingId(s.id);
+    setError('');
+    try {
+      await updateSignal(s.id, { resultTag });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to mark result. Try again.');
+    } finally {
+      setVerifyingId(null);
+    }
   };
 
   const doDelete = async (s: Signal) => {
@@ -602,6 +647,19 @@ export default function AdminScreen() {
           Double-check contract data before publishing. Greeks are point-in-time snapshots. Educational content only.
         </Text>
 
+        {/* Scoreboard summary */}
+        {stats && stats.green + stats.missed + stats.pending > 0 ? (
+          <Card style={styles.scoreboardSummaryCard}>
+            <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Scoreboard — {stats.targetPercent}%+ moves</Text>
+            <View style={styles.scoreboardSummaryRow}>
+              <Metric label="Green" value={String(stats.green)} color="#7AE2AA" />
+              <Metric label="Missed" value={String(stats.missed)} color={colors.destructive} />
+              <Metric label="Pending" value={String(stats.pending)} color={colors.mutedForeground} />
+              <Metric label="Win rate" value={stats.winRate === null ? '—' : `${stats.winRate}%`} color={colors.primary} />
+            </View>
+          </Card>
+        ) : null}
+
         {/* Existing signals */}
         <Text style={[styles.sectionTitle, styles.listHeading, { color: colors.foreground }]}>
           Published signals ({signals.length})
@@ -633,6 +691,13 @@ export default function AdminScreen() {
                     ) : null}
                     {s.newsAlert ? (
                       <Ionicons name="star" size={14} color="#E2C25A" accessibilityLabel="Keep in mind: near a major news event" />
+                    ) : null}
+                    {(s.resultTag ?? 'Pending') !== 'Pending' ? (
+                      <Tag tone={s.resultTag === 'Green' ? 'green' : 'muted'}>
+                        {s.resultTag === 'Green'
+                          ? `✓ Green${s.resultPercent != null ? ` +${s.resultPercent.toFixed(1)}%` : ''}`
+                          : 'Missed'}
+                      </Tag>
                     ) : null}
                   </View>
                   <Text style={[styles.signalMeta, { color: colors.mutedForeground }]}>
@@ -714,6 +779,55 @@ export default function AdminScreen() {
                   );
                 })}
               </View>
+              <View style={styles.statusRow}>
+                <Pressable
+                  onPress={() => void runVerify(s)}
+                  disabled={verifyingId === s.id}
+                  style={[styles.editButton, { borderColor: colors.border }, verifyingId === s.id && { opacity: 0.5 }]}
+                  accessibilityRole="button"
+                  testID={`verify-signal-${s.id}`}
+                >
+                  <Ionicons name="pulse-outline" size={14} color={colors.primary} />
+                  <Text style={[styles.editButtonText, { color: colors.primary }]}>
+                    {verifyingId === s.id ? 'Checking…' : 'Auto-verify'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => void markResult(s, 'Green')}
+                  disabled={verifyingId === s.id}
+                  style={[styles.editButton, { borderColor: colors.border }]}
+                  accessibilityRole="button"
+                  testID={`mark-green-${s.id}`}
+                >
+                  <Text style={[styles.editButtonText, { color: '#7AE2AA' }]}>Mark Green</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => void markResult(s, 'Missed')}
+                  disabled={verifyingId === s.id}
+                  style={[styles.editButton, { borderColor: colors.border }]}
+                  accessibilityRole="button"
+                  testID={`mark-missed-${s.id}`}
+                >
+                  <Text style={[styles.editButtonText, { color: colors.destructive }]}>Mark Missed</Text>
+                </Pressable>
+                {(s.resultTag ?? 'Pending') !== 'Pending' ? (
+                  <Pressable
+                    onPress={() => void markResult(s, 'Pending')}
+                    disabled={verifyingId === s.id}
+                    style={[styles.editButton, { borderColor: colors.border }]}
+                    accessibilityRole="button"
+                    testID={`reset-result-${s.id}`}
+                  >
+                    <Text style={[styles.editButtonText, { color: colors.mutedForeground }]}>Reset</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+              {s.resultCheckedAt ? (
+                <Text style={[styles.signalMeta, { color: colors.mutedForeground, marginTop: 6 }]}>
+                  Last checked {new Date(s.resultCheckedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · best move{' '}
+                  {s.resultPercent != null ? `${s.resultPercent > 0 ? '+' : ''}${s.resultPercent.toFixed(1)}%` : '—'}
+                </Text>
+              ) : null}
             </Card>
           ))
         )}
@@ -840,6 +954,8 @@ const styles = StyleSheet.create({
   editingText: { flex: 1, fontSize: 12, fontFamily: 'Inter_600SemiBold' },
   editingCancel: { fontSize: 12, fontFamily: 'Inter_700Bold' },
   listHeading: { marginTop: 28 },
+  scoreboardSummaryCard: { marginTop: 28 },
+  scoreboardSummaryRow: { flexDirection: 'row', gap: 14, marginTop: 12 },
   signalRow: { marginBottom: 12 },
   signalRowTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   signalRowTitle: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },

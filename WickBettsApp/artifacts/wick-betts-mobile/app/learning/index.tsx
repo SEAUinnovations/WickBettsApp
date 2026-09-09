@@ -180,25 +180,25 @@ export default function LearningScreen() {
   const openModule = (id: string) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (id === 'candle-arcade') {
-      router.push('/learning/candle-arcade');
+      router.push('/learning/candle-arcade' as any);
     } else if (id === 'trivia-arena') {
-      router.push('/learning/trivia-arena');
+      router.push('/learning/trivia-arena' as any);
     } else if (id === 'trade-bias-simulator') {
-      router.push('/learning/trade-bias-simulator');
+      router.push('/learning/trade-bias-simulator' as any);
     } else if (id === 'options-strike-lab') {
-      router.push('/learning/options-strike-lab');
+      router.push('/learning/options-strike-lab' as any);
     } else if (id === 'funded-combine-prep') {
-      router.push('/learning/funded-combine-prep');
+      router.push('/learning/funded-combine-prep' as any);
     } else if (id === 'trading-simulator') {
-      router.push('/learning/trading-simulator');
+      router.push('/learning/trading-simulator' as any);
     } else if (id === 'pattern-recognition') {
-      router.push('/learning/pattern-recognition');
+      router.push('/learning/pattern-recognition' as any);
     } else if (id === 'portfolio-allocation-builder') {
-      router.push('/learning/portfolio-allocation-builder');
+      router.push('/learning/portfolio-allocation-builder' as any);
     } else if (id === 'risk-sizing-duel') {
-      router.push('/learning/risk-sizing-duel');
+      router.push('/learning/risk-sizing-duel' as any);
     } else {
-      router.push({ pathname: '/learning/lesson', params: { id } });
+      router.push({ pathname: '/learning/lesson', params: { id } } as any);
     }
   };
 

@@ -203,6 +203,90 @@ export async function fanOutNewsEmail(alert: {
   }
 }
 
+// Real app brand (constants/colors.ts: primary #A855F7 on background #08070D
+// / card #12101B) — purple on black, distinct from wrapHtml()'s older
+// teal-on-navy template above. Used only for the market-news alert email
+// below; the existing signal/mentorship templates are left as-is so this
+// change doesn't alter emails nobody asked to change.
+function wrapAlertHtml(title: string, bodyHtml: string, ctaLabel: string, ctaPath: string): string {
+  return `<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#08070D;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+    <table role="presentation" width="100%" style="background:#08070D;padding:24px 0;">
+      <tr><td align="center">
+        <table role="presentation" width="480" style="background:#12101B;border:1px solid #2A223A;border-radius:16px;overflow:hidden;">
+          <tr><td style="padding:24px 28px 0 28px;">
+            <div style="color:#A855F7;font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;">Wick Betts</div>
+            <h1 style="color:#F6F1FF;font-size:20px;margin:12px 0 4px 0;">${escapeHtml(title)}</h1>
+          </td></tr>
+          <tr><td style="padding:8px 28px 24px 28px;color:#A59DB3;font-size:14px;line-height:1.6;">
+            ${bodyHtml}
+            <div style="margin-top:20px;">
+              <a href="${APP_ORIGIN}${ctaPath}" style="display:inline-block;background:#A855F7;color:#09070D;font-weight:700;font-size:14px;padding:10px 18px;border-radius:8px;text-decoration:none;">${escapeHtml(ctaLabel)}</a>
+            </div>
+          </td></tr>
+          <tr><td style="padding:16px 28px 24px 28px;border-top:1px solid #2A223A;">
+            <div style="color:#6b7684;font-size:12px;">You're receiving this because market news alerts are enabled in your Wick Betts notification settings.</div>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
+}
+
+/**
+ * Email counterpart to fanOutNewsNotification (pushNotifications.ts) — the
+ * general market-news alert, distinct from fanOutNewsEmail above (which is
+ * shaped for a scanner flag tied to one live signal's asset, and isn't
+ * currently called from anywhere). Sent for a single article at a time,
+ * gated on notifyNews, to every subscribed member with a verified email —
+ * same "email reaches web + stale-push members too" reasoning as
+ * fanOutSignalEmail. Fire-and-forget: never throws.
+ */
+export async function fanOutMarketNewsEmail(article: {
+  headline: string;
+  summary: string;
+  category: string;
+  source: string;
+  url: string;
+}): Promise<void> {
+  try {
+    const rows = await db
+      .select({ email: usersTable.email })
+      .from(usersTable)
+      .innerJoin(subscriptionsTable, eq(subscriptionsTable.userId, usersTable.id))
+      .where(
+        and(
+          or(eq(subscriptionsTable.status, "active"), eq(subscriptionsTable.status, "trialing")),
+          eq(usersTable.notifyNews, true),
+        ),
+      );
+
+    if (rows.length === 0) {
+      logger.debug("fanOutMarketNewsEmail: no eligible recipients");
+      return;
+    }
+
+    const subject = `${article.category}: ${article.headline}`;
+    const bodyHtml = `<p><strong>${escapeHtml(article.headline)}</strong></p><p>${escapeHtml(article.summary)}</p><p style="color:#6b7684;font-size:12px;">${escapeHtml(article.source)}</p>`;
+    const text = `${article.headline}\n${article.summary}\n${article.source} — ${article.url}`;
+    const html = wrapAlertHtml(subject, bodyHtml, "Read in app", "/news");
+
+    const seen = new Set<string>();
+    const emails: EmailPayload[] = [];
+    for (const r of rows) {
+      if (!r.email || seen.has(r.email)) continue;
+      seen.add(r.email);
+      emails.push({ to: r.email, subject, html, text });
+    }
+
+    await sendBatch(emails);
+  } catch (err) {
+    logger.error({ err }, "Market news email fan-out failed");
+  }
+}
+
 /** "2026-08-17" -> "Monday, August 17" — used by the mentorship emails below. */
 function formatSessionDate(isoDate: string): string {
   const d = new Date(`${isoDate}T00:00:00Z`);

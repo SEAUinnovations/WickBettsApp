@@ -21,6 +21,10 @@ export type OptionType = 'Call' | 'Put';
  *  one), 'Swing' (short-hold, days/weeks), 'Buy & Hold' (long-term spot
  *  position, no stop), 'LEAPS' (long-dated options, 6mo+). */
 export type SignalStyle = 'Day Trade' | 'Swing' | 'Buy & Hold' | 'LEAPS';
+/** Scoreboard outcome — orthogonal to `status` (see signalsTable's doc comment
+ *  server-side). 'Green' means the underlying moved 20%+ in the called
+ *  direction since entry, confirmed either automatically or by an admin. */
+export type SignalResultTag = 'Pending' | 'Green' | 'Missed';
 
 export interface Signal {
   id: string;
@@ -66,6 +70,34 @@ export interface Signal {
   logoUrl?: string | null;
   /** Admin-curated "featured in Community" flag — shows in the Community tab's Signals feed for every member (capped at 4 at once server-side). Distinct from `newsAlert`. */
   communityStarred?: boolean;
+  /** Scoreboard tag — see SignalResultTag above. Defaults 'Pending' server-side; optional here so creating a signal never has to specify it. */
+  resultTag?: SignalResultTag;
+  /** 'auto' (the price checker set it) or 'manual' (an admin did) — absent until first touched. */
+  resultSource?: string | null;
+  /** Best % move in the called direction since entry — the number the 20% bar is measured against. */
+  resultPercent?: number | null;
+  resultCheckedAt?: string | null;
+  resultCheckedPrice?: string | null;
+  /** Admin free-text note on the scoreboard result. */
+  resultNote?: string | null;
+}
+
+export interface ScoreboardStats {
+  green: number;
+  missed: number;
+  pending: number;
+  /** Win rate among decided (Green + Missed) calls, 0-100; null when nothing's been decided yet. */
+  winRate: number | null;
+  targetPercent: number;
+}
+
+export interface SignalVerification {
+  bestPrice: number;
+  bestMovePercent: number;
+  lastCheckedPrice: number;
+  lastCheckedMovePercent: number;
+  hitTarget: boolean;
+  checkedAt: string;
 }
 
 interface ApiSignal {
@@ -104,6 +136,12 @@ interface ApiSignal {
   newsAlertNote?: string;
   logoUrl?: string | null;
   communityStarred?: boolean;
+  resultTag?: string;
+  resultSource?: string | null;
+  resultPercent?: number | null;
+  resultCheckedAt?: string | null;
+  resultCheckedPrice?: string | null;
+  resultNote?: string | null;
 }
 
 const STORAGE_KEY_PREFIX = '@wick-betts/signals-v2';
@@ -179,6 +217,12 @@ function mapApiSignal(s: ApiSignal): Signal {
     newsAlertNote: s.newsAlertNote,
     logoUrl: s.logoUrl,
     communityStarred: s.communityStarred,
+    resultTag: (s.resultTag as SignalResultTag) ?? 'Pending',
+    resultSource: s.resultSource,
+    resultPercent: s.resultPercent,
+    resultCheckedAt: s.resultCheckedAt,
+    resultCheckedPrice: s.resultCheckedPrice,
+    resultNote: s.resultNote,
   };
 }
 
@@ -201,12 +245,18 @@ interface SignalContextValue {
    *  are blocked from the full feed) still see this curated reel. */
   communitySignals: Signal[];
   isCommunitySignalsLoading: boolean;
+  /** Scoreboard summary over whatever rows `signals` currently holds — see computeScoreboardStats server-side. Null until the first successful fetch. */
+  stats: ScoreboardStats | null;
   refresh: () => Promise<void>;
   addSignal: (signal: SignalInput) => Promise<void>;
   /** Admin: PATCH an existing signal (full field set or a partial like status). */
   updateSignal: (id: string, patch: Partial<SignalInput>) => Promise<void>;
   /** Admin: permanently remove a signal (e.g. dismiss an auto-generated one). */
   deleteSignal: (id: string) => Promise<void>;
+  /** Admin: run the scoreboard price-history check for one signal. Returns
+   *  {verified:false, reason} for options/unresolvable assets rather than
+   *  throwing — that's an expected outcome, not an error. */
+  verifySignal: (id: string) => Promise<{ verified: true; result: SignalVerification } | { verified: false; reason: string }>;
 }
 
 const SignalContext = createContext<SignalContextValue | null>(null);
@@ -220,6 +270,7 @@ export function SignalProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [communitySignals, setCommunitySignals] = useState<Signal[]>([]);
   const [isCommunitySignalsLoading, setIsCommunitySignalsLoading] = useState(true);
+  const [stats, setStats] = useState<ScoreboardStats | null>(null);
   const storageKey = getStorageKey(user?.id);
   const communityStorageKey = storageKey ? `${storageKey}:community-starred` : null;
 
@@ -270,9 +321,10 @@ export function SignalProvider({ children }: { children: ReactNode }) {
         throw new Error('Access denied');
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = (await res.json()) as { signals: ApiSignal[] };
+      const json = (await res.json()) as { signals: ApiSignal[]; stats?: ScoreboardStats };
       const mapped = json.signals.map(mapApiSignal);
       setSignals(mapped);
+      if (json.stats) setStats(json.stats);
       // Cache for offline fallback
       void AsyncStorage.setItem(storageKey, JSON.stringify(mapped));
     } catch (e) {
@@ -390,6 +442,27 @@ export function SignalProvider({ children }: { children: ReactNode }) {
     void fetchCommunitySignals();
   }, [getToken, fetchSignals, fetchCommunitySignals]);
 
+  const verifySignal = useCallback(async (id: string) => {
+    const token = await getToken();
+    if (!token) throw new Error('Not authenticated');
+    const res = await fetch(`${API_BASE}/signals/${id}/verify`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(err.error ?? 'Failed to verify signal');
+    }
+    const json = (await res.json()) as
+      | { verified: true; result: SignalVerification }
+      | { verified: false; reason: string };
+    // Refresh so any Pending -> Green promotion (or the refreshed
+    // resultPercent/resultCheckedAt on a still-short-of-target signal)
+    // shows up immediately.
+    await fetchSignals();
+    return json;
+  }, [getToken, fetchSignals]);
+
   const deleteSignal = useCallback(async (id: string) => {
     const token = await getToken();
     if (!token) throw new Error('Not authenticated');
@@ -414,10 +487,12 @@ export function SignalProvider({ children }: { children: ReactNode }) {
       error,
       communitySignals,
       isCommunitySignalsLoading,
+      stats,
       refresh: fetchSignals,
       addSignal,
       updateSignal,
       deleteSignal,
+      verifySignal,
     }),
     [
       signals,
@@ -427,10 +502,12 @@ export function SignalProvider({ children }: { children: ReactNode }) {
       error,
       communitySignals,
       isCommunitySignalsLoading,
+      stats,
       fetchSignals,
       addSignal,
       updateSignal,
       deleteSignal,
+      verifySignal,
     ],
   );
 

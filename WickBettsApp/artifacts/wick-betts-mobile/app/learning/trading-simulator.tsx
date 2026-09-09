@@ -367,7 +367,7 @@ export default function TradingSimulatorScreen() {
           </View>
           <Text style={[styles.lessonTagline, { color: colors.mutedForeground }]}>{companionLesson.tagline}</Text>
           <Pressable
-            onPress={() => router.push({ pathname: '/learning/lesson', params: { id: companionLesson.id } })}
+            onPress={() => router.push({ pathname: '/learning/lesson', params: { id: companionLesson.id } } as any)}
             style={[styles.lessonButton, { backgroundColor: colors.secondary }]}
             accessibilityRole="button"
           >

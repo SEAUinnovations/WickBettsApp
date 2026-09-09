@@ -118,6 +118,13 @@ function StarredSignalCard({ signal }: { signal: Signal }) {
             {signal.isOption ? <Tag>{signal.optionType ?? 'OPTION'}</Tag> : null}
             <Tag tone="orange">{signal.style || 'Swing'}</Tag>
             <Tag tone={signal.direction === 'Long' ? 'green' : 'orange'}>{signal.direction}</Tag>
+            {(signal.resultTag ?? 'Pending') !== 'Pending' ? (
+              <Tag tone={signal.resultTag === 'Green' ? 'green' : 'muted'}>
+                {signal.resultTag === 'Green'
+                  ? `✓ Green${signal.resultPercent != null ? ` +${signal.resultPercent.toFixed(1)}%` : ''}`
+                  : 'Missed'}
+              </Tag>
+            ) : null}
           </View>
           <Text style={[styles.time, { color: colors.mutedForeground }]}>
             {signal.market}{signal.sector ? ` · ${signal.sector}` : ''} · {signal.timeframe}

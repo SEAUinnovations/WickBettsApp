@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Card, Header, PrimaryButton, Screen, SectionLabel, Tag } from '@/components/WickUI';
 import { CancelSubscriptionButton, LapsedRecovery, ManageBillingButton, ResumeSubscriptionButton, SubscribePanel } from '@/components/Billing';
@@ -41,9 +41,10 @@ function formatRenewalDate(iso: string): string {
 export default function SettingsScreen() {
   const router = useRouter();
   const colors = useColors();
-  const { user, getToken, subscription, refreshSubscription } = useAuth();
+  const { user, getToken, subscription, refreshSubscription, updateNotificationPrefs } = useAuth();
   const [savingTimezone, setSavingTimezone] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [savingPref, setSavingPref] = useState<'notifySignals' | 'notifyNews' | null>(null);
 
   const hasStripeCustomer = user?.hasStripeCustomer ?? false;
   const isActive = subscription ? ACTIVE_STATUSES.includes(subscription.status) : false;
@@ -77,9 +78,81 @@ export default function SettingsScreen() {
     }
   };
 
+  // PATCH /api/auth/notifications, then sync AuthContext's local copy so the
+  // switch (and anywhere else that reads user.notifySignals/notifyNews)
+  // reflects it immediately — see AuthContext.tsx's updateNotificationPrefs,
+  // which was already wired up for this but had no settings UI calling it.
+  const togglePref = async (key: 'notifySignals' | 'notifyNews', next: boolean) => {
+    setSavingPref(key);
+    setError('');
+    updateNotificationPrefs({ [key]: next });
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Not authenticated');
+      const res = await fetch(`${API_BASE}/auth/notifications`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ [key]: next }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(json.error ?? 'Could not save notification preference.');
+      }
+    } catch (err) {
+      updateNotificationPrefs({ [key]: !next }); // revert the optimistic flip
+      setError(err instanceof Error ? err.message : 'Could not save notification preference.');
+    } finally {
+      setSavingPref(null);
+    }
+  };
+
   return (
     <Screen contentStyle={styles.content}>
       <Header eyebrow="Wick Betts / Account" title="Settings" onAction={() => router.back()} />
+
+      <SectionLabel>Notifications</SectionLabel>
+      <Card style={styles.card}>
+        <View style={styles.prefRow}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={[styles.prefTitle, { color: colors.foreground }]}>Signal alerts</Text>
+            <Text style={[styles.subtitle, styles.noMargin, { color: colors.mutedForeground }]}>
+              Push + email the moment a new setup is published.
+            </Text>
+          </View>
+          {savingPref === 'notifySignals' ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Switch
+              value={user?.notifySignals ?? true}
+              onValueChange={(next) => void togglePref('notifySignals', next)}
+              trackColor={{ false: colors.secondary, true: colors.primary }}
+              thumbColor={colors.foreground}
+            />
+          )}
+        </View>
+        <View style={[styles.prefRow, styles.prefRowLast, { borderTopColor: colors.border }]}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={[styles.prefTitle, { color: colors.foreground }]}>Market news alerts</Text>
+            <Text style={[styles.subtitle, styles.noMargin, { color: colors.mutedForeground }]}>
+              Push + email for market-impacting news only — not every headline.
+            </Text>
+          </View>
+          {savingPref === 'notifyNews' ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Switch
+              value={user?.notifyNews ?? false}
+              onValueChange={(next) => void togglePref('notifyNews', next)}
+              trackColor={{ false: colors.secondary, true: colors.primary }}
+              thumbColor={colors.foreground}
+            />
+          )}
+        </View>
+        {error ? <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
+      </Card>
 
       <SectionLabel>Timezone</SectionLabel>
       <Card style={styles.card}>
@@ -167,6 +240,9 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   content: { paddingBottom: 108 },
   card: { marginBottom: 8 },
+  prefRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
+  prefRowLast: { borderTopWidth: 1 },
+  prefTitle: { fontSize: 14, fontFamily: 'Inter_600SemiBold', marginBottom: 3 },
   subtitle: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 18, marginBottom: 14 },
   noMargin: { marginBottom: 0, marginTop: 3 },
   billingHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14, gap: 10 },

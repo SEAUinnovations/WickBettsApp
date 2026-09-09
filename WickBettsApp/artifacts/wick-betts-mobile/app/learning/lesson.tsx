@@ -62,9 +62,9 @@ export default function LessonScreen() {
     const next = siblings[idx + 1];
     if (next) {
       if (next.kind === 'game') {
-        router.replace(next.id === 'candle-arcade' ? '/learning/candle-arcade' : '/learning/trivia-arena');
+        router.replace((next.id === 'candle-arcade' ? '/learning/candle-arcade' : '/learning/trivia-arena') as any);
       } else {
-        router.replace({ pathname: '/learning/lesson', params: { id: next.id } });
+        router.replace({ pathname: '/learning/lesson', params: { id: next.id } } as any);
       }
     } else {
       router.back();

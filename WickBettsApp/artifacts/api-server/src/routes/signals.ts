@@ -7,6 +7,7 @@ import { fanOutSignalNotification } from "../utils/pushNotifications.js";
 import { fanOutSignalEmail, fanOutNewsEmail } from "../utils/emailNotifications.js";
 import { requireAuth, requireAdmin } from "../middlewares/requireAuth.js";
 import { resolveLogoUrl } from "./market.js";
+import { verifySignalMove, SCOREBOARD_TARGET_PERCENT } from "../services/signalScoreboard.js";
 
 export async function requireActiveSubscription(req: Request, res: Response, next: () => void) {
   const user = req.dbUser!;
@@ -122,8 +123,27 @@ router.get("/", requireAuth, requireSignalsPlan, async (req: Request, res: Respo
   // whatever the live ticker/logo mapping knows right now, not whatever it
   // knew at signal-creation time.
   const signals = rows.map((s) => ({ ...s, logoUrl: resolveLogoUrl(s.asset) }));
-  res.json({ signals });
+  res.json({ signals, stats: computeScoreboardStats(rows) });
 });
+
+// Scoreboard summary — Green/Missed/Pending counts and a win rate among
+// decided calls (Green + Missed; Pending and Watching don't count either
+// way yet). Computed from whatever row set the caller already fetched
+// (member feed excludes Watching; admin sees everything) rather than a
+// second query, so admins and members see stats consistent with the rows
+// they're actually looking at.
+function computeScoreboardStats(rows: { status: string; resultTag: string }[]) {
+  const decided = rows.filter((s) => s.resultTag === "Green" || s.resultTag === "Missed");
+  const green = decided.filter((s) => s.resultTag === "Green").length;
+  const missed = decided.length - green;
+  return {
+    green,
+    missed,
+    pending: rows.length - decided.length,
+    winRate: decided.length > 0 ? Math.round((green / decided.length) * 1000) / 10 : null,
+    targetPercent: SCOREBOARD_TARGET_PERCENT,
+  };
+}
 
 const VALID_STYLES = ["Day Trade", "Swing", "Buy & Hold", "LEAPS"] as const;
 type SignalStyle = (typeof VALID_STYLES)[number];
@@ -286,12 +306,19 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
     theta?: number | null; vega?: number | null; openInterest?: string | null;
     communityStarred?: boolean | null;
     analysisImageDataUrl?: string | null;
+    // Manual scoreboard override — see resultTag on signalsTable. Setting
+    // any of these three marks resultSource "manual" (below), same as an
+    // admin overriding any other field by hand.
+    resultTag?: "Pending" | "Green" | "Missed" | null;
+    resultPercent?: number | null;
+    resultNote?: string | null;
   };
 
   const validStatus = ["Active", "Watching", "Closed", "Stopped"];
   const validMarket = ["Stocks", "Crypto"];
   const validDirection = ["Long", "Short"];
   const validOptionType = ["Call", "Put"];
+  const validResultTag = ["Pending", "Green", "Missed"];
 
   if (body.status != null && !validStatus.includes(body.status)) {
     res.status(400).json({ error: `Invalid status value: ${String(body.status)}` }); return;
@@ -332,6 +359,12 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   if (body.analysisImageDataUrl != null && (typeof body.analysisImageDataUrl !== "string" || !body.analysisImageDataUrl.startsWith("data:image/"))) {
     res.status(400).json({ error: "analysisImageDataUrl must be a base64 image data URL" }); return;
   }
+  if (body.resultTag != null && !validResultTag.includes(body.resultTag)) {
+    res.status(400).json({ error: `Invalid resultTag value: ${String(body.resultTag)}` }); return;
+  }
+  if (body.resultPercent != null && (typeof body.resultPercent !== "number" || !Number.isFinite(body.resultPercent))) {
+    res.status(400).json({ error: "resultPercent must be a finite number" }); return;
+  }
 
   const updates: Record<string, unknown> = {};
   const include = (key: string, val: unknown) => { if (val !== undefined) updates[key] = val; };
@@ -355,6 +388,14 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
   // contractAmount above) — that's how an admin removes a previously
   // attached chart screenshot from Wick's Read without touching anything else.
   include("analysisImageDataUrl", body.analysisImageDataUrl);
+  include("resultTag", body.resultTag); include("resultPercent", body.resultPercent); include("resultNote", body.resultNote);
+  // Any manual touch to the scoreboard fields marks the source "manual" so
+  // a later POST /:id/verify (which only ever moves Pending -> Green, never
+  // overwrites an existing tag — see that handler) doesn't quietly relabel
+  // an admin's deliberate call as if the checker had made it.
+  if (body.resultTag !== undefined || body.resultPercent !== undefined || body.resultNote !== undefined) {
+    updates.resultSource = "manual";
+  }
 
   if (Object.keys(updates).length === 0) {
     res.status(400).json({ error: "No fields to update" });
@@ -417,6 +458,64 @@ router.patch("/:id", requireAuth, requireAdmin, async (req: Request, res: Respon
     logger.error(err, "Failed to update signal");
     res.status(500).json({ error: "Failed to update signal" });
   }
+});
+
+// POST /api/signals/:id/verify — scoreboard auto-check (admin only). Pulls
+// daily price history for the asset since it was called and checks whether
+// it cleared SCOREBOARD_TARGET_PERCENT (20%) in the called direction — see
+// services/signalScoreboard.ts for the "best favorable move" math.
+//
+// Always refreshes resultPercent/resultCheckedAt/resultCheckedPrice so the
+// admin panel can show current progress even short of the bar. Only ever
+// WRITES resultTag when it clears the bar, and only when doing so won't
+// clobber a deliberate manual call — i.e. the signal is still "Pending" or
+// was itself last set by this same auto-checker. It never sets "Missed" on
+// its own (see the schema's doc comment on resultTag) — that's an admin
+// decision via PATCH /:id.
+router.post("/:id/verify", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const row = await db.select().from(signalsTable).where(eq(signalsTable.id, id)).limit(1);
+  const signal = row[0];
+  if (!signal) {
+    res.status(404).json({ error: "Signal not found" });
+    return;
+  }
+
+  let result;
+  try {
+    result = await verifySignalMove({
+      asset: signal.asset,
+      market: signal.market,
+      direction: signal.direction,
+      entry: signal.entry,
+      isOption: signal.isOption,
+      createdAt: new Date(signal.createdAt),
+    });
+  } catch (err) {
+    logger.error({ err, signalId: id }, "Signal verification threw");
+    res.status(502).json({ error: "Failed to fetch price history for this asset" });
+    return;
+  }
+
+  if (!result.verifiable) {
+    res.json({ verified: false, reason: result.reason });
+    return;
+  }
+
+  const updates: Record<string, unknown> = {
+    resultPercent: result.bestMovePercent,
+    resultCheckedAt: result.checkedAt,
+    resultCheckedPrice: String(result.lastCheckedPrice),
+  };
+  const canAutoPromote = signal.resultTag === "Pending" || signal.resultSource === "auto";
+  if (result.hitTarget && canAutoPromote) {
+    updates.resultTag = "Green";
+    updates.resultSource = "auto";
+  }
+
+  await db.update(signalsTable).set(updates).where(eq(signalsTable.id, id));
+  logger.info({ signalId: id, bestMovePercent: result.bestMovePercent, hitTarget: result.hitTarget }, "Signal verified");
+  res.json({ verified: true, result });
 });
 
 // DELETE /api/signals/:id — remove a signal (admin only). Used to clear out

@@ -6,6 +6,8 @@ import { db, newsOverridesTable } from "../lib/db.js";
 import { logger } from "../lib/logger.js";
 import { requireAuth, requireAdmin } from "../middlewares/requireAuth.js";
 import { requireActiveSubscription } from "./signals.js";
+import { fanOutNewsNotification } from "../utils/pushNotifications.js";
+import { fanOutMarketNewsEmail } from "../utils/emailNotifications.js";
 
 const router = Router();
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
@@ -39,6 +41,13 @@ interface NewsCache {
 
 // In-memory cache — refreshed by a server-owned scheduler during market hours.
 let cache: NewsCache | null = null;
+// Article ids seen as of the last refresh, used only to detect which
+// articles are newly-arrived this cycle (see maybeAlertOnNewArticles).
+// Starts null rather than an empty Set specifically so server startup's
+// first population doesn't treat all ~40 initial articles as "new" and
+// blast an alert for each one — only genuinely new articles on refreshes
+// after that count.
+let knownArticleIds: Set<string> | null = null;
 const SCHEDULE_MS = 15 * 60 * 1000;
 const CLIENT_POLL_MS = 15 * 60 * 1000;
 const MARKET_TIMEZONE = "America/Chicago";
@@ -143,6 +152,23 @@ function isJunkArticle(headline: string, summary: string, byline: string): boole
 
 function isMarketRelevant(headline: string, summary: string): boolean {
   return MARKET_KEYWORDS.test(`${headline} ${summary}`);
+}
+
+// A tighter bar than MARKET_KEYWORDS above (which just filters "is this
+// business news at all" out of a general feed). This is "is this specific
+// article the kind that moves markets / is worth interrupting someone for" —
+// central-bank action, recession/crisis language, a stock actually
+// crashing or spiking, a halt, a bankruptcy, an earnings beat/miss, M&A, a
+// major rating change, or a shock event (breach, recall, sanctions, war/
+// tariff escalation). Deliberately headline-only (not summary) to keep the
+// false-positive rate low — a passing mention buried in an article body
+// shouldn't trigger an alert, only the article that's actually ABOUT one of
+// these things.
+const IMPACT_KEYWORDS =
+  /\b(fed (cuts?|hikes?|holds?|signals?)|rate (cut|hike)|federal reserve|fomc|interest rates?|recession|inflation (surges?|jumps?|cools?|eases?)|\bcpi\b|jobs report|nonfarm payrolls|jobless claims (surge|jump|spike)|\bgdp\b (contracts?|shrinks?|surges?)|crashes?|plunges?|plummets?|tumbles?|sinks?|soars?|surges?|rockets?|skyrockets?|record high|record low|all-time high|all-time low|halts? trading|circuit breaker|files? for bankruptcy|bankruptcy|emergency (meeting|cut|rate)|market meltdown|sell-?off (intensifies|deepens|accelerates)|beats? estimates?|misses? estimates?|earnings (beat|miss|surprise)|guidance cut|slashes? (guidance|outlook)|profit warning|downgrades?|upgrades?|price target (raised|cut|slashed)|to (acquire|buy)\b|merger|acquisition|acquires?|buyout|takeover|antitrust|\bsec (probe|investigation|charges)\b|ceo (resigns?|steps down|fired|ousted)|data breach|cyberattack|recalls?|tariffs?|trade war|sanctions?|shutdown|default(s|ed)? on debt)\b/i;
+
+function isMarketImpacting(headline: string): boolean {
+  return IMPACT_KEYWORDS.test(headline);
 }
 
 /**
@@ -413,6 +439,36 @@ function getScheduleSlotKey(now = new Date()): string | null {
   return `${clock.year}-${clock.month}-${clock.day}-${String(clock.hour).padStart(2, "0")}:${String(clock.minute).padStart(2, "0")}`;
 }
 
+/**
+ * Fires the push + email alert pipeline for whichever articles in this
+ * refresh are both brand new (not present in the previous refresh) and
+ * market-impacting (isMarketImpacting) — never for the full feed, and never
+ * on the very first population (knownArticleIds starts null, see above).
+ * Fire-and-forget per article; fanOutNewsNotification/fanOutMarketNewsEmail
+ * each catch their own errors, so one bad send can't block the rest.
+ */
+function maybeAlertOnNewArticles(articles: NewsArticle[]): void {
+  const currentIds = new Set(articles.map((a) => a.id));
+  if (knownArticleIds === null) {
+    knownArticleIds = currentIds;
+    return;
+  }
+
+  const previouslyKnown = knownArticleIds;
+  knownArticleIds = currentIds;
+
+  const newArticles = articles.filter((a) => !previouslyKnown.has(a.id));
+  const impacting = newArticles.filter((a) => isMarketImpacting(a.headline));
+  if (impacting.length === 0) return;
+
+  logger.info({ count: impacting.length }, "Market-impacting news detected — firing alerts");
+  for (const article of impacting) {
+    const summary = { headline: article.headline, summary: article.summary, category: article.category, url: article.url, source: article.source };
+    void fanOutNewsNotification(summary);
+    void fanOutMarketNewsEmail(summary);
+  }
+}
+
 async function ensureCache(reason: "startup" | "request-miss" | "scheduled"): Promise<NewsCache> {
   if (!refreshPromise) {
     refreshPromise = refreshCache()
@@ -420,6 +476,11 @@ async function ensureCache(reason: "startup" | "request-miss" | "scheduled"): Pr
         const nextCache: NewsCache = { articles, fetchedAt: Date.now() };
         cache = nextCache;
         logger.info({ count: articles.length, reason }, "News feed cache refreshed");
+        try {
+          maybeAlertOnNewArticles(articles);
+        } catch (err) {
+          logger.error({ err }, "News alert diffing failed");
+        }
         return nextCache;
       })
       .finally(() => {

@@ -10,6 +10,8 @@ function iconForType(type: string): keyof typeof Ionicons.glyphMap {
   switch (type) {
     case 'signal':
       return 'flash-outline';
+    case 'news':
+      return 'newspaper-outline';
     default:
       return 'notifications-outline';
   }
@@ -35,7 +37,12 @@ function timeAgo(iso: string): string {
 function NotificationRow({ notification }: { notification: AppNotification }) {
   const colors = useColors();
   const router = useRouter();
-  const onPress = notification.type === 'signal' ? () => router.push('/signals') : undefined;
+  const onPress =
+    notification.type === 'signal'
+      ? () => router.push('/signals')
+      : notification.type === 'news'
+        ? () => router.push('/news')
+        : undefined;
   return (
     <Card onPress={onPress} style={styles.row}>
       <View style={[styles.iconCircle, { backgroundColor: colors.secondary }]}>
@@ -78,7 +85,7 @@ export default function NotificationsScreen() {
           <View style={styles.empty}>
             <Ionicons name="notifications-outline" size={22} color={colors.mutedForeground} />
             <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              No alerts yet. New signals will show up here as soon as they're published.
+              No alerts yet. New signals and market-impacting news will show up here as soon as they happen.
             </Text>
           </View>
         ) : (

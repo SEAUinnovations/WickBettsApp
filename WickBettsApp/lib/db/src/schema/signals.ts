@@ -33,6 +33,20 @@ export const optionTypeEnum = pgEnum("option_type", ["Call", "Put"]);
 // long-dated stock options contract (6/8/12+ months out) — the one case
 // where an auto-generated stock signal has a strike/premium/Greeks.
 export const signalStyleEnum = pgEnum("signal_style", ["Day Trade", "Swing", "Buy & Hold", "LEAPS"]);
+// Scoreboard outcome — orthogonal to `status` above (status is about
+// whether a call is still live; this is about whether it played out).
+// "Green" = the underlying moved SIGNAL_RESULT_TARGET_PERCENT (20%) or more
+// in the called direction since `entry`, either confirmed automatically
+// (see services/signalScoreboard.ts's verifySignalMove, which only works
+// for non-option Stocks/Crypto signals — it walks daily bars since
+// createdAt) or set by hand for a signal the auto-checker can't reach
+// (options, a delisted/renamed ticker, etc.) — see resultSource below.
+// "Missed" is likewise either an auto-check that closed without ever
+// clearing the bar (only set when an admin explicitly asks to close it out
+// that way — the auto-checker never downgrades a signal on its own) or an
+// admin call. Everything starts "Pending" and stays there until someone —
+// human or the checker — says otherwise.
+export const signalResultEnum = pgEnum("signal_result", ["Pending", "Green", "Missed"]);
 
 export const signalsTable = pgTable("signals", {
   id: text("id").primaryKey(),
@@ -95,6 +109,20 @@ export const signalsTable = pgTable("signals", {
   // true rows at a time — enforced in the PATCH /api/signals/:id handler,
   // not at the schema level.
   communityStarred: boolean("community_starred").notNull().default(false),
+  // ── Scoreboard (see signalResultEnum above and services/signalScoreboard.ts) ──
+  resultTag: signalResultEnum("result_tag").notNull().default("Pending"),
+  // 'auto' when the last write to resultTag/resultPercent came from
+  // verifySignalMove, 'manual' when an admin set it directly via PATCH.
+  // Nullable: null while still Pending and untouched.
+  resultSource: text("result_source"),
+  // Best % move in the called direction since `entry`, auto-computed or
+  // admin-entered — this is the number the "20%+" bar is measured against,
+  // independent of the signal's own `target` price.
+  resultPercent: real("result_percent"),
+  resultCheckedAt: timestamp("result_checked_at"),
+  resultCheckedPrice: text("result_checked_price"),
+  // Admin free-text note — why it was marked manually, a link to proof, etc.
+  resultNote: text("result_note"),
 });
 
 export const insertSignalSchema = createInsertSchema(signalsTable).omit({ createdAt: true });
