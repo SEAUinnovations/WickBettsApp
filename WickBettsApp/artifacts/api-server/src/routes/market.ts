@@ -85,6 +85,17 @@ export function isTrackedSymbol(symbol: string): boolean {
   return Boolean(EQUITY_TICKERS[symbol] || CRYPTO_TICKERS[symbol]);
 }
 
+// Real single-company stock symbols within the tracked universe — excludes
+// ETFs/indices/macro instruments (SPY, VIX, GLD, ...), which aren't
+// something the auto scanner can publish as a Buy & Hold/LEAPS stock pick.
+// Used by signalScanner.ts's "check the watchlist first" pass to know which
+// watchlisted symbols are even eligible to be screened as a stock signal.
+export function getTrackedStockSymbols(): string[] {
+  return Object.entries(EQUITY_TICKERS)
+    .filter(([, meta]) => meta.assetclass === "stocks")
+    .map(([symbol]) => symbol);
+}
+
 export interface QuoteItem {
   symbol: string; shortName: string; price: number; change: number;
   changePercent: number; volume: number; group: string; currency: string;

@@ -24,6 +24,8 @@ const clerkProxyUrl = import.meta.env.PROD
   : undefined;
 type Plan = 'signals' | 'mentorship' | 'membership';
 type SignalStatus = 'Active' | 'Watching' | 'Closed' | 'Stopped';
+type SignalStyle = 'Day Trade' | 'Swing' | 'Buy & Hold' | 'LEAPS';
+type SignalResultTag = 'Pending' | 'Green' | 'Missed';
 type Direction = 'Long' | 'Short';
 type Thread = 'Signals' | 'News' | 'Community Chat' | 'Shared Signals';
 
@@ -32,13 +34,16 @@ type Member = {
   mentorshipEnds: string; weeklyCallsUsed: number;
 };
 type Signal = {
-  id: string; asset: string; market: 'Stocks' | 'Crypto'; direction: Direction; entry: string;
-  target: string; stop: string; timeframe: string; risk: string; status: SignalStatus;
+  id: string; asset: string; sector?: string | null; market: 'Stocks' | 'Crypto'; direction: Direction; entry: string;
+  target: string; stop: string; timeframe: string; risk: string; status: SignalStatus; style?: SignalStyle;
   postedAt?: string; createdAt?: string; analysis: string; isOption?: boolean; optionType?: string;
   contract?: string; contractAmount?: number; expiration?: string; strike?: string; premium?: string; bid?: string; ask?: string;
   impliedVolatility?: string; delta?: number; gamma?: number; theta?: number; vega?: number;
   openInterest?: string; analysisImageDataUrl?: string | null;
+  resultTag?: SignalResultTag; resultPercent?: number | null;
 };
+/** Green/Missed/Pending scoreboard summary — see computeScoreboardStats in routes/signals.ts. */
+type ScoreboardStats = { green: number; missed: number; pending: number; winRate: number | null; targetPercent: number };
 type NewsPost = {
   id: string; headline: string; category: string; summary: string; whyItMatters: string;
   affectedAssets: string[]; commentary: string; postedAt: string;
@@ -573,6 +578,27 @@ function HomePage() {
 }
 
 // ── Signals ───────────────────────────────────────────────────────────────────
+// Scoreboard summary — Green/Missed win rate among decided calls, out of the
+// signals the caller already has (see computeScoreboardStats in
+// routes/signals.ts, which returns this alongside the signal list itself).
+function ScoreboardSummary({ stats }: { stats: ScoreboardStats | null }) {
+  if (!stats || stats.green + stats.missed + stats.pending === 0) return null;
+  return (
+    <div className="surface animate-in scoreboard-summary" style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center', padding: '16px 20px', marginBottom: 16 }} data-testid="scoreboard-summary">
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <Trophy size={16} color="var(--muted)" />
+        <strong style={{ fontSize: 20 }}>{stats.winRate !== null ? `${stats.winRate}%` : '—'}</strong>
+        <span className="muted tiny">win rate · {stats.targetPercent}%+ move to count</span>
+      </div>
+      <div style={{ display: 'flex', gap: 16 }}>
+        <span className="tiny"><span className="status-pill status-active" style={{ marginRight: 6 }}>Green</span>{stats.green}</span>
+        <span className="tiny"><span className="status-pill status-stopped" style={{ marginRight: 6 }}>Missed</span>{stats.missed}</span>
+        <span className="tiny"><span className="status-pill status-watching" style={{ marginRight: 6 }}>Pending</span>{stats.pending}</span>
+      </div>
+    </div>
+  );
+}
+
 function SignalsPage() {
   const { getToken, openBillingPortal, startCheckout, subscription } = useAuth();
   const [market, setMarket] = useState<'All' | 'Stocks' | 'Crypto'>('All');
@@ -580,6 +606,7 @@ function SignalsPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   // Start empty — never pre-populate with bundled data so lapsed users see no paid content.
   const [signals, setSignals] = useState<Signal[]>([]);
+  const [stats, setStats] = useState<ScoreboardStats | null>(null);
   const [loadError, setLoadError] = useState('');
   const [subRequired, setSubRequired] = useState(false);
   // Membership doesn't include the Signals feed (exact entries/targets/
@@ -609,8 +636,9 @@ function SignalsPage() {
           }
         }
         if (!r.ok) { setLoadError('Unable to load signals. Please try again shortly.'); return; }
-        const data = await r.json() as { signals: Signal[] };
+        const data = await r.json() as { signals: Signal[]; stats?: ScoreboardStats };
         setSignals(data.signals ?? []);
+        setStats(data.stats ?? null);
       } catch {
         setLoadError('Unable to load signals. Please try again shortly.');
       }
@@ -672,6 +700,7 @@ function SignalsPage() {
   return <div className="page">
     <PageHeading eyebrow="The daily desk" title="Signals." description="Defined levels with a clear invalidation. Stocks, crypto, and options — with Greeks where they matter." />
     {loadError ? <p className="muted tiny" style={{marginBottom:8}}>{loadError}</p> : null}
+    <ScoreboardSummary stats={stats} />
     <div className="filter-bar">
       <Filter size={14} color="var(--muted)" />
       <button className={`filter-chip ${market === 'All' ? 'selected' : ''}`} onClick={() => setMarket('All')} data-testid="filter-market-all">All markets</button>
@@ -687,13 +716,20 @@ function SignalsPage() {
           <div className="asset-name">
             <strong>{signal.asset}</strong>
             {signal.isOption && <span className="option-tag">{signal.optionType} · {signal.strike}</span>}
-            <span>{signal.market} · {signal.postedAt}</span>
+            <span>{signal.market}{signal.style ? ` · ${signal.style}` : ''} · {signal.postedAt}</span>
           </div>
           <span className={`direction ${signal.direction.toLowerCase()}`}>{signal.direction}</span>
           <span className="signal-cell"><small>{signal.isOption ? 'Debit' : 'Entry'}</small>{signal.entry}</span>
           <span className="signal-cell"><small>Target</small>{signal.target}</span>
           <span className="signal-cell"><small>Stop</small>{signal.stop}</span>
-          <span className="signal-cell"><span className={`status-pill status-${signal.status.toLowerCase()}`}>{signal.status}</span></span>
+          <span className="signal-cell">
+            <span className={`status-pill status-${signal.status.toLowerCase()}`}>{signal.status}</span>
+            {signal.resultTag && signal.resultTag !== 'Pending' && (
+              <span className={`status-pill status-${signal.resultTag === 'Green' ? 'active' : 'stopped'}`} style={{ marginLeft: 6 }} title={signal.resultPercent != null ? `Best move: ${signal.resultPercent}%` : undefined}>
+                {signal.resultTag}
+              </span>
+            )}
+          </span>
           {expanded === signal.id && (
             <div className="signal-expand">
               {signal.isOption && (
@@ -2575,9 +2611,12 @@ function ProfilePage() {
 }
 
 // ── Admin: Signal Studio ───────────────────────────────────────────────────────
+// Mirrors VALID_STYLES in artifacts/api-server/src/routes/signals.ts.
+const VALID_SIGNAL_STYLES: SignalStyle[] = ['Day Trade', 'Swing', 'Buy & Hold', 'LEAPS'];
+
 type SignalForm = {
-  asset: string; market: 'Stocks' | 'Crypto'; direction: 'Long' | 'Short';
-  status: SignalStatus; timeframe: string; entry: string; target: string;
+  asset: string; sector: string; market: 'Stocks' | 'Crypto'; direction: 'Long' | 'Short';
+  status: SignalStatus; style: SignalStyle; timeframe: string; entry: string; target: string;
   stop: string; risk: string; analysis: string; isOption: boolean;
   optionType: 'Call' | 'Put'; contract: string; contractAmount: string; expiration: string; strike: string;
   premium: string; bid: string; ask: string; impliedVolatility: string;
@@ -2587,7 +2626,7 @@ type SignalForm = {
 };
 
 const blankSignalForm: SignalForm = {
-  asset: '', market: 'Stocks', direction: 'Long', status: 'Active',
+  asset: '', sector: '', market: 'Stocks', direction: 'Long', status: 'Active', style: 'Swing',
   timeframe: '', entry: '', target: '', stop: '', risk: 'Medium', analysis: '',
   isOption: false, optionType: 'Call', contract: '', contractAmount: '1', expiration: '', strike: '',
   premium: '', bid: '', ask: '', impliedVolatility: '', delta: '', gamma: '',
@@ -2664,14 +2703,40 @@ function AdminSignalForm({
         <Sel label="Direction" name="direction" options={['Long','Short']} />
       </div>
       <div className="sf-grid-3">
+        <div className="sf-field">
+          <label className="sf-label">Style</label>
+          {/* LEAPS must be an options contract and Buy & Hold must not be — see the
+              matching checks in POST/PATCH /api/signals — so switching style here
+              flips the Signal type toggle above along with it rather than letting
+              the admin hit that validation error after filling in the rest of the form. */}
+          <select
+            className="sf-input sf-select"
+            value={form.style}
+            onChange={(e) => {
+              const next = e.target.value as SignalStyle;
+              upd('style', next);
+              if (next === 'LEAPS' && !form.isOption) upd('isOption', true);
+              if (next === 'Buy & Hold' && form.isOption) upd('isOption', false);
+            }}
+            data-testid="select-signal-style"
+          >
+            {VALID_SIGNAL_STYLES.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        <SF label="Sector (optional)" name="sector" placeholder="e.g. Technology" />
         <Sel label="Status" name="status" options={['Active','Watching','Closed','Stopped']} />
-        <SF label="Timeframe" name="timeframe" placeholder="e.g. 2–5 days" />
-        <Sel label="Risk" name="risk" options={['Low','Medium','Moderate','Elevated','High']} />
       </div>
       <div className="sf-grid-3">
+        <SF label="Timeframe" name="timeframe" placeholder="e.g. 2–5 days" />
+        <Sel label="Risk" name="risk" options={['Low','Medium','Moderate','Elevated','High']} />
         <SF label={form.isOption ? 'Debit / entry' : 'Entry'} name="entry" placeholder="$3.42" />
+      </div>
+      <div className="sf-grid-3">
         <SF label="Target" name="target" placeholder="$5.10" />
-        <SF label="Stop" name="stop" placeholder="$2.10" />
+        {/* Buy & Hold is a long-term thesis with no hard stop — see signalStyleEnum
+            in lib/db/src/schema/signals.ts. Left editable (not required, see
+            submit() below) rather than hidden, in case an admin wants to note one anyway. */}
+        <SF label={form.style === 'Buy & Hold' ? 'Stop (optional for Buy & Hold)' : 'Stop'} name="stop" placeholder={form.style === 'Buy & Hold' ? 'No stop — long-term thesis' : '$2.10'} />
       </div>
 
       {/* Options-specific fields */}
@@ -2749,6 +2814,7 @@ function AdminSignalsPage() {
   const [form, setForm] = useState<SignalForm>(blankSignalForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [signals, setSignals] = useState<Signal[]>([]);
+  const [stats, setStats] = useState<ScoreboardStats | null>(null);
   const [loadingSignals, setLoadingSignals] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -2757,6 +2823,13 @@ function AdminSignalsPage() {
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState('');
   const [scanPreview, setScanPreview] = useState<string | null>(null);
+  // Manual trigger for the auto scanner (services/signalScanner.ts's
+  // runSignalScan — the watchlist-first swing/LEAPS/Buy & Hold scan), distinct
+  // from the AI screenshot scan above. Fire-and-forget on the server: this
+  // just confirms it started, then a "Refresh" a minute or two later is how
+  // you'll actually see whatever it found show up as new Watching signals.
+  const [runningScan, setRunningScan] = useState(false);
+  const [scanRunMessage, setScanRunMessage] = useState('');
 
   const upd = useCallback(<K extends keyof SignalForm>(k: K, v: SignalForm[K]) => {
     setForm((c) => ({ ...c, [k]: v }));
@@ -2823,7 +2896,11 @@ function AdminSignalsPage() {
       const r = await fetch(apiPath('/signals'), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (r.ok) { const d = await r.json() as { signals: Signal[] }; setSignals(d.signals ?? []); }
+      if (r.ok) {
+        const d = await r.json() as { signals: Signal[]; stats?: ScoreboardStats };
+        setSignals(d.signals ?? []);
+        setStats(d.stats ?? null);
+      }
     } catch { /* ignore */ }
     finally { setLoadingSignals(false); }
   }, [getToken]);
@@ -2836,7 +2913,8 @@ function AdminSignalsPage() {
     setEditingId(s.id);
     setError(''); setSuccess('');
     setForm({
-      asset: s.asset, market: s.market, direction: s.direction, status: s.status,
+      asset: s.asset, sector: s.sector ?? '', market: s.market, direction: s.direction, status: s.status,
+      style: s.style ?? 'Swing',
       timeframe: s.timeframe, entry: s.entry, target: s.target, stop: s.stop,
       risk: s.risk, analysis: s.analysis, isOption: s.isOption ?? false,
       optionType: (s.optionType as 'Call' | 'Put') ?? 'Call',
@@ -2857,8 +2935,13 @@ function AdminSignalsPage() {
   const cancelEdit = () => { setEditingId(null); setForm(blankSignalForm); setError(''); setSuccess(''); };
 
   const submit = async () => {
-    if (![form.asset, form.timeframe, form.entry, form.target, form.stop, form.analysis].every((v) => v.trim())) {
-      setError('Fill in all required fields: ticker, timeframe, entry, target, stop, and analysis.'); return;
+    // Buy & Hold is a long-term thesis with deliberately no hard stop — see
+    // signalStyleEnum in lib/db/src/schema/signals.ts and the matching
+    // "stopRequired" check in POST /api/signals. Every other style still needs one.
+    const stopRequired = form.style !== 'Buy & Hold';
+    const requiredFields = [form.asset, form.timeframe, form.entry, form.target, form.analysis, ...(stopRequired ? [form.stop] : [])];
+    if (!requiredFields.every((v) => v.trim())) {
+      setError(`Fill in all required fields: ticker, timeframe, entry, target${stopRequired ? ', stop,' : ','} and analysis.`); return;
     }
     setError(''); setSubmitting(true);
     const isEdit = !!editingId;
@@ -2913,9 +2996,12 @@ function AdminSignalsPage() {
         };
 
     const payload: Record<string, unknown> = {
-      asset: form.asset.trim().toUpperCase(), market: form.market, direction: form.direction,
-      status: form.status, entry: form.entry.trim(), target: form.target.trim(),
-      stop: form.stop.trim(), timeframe: form.timeframe.trim(), risk: form.risk.trim(),
+      asset: form.asset.trim().toUpperCase(), sector: optStr(form.sector), market: form.market, direction: form.direction,
+      status: form.status, style: form.style, entry: form.entry.trim(), target: form.target.trim(),
+      // Buy & Hold sends null/undefined (via optStr) instead of an empty string
+      // when the field was left blank, same "leave unset" treatment as every
+      // other optional field below rather than writing a literal "" to the column.
+      stop: optStr(form.stop), timeframe: form.timeframe.trim(), risk: form.risk.trim(),
       analysis: form.analysis.trim(), isOption: form.isOption,
       // Wick's Read screenshot applies to every signal, not just options —
       // null explicitly clears a previously attached one on edit.
@@ -2944,6 +3030,43 @@ function AdminSignalsPage() {
       setSignals((prev) => prev.map((s) => s.id === id ? { ...s, status: newStatus } : s));
     } catch { setError('Failed to update status.'); }
     finally { setUpdatingId(null); }
+  };
+
+  // Scoreboard "did this call actually do 20%+" check — see
+  // services/signalScoreboard.ts's verifySignalMove. Only works for plain
+  // Stocks/Crypto spot signals; options/LEAPS always come back non-verifiable
+  // and need a manual resultTag set via Edit instead.
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  const [verifyNote, setVerifyNote] = useState<{ id: string; text: string } | null>(null);
+
+  const verifySignal = async (id: string) => {
+    setVerifyingId(id);
+    setVerifyNote(null);
+    try {
+      const token = await getToken();
+      const r = await fetch(apiPath(`/signals/${id}/verify`), { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      const d = await r.json() as { verified?: boolean; reason?: string; error?: string; result?: { bestMovePercent: number; hitTarget: boolean } };
+      if (!r.ok) { setVerifyNote({ id, text: d.error ?? 'Check failed.' }); return; }
+      if (!d.verified) { setVerifyNote({ id, text: d.reason ?? 'Not verifiable.' }); return; }
+      setVerifyNote({ id, text: `Best move: ${d.result?.bestMovePercent}%${d.result?.hitTarget ? ' — Green!' : ''}` });
+      await fetchSignals();
+    } catch { setVerifyNote({ id, text: 'Check failed.' }); }
+    finally { setVerifyingId(null); }
+  };
+
+  const runScanNow = async () => {
+    setRunningScan(true);
+    setScanRunMessage('');
+    try {
+      const token = await getToken();
+      const r = await fetch(apiPath('/admin/run-scan'), { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      const d = await r.json().catch(() => ({})) as { message?: string; error?: string };
+      setScanRunMessage(r.ok ? (d.message ?? 'Scan started.') : (d.error ?? 'Could not start the scan.'));
+    } catch {
+      setScanRunMessage('Could not start the scan.');
+    } finally {
+      setRunningScan(false);
+    }
   };
 
   const formatDate = (s: Signal) => {
@@ -2984,9 +3107,31 @@ function AdminSignalsPage() {
       upd={upd} onSubmit={() => void submit()} onCancel={cancelEdit}
     />
 
+    <ScoreboardSummary stats={stats} />
+
     {/* Existing signals */}
-    <div style={{marginBottom:14,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+    <div style={{marginBottom:14,display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10}}>
       <span className="eyebrow">Published signals ({signals.length})</span>
+      <div style={{display:'flex',alignItems:'center',gap:10}}>
+        {scanRunMessage && <span className="muted tiny">{scanRunMessage}</span>}
+        <button
+          className="button button-outline"
+          style={{fontSize:11,padding:'6px 14px'}}
+          disabled={runningScan}
+          onClick={() => void runScanNow()}
+          data-testid="button-run-scan-now"
+        >
+          <Radio size={12}/> {runningScan ? 'Starting…' : 'Run scan now'}
+        </button>
+        <button
+          className="button button-outline"
+          style={{fontSize:11,padding:'6px 14px'}}
+          onClick={() => void fetchSignals()}
+          data-testid="button-refresh-signals"
+        >
+          <RotateCcw size={12}/> Refresh
+        </button>
+      </div>
     </div>
     {loadingSignals
       ? <div className="empty-state" style={{paddingTop:40}}><Radio size={22}/><h3>Loading…</h3></div>
@@ -3014,17 +3159,40 @@ function AdminSignalsPage() {
                       <option key={st} value={st}>{st}</option>
                     ))}
                   </select>
+                  {s.resultTag && s.resultTag !== 'Pending' && (
+                    <span
+                      className={`status-pill status-${s.resultTag === 'Green' ? 'active' : 'stopped'}`}
+                      style={{ marginLeft: 6 }}
+                      title={s.resultPercent != null ? `Best move: ${s.resultPercent}%` : undefined}
+                    >
+                      {s.resultTag}
+                    </span>
+                  )}
                 </span>
                 <span className="muted tiny">{formatDate(s)}</span>
-                <span>
-                  <button
-                    className="button button-outline"
-                    style={{fontSize:11,padding:'5px 12px'}}
-                    onClick={() => startEdit(s)}
-                    data-testid={`button-edit-signal-${s.id}`}
-                  >
-                    <Pencil size={11}/> Edit
-                  </button>
+                <span style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:4}}>
+                  <span style={{display:'flex',gap:6}}>
+                    <button
+                      className="button button-outline"
+                      style={{fontSize:11,padding:'5px 12px'}}
+                      onClick={() => startEdit(s)}
+                      data-testid={`button-edit-signal-${s.id}`}
+                    >
+                      <Pencil size={11}/> Edit
+                    </button>
+                    {!s.isOption && (
+                      <button
+                        className="button button-outline"
+                        style={{fontSize:11,padding:'5px 12px'}}
+                        disabled={verifyingId === s.id}
+                        onClick={() => void verifySignal(s.id)}
+                        data-testid={`button-verify-signal-${s.id}`}
+                      >
+                        <Trophy size={11}/> {verifyingId === s.id ? 'Checking…' : 'Check'}
+                      </button>
+                    )}
+                  </span>
+                  {verifyNote && verifyNote.id === s.id && <span className="muted tiny">{verifyNote.text}</span>}
                 </span>
               </div>
             ))}

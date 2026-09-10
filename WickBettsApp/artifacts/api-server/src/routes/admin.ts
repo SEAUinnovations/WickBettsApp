@@ -8,6 +8,7 @@ import { pickPrimarySubscription } from "../lib/subscriptionUtils.js";
 import { aiRateLimit } from "../middlewares/rateLimit.js";
 import { sendMentorshipRequestConfirmed, sendMentorshipDeclined } from "../utils/emailNotifications.js";
 import { REFERRAL_HOLD_DAYS } from "../lib/referralConfig.js";
+import { runSignalScan } from "../services/signalScanner.js";
 
 const router = Router();
 
@@ -364,6 +365,30 @@ router.patch("/referrals/:id", requireAuth, requireAdmin, async (req: Request, r
     logger.error(err, "Failed to update referral");
     res.status(500).json({ error: "Failed to update referral" });
   }
+});
+
+// POST /api/admin/run-scan — manually trigger the swing/LEAPS/Buy & Hold auto
+// scanner (services/signalScanner.ts's runSignalScan, which now checks an
+// admin's watchlist first) outside its normal 2-day schedule, so a change to
+// the scanner or the watchlist can be tested without waiting for the timer.
+// Fire-and-forget, same as the scheduled call: a full run does a batch of
+// real network fetches per candidate and can take a while, so this responds
+// immediately rather than holding the HTTP request open — any new
+// "Watching" candidates just show up in GET /api/signals once the run
+// finishes. `manualScanRunning` is a simple in-memory guard (this is a
+// single-process API server) against a second click starting an overlapping
+// run; runSignalScan itself already catches and logs its own errors, so
+// there's nothing else to await or report back here.
+let manualScanRunning = false;
+router.post("/run-scan", requireAuth, requireAdmin, (req: Request, res: Response) => {
+  if (manualScanRunning) {
+    res.status(409).json({ error: "A scan is already running — give it a minute and try again." });
+    return;
+  }
+  manualScanRunning = true;
+  logger.info({ actorId: req.dbUser!.id }, "Manual signal scan triggered from admin panel");
+  res.status(202).json({ ok: true, message: "Scan started — new Watching candidates will show up in the list in a minute or two." });
+  void runSignalScan().finally(() => { manualScanRunning = false; });
 });
 
 export default router;

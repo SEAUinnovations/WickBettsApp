@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { and, eq, gte, lt, inArray } from "drizzle-orm";
-import { db, signalsTable } from "../lib/db.js";
+import { db, signalsTable, usersTable, watchlistsTable } from "../lib/db.js";
 import { logger } from "../lib/logger.js";
 import { buildStockCandidateList, type RankedCandidate } from "./stockUniverse.js";
 import { fetchStockDailyBars, fetchCryptoDailyBars } from "./marketHistory.js";
@@ -11,6 +11,7 @@ import { fetchOptionsChain, selectContract, contractMidPrice, type ChainContract
 import { getNewsAlert, fomcWithinRange } from "./economicCalendar.js";
 import { getMacroConfluence, type MacroConfluence } from "./macroConfluence.js";
 import { sendDailyDayTradeDigest } from "../utils/emailNotifications.js";
+import { getTrackedStockSymbols } from "../routes/market.js";
 
 /**
  * The automated signal scanner.
@@ -40,6 +41,15 @@ import { sendDailyDayTradeDigest } from "../utils/emailNotifications.js";
  * LEAPS-style signals every run via a top-up pass — see the comment right
  * before that pass, near the end of the function, for why the ranked
  * selection alone doesn't already guarantee this.
+ *
+ * Before falling back to the curated universe, this scan also screens every
+ * stock on an admin's watchlist (getWatchlistStockSymbols) — bypassing the
+ * universe's price/index-membership filter entirely, since a watchlist is a
+ * deliberate "I care about this one" signal — and, if any of them clear the
+ * same technical screen, ranks them ahead of the ENTIRE curated-universe pool
+ * for this run's MAX_SIGNALS_PER_RUN slots (see the `ranked` sort in
+ * runSignalScan). The universe scan still runs every time and fills whatever
+ * slots the watchlist doesn't claim.
  *
  * A second, separate scan lives in this same file: runDayTradeScan, on its
  * own daily schedule (startDayTradeScanScheduler, below) rather than this
@@ -153,6 +163,11 @@ interface Candidate {
   market: "Stocks" | "Crypto";
   screen: ScreenResult;
   sector: string | null;
+  /** True when this symbol came from an admin's watchlist rather than (or in
+   * addition to) the curated universe — see getWatchlistStockSymbols and the
+   * ranking in runSignalScan. Optional/falsy everywhere else (e.g. the day-
+   * trade futures scan), which never sources from a watchlist. */
+  isWatchlist?: boolean;
 }
 
 type SignalStyle = "Swing" | "Buy & Hold" | "LEAPS";
@@ -177,6 +192,33 @@ async function batchScreen<T>(
     }
   }
   return out;
+}
+
+/**
+ * Symbols on an admin's watchlist (watchlistsTable is per-user, so this pulls
+ * every admin account's list and de-dupes) that are also real, single-company
+ * stocks in the tracked universe (see getTrackedStockSymbols) — ETFs/indices/
+ * macro tickers a member might watchlist (SPY, VIX, GLD...) aren't something
+ * this scan can publish as a Buy & Hold/LEAPS stock pick, so those are
+ * filtered out here rather than failing later when there's no options chain
+ * or spot-thesis builder for them. Degrades to an empty list (falling back to
+ * today's curated-universe-only behavior) on any DB error, same as
+ * getRecentAutoAssets below.
+ */
+async function getWatchlistStockSymbols(): Promise<string[]> {
+  try {
+    const admins = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.role, "admin"));
+    if (admins.length === 0) return [];
+    const rows = await db
+      .select({ symbol: watchlistsTable.symbol })
+      .from(watchlistsTable)
+      .where(inArray(watchlistsTable.userId, admins.map((a) => a.id)));
+    const trackedStocks = new Set(getTrackedStockSymbols());
+    return [...new Set(rows.map((r) => r.symbol).filter((s) => trackedStocks.has(s)))];
+  } catch (err) {
+    logger.warn({ err }, "Could not load watchlist symbols for the scanner's watchlist-first pass — proceeding with the curated universe only");
+    return [];
+  }
 }
 
 async function getRecentAutoAssets(): Promise<Set<string>> {
@@ -866,8 +908,9 @@ const FOMC_WINDOW_PENALTY = 1;
 export async function runSignalScan(): Promise<void> {
   logger.info("Auto signal scan starting");
   try {
-    const [stockCandidates, confluence] = await Promise.all([
+    const [stockCandidates, watchlistSymbols, confluence] = await Promise.all([
       buildStockCandidateList(STOCK_UNIVERSE_LIMIT),
+      getWatchlistStockSymbols(),
       getMacroConfluence(),
     ]);
     // Sector lookups keyed off the same screener pass that built the
@@ -877,10 +920,24 @@ export async function runSignalScan(): Promise<void> {
     const stockSectorBySymbol = new Map(stockCandidates.map((c) => [c.symbol, c.sector]));
     const cryptoSectorBySymbol = new Map(CRYPTO_UNIVERSE.map((c) => [c.symbol, c.sector]));
     const stockSymbols = stockCandidates.map((c) => c.symbol);
+    const watchlistSymbolSet = new Set(watchlistSymbols);
+    // Watchlist symbols the curated universe wouldn't otherwise pull in
+    // (almost all of them — the universe deliberately excludes S&P 500/
+    // Nasdaq 100 names, which is where most of a watchlist lives) get their
+    // own screening pass rather than being dropped for not meeting the
+    // universe's price/index-membership filter. Any that DO already appear
+    // in stockSymbols are screened once, via that pass, and just get flagged
+    // isWatchlist below.
+    const watchlistOnlySymbols = watchlistSymbols.filter((s) => !stockSymbols.includes(s));
 
-    const [stockResults, cryptoResults] = await Promise.all([
+    const [stockResults, watchlistResults, cryptoResults] = await Promise.all([
       batchScreen(
         stockSymbols,
+        (symbol) => fetchStockDailyBars(symbol),
+        (symbol) => symbol,
+      ),
+      batchScreen(
+        watchlistOnlySymbols,
         (symbol) => fetchStockDailyBars(symbol),
         (symbol) => symbol,
       ),
@@ -892,8 +949,9 @@ export async function runSignalScan(): Promise<void> {
     ]);
 
     const allCandidates: Candidate[] = [
-      ...stockResults.map((r) => ({ symbol: r.symbol, market: "Stocks" as const, screen: r.screen, sector: stockSectorBySymbol.get(r.symbol) ?? null })),
-      ...cryptoResults.map((r) => ({ symbol: r.symbol, market: "Crypto" as const, screen: r.screen, sector: cryptoSectorBySymbol.get(r.symbol) ?? null })),
+      ...stockResults.map((r) => ({ symbol: r.symbol, market: "Stocks" as const, screen: r.screen, sector: stockSectorBySymbol.get(r.symbol) ?? null, isWatchlist: watchlistSymbolSet.has(r.symbol) })),
+      ...watchlistResults.map((r) => ({ symbol: r.symbol, market: "Stocks" as const, screen: r.screen, sector: null, isWatchlist: true })),
+      ...cryptoResults.map((r) => ({ symbol: r.symbol, market: "Crypto" as const, screen: r.screen, sector: cryptoSectorBySymbol.get(r.symbol) ?? null, isWatchlist: false })),
     ];
 
     if (allCandidates.length === 0) {
@@ -943,9 +1001,18 @@ export async function runSignalScan(): Promise<void> {
     // one is not.
     const pool = allCandidates.filter((c) => !recentAssets.has(c.symbol));
 
-    const strict = pool.filter((c) => c.screen.strictMatch).sort((a, b) => rankScore(b) - rankScore(a));
-    const rest = pool.filter((c) => !c.screen.strictMatch).sort((a, b) => rankScore(b) - rankScore(a));
-    const ranked = [...strict, ...rest];
+    // Watchlist candidates that clear the technical screen (they're in `pool`
+    // at all — screenSymbol already threw out anything that doesn't hit the
+    // RSI extreme) are ranked ahead of the ENTIRE curated-universe pool, not
+    // just tie-broken against it: any watchlist symbol with a qualifying
+    // setup gets first claim on this run's MAX_SIGNALS_PER_RUN slots, and the
+    // universe scan only fills what's left over. Strict-match-before-soft,
+    // then score, still applies as the tiebreaker within each group.
+    const ranked = [...pool].sort((a, b) => {
+      if (a.isWatchlist !== b.isWatchlist) return a.isWatchlist ? -1 : 1;
+      if (a.screen.strictMatch !== b.screen.strictMatch) return a.screen.strictMatch ? -1 : 1;
+      return rankScore(b) - rankScore(a);
+    });
 
     // Cap to MAX_SIGNALS_PER_RUN, avoiding duplicate symbols within the run.
     const chosen: Candidate[] = [];
@@ -1059,7 +1126,17 @@ export async function runSignalScan(): Promise<void> {
       }
     }
 
-    logger.info({ inserted, leapsInserted, scanned: allCandidates.length }, "Auto signal scan complete");
+    logger.info(
+      {
+        inserted,
+        leapsInserted,
+        scanned: allCandidates.length,
+        watchlistScanned: watchlistSymbols.length,
+        watchlistQualified: pool.filter((c) => c.isWatchlist).length,
+        watchlistInserted: inserted.filter((symbol) => watchlistSymbolSet.has(symbol)).length,
+      },
+      "Auto signal scan complete",
+    );
   } catch (err) {
     logger.error({ err }, "Auto signal scan failed");
   }
