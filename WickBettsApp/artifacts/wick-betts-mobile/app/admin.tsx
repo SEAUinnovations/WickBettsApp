@@ -97,6 +97,10 @@ export default function AdminScreen() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Which row's Delete button is showing its inline "are you sure" step —
+  // see confirmDelete's doc comment below for why this replaced the
+  // window.confirm/Alert.alert approach.
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [togglingStarId, setTogglingStarId] = useState<string | null>(null);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
 
@@ -234,6 +238,7 @@ export default function AdminScreen() {
   };
 
   const doDelete = async (s: Signal) => {
+    setConfirmingDeleteId(null);
     setDeletingId(s.id);
     setError('');
     try {
@@ -247,22 +252,17 @@ export default function AdminScreen() {
     }
   };
 
-  // Alert.alert's multi-button dialogs silently no-op on react-native-web, so
-  // use window.confirm there (same pattern as sign-out / cancel-subscription).
+  // This used to show a window.confirm/Alert.alert dialog before deleting —
+  // replaced because both are unreliable here: Alert.alert's multi-button
+  // dialogs silently no-op on react-native-web (same issue toggleCommunityStar
+  // below still has), and window.confirm is flatly blocked with NO dialog and
+  // NO error inside a sandboxed preview iframe (e.g. this app's Replit
+  // webview), which reads as "clicking Delete does nothing at all." An inline,
+  // same-page confirm step (see the row rendering below) works everywhere
+  // regardless of how the page is embedded.
   const confirmDelete = (s: Signal) => {
-    const label = s.source === 'auto' ? 'Dismiss this auto-generated signal?' : `Delete the ${s.asset} signal?`;
-    if (Platform.OS === 'web') {
-      if (window.confirm(label)) void doDelete(s);
-      return;
-    }
-    Alert.alert(
-      s.source === 'auto' ? 'Dismiss signal' : 'Delete signal',
-      `${label} This can't be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: s.source === 'auto' ? 'Dismiss' : 'Delete', style: 'destructive', onPress: () => void doDelete(s) },
-      ],
-    );
+    setError('');
+    setConfirmingDeleteId(s.id);
   };
 
   const isValid = useMemo(
@@ -738,18 +738,43 @@ export default function AdminScreen() {
                     <Ionicons name="create-outline" size={14} color={colors.primary} />
                     <Text style={[styles.editButtonText, { color: colors.primary }]}>Edit</Text>
                   </Pressable>
-                  <Pressable
-                    onPress={() => confirmDelete(s)}
-                    disabled={deletingId === s.id}
-                    style={[styles.editButton, { borderColor: colors.border }, deletingId === s.id && { opacity: 0.5 }]}
-                    accessibilityRole="button"
-                    testID={`delete-signal-${s.id}`}
-                  >
-                    <Ionicons name="trash-outline" size={14} color={colors.destructive} />
-                    <Text style={[styles.editButtonText, { color: colors.destructive }]}>
-                      {deletingId === s.id ? 'Removing…' : 'Delete'}
-                    </Text>
-                  </Pressable>
+                  {confirmingDeleteId === s.id ? (
+                    <>
+                      <Pressable
+                        onPress={() => void doDelete(s)}
+                        disabled={deletingId === s.id}
+                        style={[styles.editButton, { borderColor: colors.destructive }, deletingId === s.id && { opacity: 0.5 }]}
+                        accessibilityRole="button"
+                        testID={`confirm-delete-signal-${s.id}`}
+                      >
+                        <Ionicons name="checkmark-outline" size={14} color={colors.destructive} />
+                        <Text style={[styles.editButtonText, { color: colors.destructive }]}>
+                          {deletingId === s.id ? 'Removing…' : s.source === 'auto' ? 'Confirm dismiss' : 'Confirm delete'}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => setConfirmingDeleteId(null)}
+                        disabled={deletingId === s.id}
+                        style={[styles.editButton, { borderColor: colors.border }]}
+                        accessibilityRole="button"
+                        testID={`cancel-delete-signal-${s.id}`}
+                      >
+                        <Text style={[styles.editButtonText, { color: colors.mutedForeground }]}>Cancel</Text>
+                      </Pressable>
+                    </>
+                  ) : (
+                    <Pressable
+                      onPress={() => confirmDelete(s)}
+                      style={[styles.editButton, { borderColor: colors.border }]}
+                      accessibilityRole="button"
+                      testID={`delete-signal-${s.id}`}
+                    >
+                      <Ionicons name="trash-outline" size={14} color={colors.destructive} />
+                      <Text style={[styles.editButtonText, { color: colors.destructive }]}>
+                        {s.source === 'auto' ? 'Dismiss' : 'Delete'}
+                      </Text>
+                    </Pressable>
+                  )}
                 </View>
               </View>
               <View style={styles.statusRow}>
