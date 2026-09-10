@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Route, Router as WouterRouter, Switch, useLocation, useRoute } from 'wouter';
 import {
-  ArrowRight, Award, Bell, BookMarked, BookOpen, CalendarDays, CandlestickChart, Camera, Check,
-  ChevronLeft, ChevronRight, CircleHelp, Clock3, CreditCard, Crown, ExternalLink, Filter, Flame,
-  Gamepad2, GraduationCap, Heart, Layers, LayoutDashboard, LoaderCircle, LockKeyhole,
-  LogOut, MessageCircle, Newspaper, PanelLeft, Pencil, Percent, PlayCircle, Plus, Radio, Rocket, RotateCcw,
+  Activity, AlertTriangle, ArrowRight, Award, Bell, BookMarked, BookOpen, CalendarDays, CandlestickChart, Camera, Check,
+  ChevronLeft, ChevronRight, CircleHelp, Clock3, CreditCard, Crown, ExternalLink, Filter, Flag, Flame,
+  FlaskConical, Gamepad2, GitCompare, GraduationCap, Heart, Layers, LayoutDashboard, LoaderCircle, LockKeyhole,
+  LogOut, Maximize2, MessageCircle, Minimize2, Minus, Newspaper, PanelLeft, Pause, Pencil, Percent, Play, PlayCircle, Plus, Radio, Rocket, RotateCcw,
   Settings, ShieldCheck, SlidersHorizontal, Sparkles, Star, Swords, Target, TrendingUp, Trash2, Trophy,
   UserCheck, UserPlus, UserRound, WalletCards, X, Chrome, Zap,
 } from 'lucide-react';
@@ -1406,6 +1406,7 @@ interface LearningProgress {
   lastVisit: string | null;
   candleGame: { bestScore: number; bestStreak: number; plays: number };
   triviaGame: { bestScore: number; plays: number };
+  liveSimGame: { bestEquity: number; timesBreached: number; plays: number };
 }
 
 const LEARNING_STORAGE_PREFIX = 'wb-learning-progress';
@@ -1419,6 +1420,7 @@ function blankLearningProgress(): LearningProgress {
     lastVisit: null,
     candleGame: { bestScore: 0, bestStreak: 0, plays: 0 },
     triviaGame: { bestScore: 0, plays: 0 },
+    liveSimGame: { bestEquity: 0, timesBreached: 0, plays: 0 },
   };
 }
 
@@ -1434,6 +1436,7 @@ function loadLearningProgress(userId: string | undefined): LearningProgress {
       ...parsed,
       candleGame: { ...fallback.candleGame, ...parsed.candleGame },
       triviaGame: { ...fallback.triviaGame, ...parsed.triviaGame },
+      liveSimGame: { ...fallback.liveSimGame, ...parsed.liveSimGame },
     };
   } catch {
     return fallback;
@@ -1552,6 +1555,223 @@ function Callout({ label, children }: { label: string; children: React.ReactNode
 function DefinitionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return <div className="definition-card"><strong>{title}</strong><p>{children}</p></div>;
 }
+
+// ── Learning: live trading simulator engine ───────────────────────────────────────
+// Pure, framework-agnostic logic for a fully client-side, always-simulated
+// candlestick feed plus a paper-money order book — ported 1:1 from the
+// mobile app's lib/liveSimEngine.ts + lib/contractSpecs.ts so both platforms
+// share identical simulation rules. No real market data, no real broker, and
+// no real money ever touches this: every price here is a random walk
+// generated in the browser.
+interface FuturesContractSpec { symbol: string; name: string; pointValue: number; tickSize: number; tickValue: number }
+const NQ_SPEC: FuturesContractSpec = { symbol: 'NQ', name: 'E-mini Nasdaq-100', pointValue: 20, tickSize: 0.25, tickValue: 5 };
+const MNQ_SPEC: FuturesContractSpec = { symbol: 'MNQ', name: 'Micro E-mini Nasdaq-100', pointValue: 2, tickSize: 0.25, tickValue: 0.5 };
+interface ForexLotSpec { id: 'standard' | 'mini' | 'micro' | 'nano'; label: string; units: number; pipValue: number }
+const FOREX_LOTS: ForexLotSpec[] = [
+  { id: 'standard', label: 'Standard Lot', units: 100_000, pipValue: 10 },
+  { id: 'mini', label: 'Mini Lot', units: 10_000, pipValue: 1 },
+  { id: 'micro', label: 'Micro Lot', units: 1_000, pipValue: 0.1 },
+  { id: 'nano', label: 'Nano Lot', units: 100, pipValue: 0.01 },
+];
+
+type SimTimeframe = '1m' | '5m' | '15m' | '30m' | '1h';
+const SIM_TIMEFRAMES: SimTimeframe[] = ['1m', '5m', '15m', '30m', '1h'];
+
+interface SimCandle { time: number; open: number; high: number; low: number; close: number }
+type SimSide = 'long' | 'short';
+interface SimPosition {
+  side: SimSide;
+  qty: number;
+  avgPrice: number;
+  takeProfit?: number | null;
+  stopLoss?: number | null;
+}
+interface SimTradeLog { side: SimSide | 'flat'; qty: number; price: number; pnl: number; time: number }
+interface SimAccountState {
+  startingBalance: number;
+  realizedPnl: number;
+  position: SimPosition | null;
+  trades: SimTradeLog[];
+}
+
+const SIM_STARTING_BALANCE = 50_000;
+const SIM_MAX_LOSS = 2_000;
+const SIM_MLL_FLOOR = SIM_STARTING_BALANCE - SIM_MAX_LOSS;
+const SIM_POINT_VALUE = 5;
+const SIM_QTY_PRESETS = [1, 3, 5, 10, 15] as const;
+
+type SimInstrumentId = 'NQ' | 'MNQ';
+const SIM_INSTRUMENTS: Record<SimInstrumentId, FuturesContractSpec> = { NQ: NQ_SPEC, MNQ: MNQ_SPEC };
+const SIM_INSTRUMENT_IDS: SimInstrumentId[] = ['NQ', 'MNQ'];
+const SIM_VISIBLE_CANDLES = 44;
+
+// Each timeframe paces its own tick loop (tickMs/ticksPerCandle) AND scales
+// candle range (volatilityMultiplier) independently of the simulated
+// time-axis step (candleDurationMs) — switching tabs is immediately, audibly
+// a different playback speed, not just a relabel of the same-sized candles.
+const SIM_TIMEFRAME_CONFIG: Record<SimTimeframe, { tickMs: number; ticksPerCandle: number; candleDurationMs: number; volatilityMultiplier: number }> = {
+  '1m': { tickMs: 220, ticksPerCandle: 6, candleDurationMs: 60_000, volatilityMultiplier: 1 },
+  '5m': { tickMs: 260, ticksPerCandle: 7, candleDurationMs: 5 * 60_000, volatilityMultiplier: 1.62 },
+  '15m': { tickMs: 320, ticksPerCandle: 8, candleDurationMs: 15 * 60_000, volatilityMultiplier: 2.25 },
+  '30m': { tickMs: 420, ticksPerCandle: 9, candleDurationMs: 30 * 60_000, volatilityMultiplier: 2.77 },
+  '1h': { tickMs: 600, ticksPerCandle: 10, candleDurationMs: 60 * 60_000, volatilityMultiplier: 3.41 },
+};
+
+function gaussianNoise(): number {
+  let u = 0; let v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+function volatilityForPrice(price: number): number { return Math.max(0.15, price * 0.0007); }
+function randomSimStartPrice(): number { return Math.round((80 + Math.random() * 4800) * 100) / 100; }
+
+function seedSimCandles(count: number, startPrice: number, volatility: number, now: number, stepMs: number): SimCandle[] {
+  const candles: SimCandle[] = [];
+  let price = Math.max(0.5, startPrice - gaussianNoise() * volatility * 6);
+  const startTime = now - stepMs * count;
+  for (let i = 0; i < count; i++) {
+    const open = price;
+    const drift = gaussianNoise() * volatility;
+    const close = Math.max(0.5, open + drift);
+    const high = Math.max(open, close) + Math.abs(gaussianNoise()) * volatility * 0.6;
+    const low = Math.max(0.25, Math.min(open, close) - Math.abs(gaussianNoise()) * volatility * 0.6);
+    candles.push({ time: startTime + i * stepMs, open, high, low, close });
+    price = close;
+  }
+  return candles;
+}
+function openSimCandle(prevClose: number, time: number): SimCandle { return { time, open: prevClose, high: prevClose, low: prevClose, close: prevClose }; }
+function tickSimCandle(candle: SimCandle, volatility: number): SimCandle {
+  const step = gaussianNoise() * volatility;
+  const close = Math.max(0.5, candle.close + step);
+  return { ...candle, close, high: Math.max(candle.high, close), low: Math.min(candle.low, close) };
+}
+
+function blankSimAccount(startingBalance: number = SIM_STARTING_BALANCE): SimAccountState {
+  return { startingBalance, realizedPnl: 0, position: null, trades: [] };
+}
+function simBalance(account: SimAccountState): number { return account.startingBalance + account.realizedPnl; }
+function simUnrealizedPnl(account: SimAccountState, price: number, pointValue: number = SIM_POINT_VALUE): number {
+  if (!account.position) return 0;
+  const diff = price - account.position.avgPrice;
+  const signed = account.position.side === 'long' ? diff : -diff;
+  return signed * account.position.qty * pointValue;
+}
+function simEquity(account: SimAccountState, price: number, pointValue: number = SIM_POINT_VALUE): number {
+  return simBalance(account) + simUnrealizedPnl(account, price, pointValue);
+}
+function isSimBreached(account: SimAccountState, price: number, pointValue: number = SIM_POINT_VALUE): boolean {
+  return simEquity(account, price, pointValue) <= SIM_MLL_FLOOR;
+}
+function placeSimMarketOrder(account: SimAccountState, side: SimSide, qty: number, price: number, time: number, pointValue: number = SIM_POINT_VALUE): SimAccountState {
+  if (qty <= 0) return account;
+  const pos = account.position;
+  if (!pos) {
+    return { ...account, position: { side, qty, avgPrice: price }, trades: [...account.trades, { side, qty, price, pnl: 0, time }] };
+  }
+  if (pos.side === side) {
+    const newQty = pos.qty + qty;
+    const avgPrice = (pos.avgPrice * pos.qty + price * qty) / newQty;
+    return { ...account, position: { side, qty: newQty, avgPrice }, trades: [...account.trades, { side, qty, price, pnl: 0, time }] };
+  }
+  const closingQty = Math.min(qty, pos.qty);
+  const diff = price - pos.avgPrice;
+  const signed = pos.side === 'long' ? diff : -diff;
+  const realized = signed * closingQty * pointValue;
+  const remainderQty = qty - closingQty;
+  const leftoverPosQty = pos.qty - closingQty;
+  const nextPosition: SimPosition | null = remainderQty > 0
+    ? { side, qty: remainderQty, avgPrice: price }
+    : leftoverPosQty > 0
+      ? { side: pos.side, qty: leftoverPosQty, avgPrice: pos.avgPrice }
+      : null;
+  return {
+    ...account,
+    realizedPnl: account.realizedPnl + realized,
+    position: nextPosition,
+    trades: [...account.trades, { side: nextPosition ? side : 'flat', qty, price, pnl: realized, time }],
+  };
+}
+function closeSimPosition(account: SimAccountState, price: number, time: number, pointValue: number = SIM_POINT_VALUE): SimAccountState {
+  const pos = account.position;
+  if (!pos) return account;
+  const diff = price - pos.avgPrice;
+  const signed = pos.side === 'long' ? diff : -diff;
+  const realized = signed * pos.qty * pointValue;
+  return { ...account, realizedPnl: account.realizedPnl + realized, position: null, trades: [...account.trades, { side: 'flat', qty: pos.qty, price, pnl: realized, time }] };
+}
+function setSimBracket(account: SimAccountState, takeProfit: number | null, stopLoss: number | null): SimAccountState {
+  if (!account.position) return account;
+  return { ...account, position: { ...account.position, takeProfit, stopLoss } };
+}
+function checkSimBracketHit(position: SimPosition, candle: SimCandle): { kind: 'takeProfit' | 'stopLoss'; price: number } | null {
+  const { side, takeProfit, stopLoss } = position;
+  if (side === 'long') {
+    if (stopLoss != null && candle.low <= stopLoss) return { kind: 'stopLoss', price: stopLoss };
+    if (takeProfit != null && candle.high >= takeProfit) return { kind: 'takeProfit', price: takeProfit };
+  } else {
+    if (stopLoss != null && candle.high >= stopLoss) return { kind: 'stopLoss', price: stopLoss };
+    if (takeProfit != null && candle.low <= takeProfit) return { kind: 'takeProfit', price: takeProfit };
+  }
+  return null;
+}
+
+function computeSMA(candles: SimCandle[], period: number): (number | null)[] {
+  const out: (number | null)[] = [];
+  let sum = 0;
+  for (let i = 0; i < candles.length; i++) {
+    sum += candles[i].close;
+    if (i >= period) sum -= candles[i - period].close;
+    out.push(i >= period - 1 ? sum / period : null);
+  }
+  return out;
+}
+function computeRSI(candles: SimCandle[], period: number = 14): (number | null)[] {
+  const out: (number | null)[] = new Array(candles.length).fill(null);
+  if (candles.length < period + 1) return out;
+  let avgGain = 0; let avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
+    const change = candles[i].close - candles[i - 1].close;
+    if (change >= 0) avgGain += change; else avgLoss -= change;
+  }
+  avgGain /= period; avgLoss /= period;
+  out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  for (let i = period + 1; i < candles.length; i++) {
+    const change = candles[i].close - candles[i - 1].close;
+    const gain = change > 0 ? change : 0;
+    const loss = change < 0 ? -change : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return out;
+}
+function computeSessionVwap(candles: SimCandle[]): (number | null)[] {
+  const out: (number | null)[] = [];
+  let sum = 0;
+  for (let i = 0; i < candles.length; i++) {
+    const typical = (candles[i].high + candles[i].low + candles[i].close) / 3;
+    sum += typical;
+    out.push(sum / (i + 1));
+  }
+  return out;
+}
+
+interface MockFuturesTicker { symbol: string; name: string }
+const MOCK_FUTURES_TICKERS: MockFuturesTicker[] = [
+  { symbol: 'ES', name: 'S&P 500 futures' },
+  { symbol: 'NQ', name: 'Nasdaq 100 futures' },
+  { symbol: 'YM', name: 'Dow futures' },
+  { symbol: 'RTY', name: 'Russell 2000 futures' },
+  { symbol: 'CL', name: 'Crude oil futures' },
+  { symbol: 'GC', name: 'Gold futures' },
+  { symbol: 'SI', name: 'Silver futures' },
+  { symbol: 'NG', name: 'Natural gas futures' },
+  { symbol: 'ZB', name: '30-year bond futures' },
+  { symbol: '6E', name: 'Euro FX futures' },
+];
+const simMoney = (n: number) => `${n < 0 ? '-' : ''}$${Math.abs(Math.round(n)).toLocaleString()}`;
 
 // ── Learning: news event simulator ────────────────────────────────────────────────
 interface NewsEventKind { id: string; label: string; short: string; typicalTime: string }
@@ -1936,6 +2156,79 @@ function bodyTrailblazers(): React.ReactNode {
   );
 }
 
+// A small inline diagram — one NQ contract vs. one MNQ contract, and the four
+// forex lot sizes, drawn to relative scale. Follows the same plain-svg,
+// hardcoded-hex-accent convention as CandleGlyph/NewsSimChart above.
+function ContractLeverageCompare() {
+  const w = 320; const h = 150; const baseline = 130;
+  const nqTop = 30; const mnqTop = 120;
+  const lots = FOREX_LOTS;
+  const lotColors = ['#7AE2AA', '#60A5FA', '#E2C25A', '#FDBA74'];
+  const lotX = [176, 208, 240, 272];
+  const lotTop = lots.map((l) => baseline - (10 + ((Math.log10(l.units) - 2) / 3) * 90));
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width={w} height={h} style={{ display: 'block', margin: '0 auto' }}>
+      <text x={4} y={12} fontSize={8} fontWeight={700} fill="var(--muted-foreground)">FUTURES · 1 CONTRACT EACH</text>
+      <line x1={0} y1={baseline} x2={150} y2={baseline} stroke="var(--border)" strokeWidth={1.2} />
+      <rect x={22} y={nqTop} width={30} height={baseline - nqTop} fill="#60A5FA" rx={2} />
+      <text x={37} y={nqTop - 6} fontSize={9} fontWeight={700} textAnchor="middle" fill="#60A5FA">$20/pt</text>
+      <text x={37} y={143} fontSize={9} textAnchor="middle" fill="var(--muted-foreground)">NQ</text>
+      <rect x={78} y={mnqTop} width={30} height={baseline - mnqTop} fill="#E2C25A" rx={2} />
+      <text x={93} y={mnqTop - 6} fontSize={9} fontWeight={700} textAnchor="middle" fill="#E2C25A">$2/pt</text>
+      <text x={93} y={143} fontSize={9} textAnchor="middle" fill="var(--muted-foreground)">MNQ</text>
+      <line x1={162} y1={10} x2={162} y2={140} stroke="var(--border)" strokeWidth={1} />
+      <text x={170} y={12} fontSize={8} fontWeight={700} fill="var(--muted-foreground)">FOREX · LOT SIZE</text>
+      <line x1={170} y1={baseline} x2={316} y2={baseline} stroke="var(--border)" strokeWidth={1.2} />
+      {lots.map((lot, i) => (
+        <g key={lot.id}>
+          <rect x={lotX[i]} y={lotTop[i]} width={18} height={baseline - lotTop[i]} fill={lotColors[i]} rx={2} />
+          <text x={lotX[i] + 9} y={lotTop[i] - 5} fontSize={8} textAnchor="middle" fill="var(--muted-foreground)">${lot.pipValue.toFixed(2)}</text>
+          <text x={lotX[i] + 9} y={143} fontSize={8} textAnchor="middle" fill="var(--muted-foreground)">{lot.label.split(' ')[0].slice(0, 5).toUpperCase()}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function bodyContractSizingLeverage(): React.ReactNode {
+  return (
+    <>
+      <p>Before position sizing means anything, you need to know what one unit of what you are trading is actually worth. A <strong>contract</strong> (futures) and a <strong>lot</strong> (forex) both answer that question — and picking the wrong size is one of the fastest ways to blow past a drawdown floor without meaning to.</p>
+      <LessonHeading>Futures: one contract, a fixed multiplier</LessonHeading>
+      <p>A futures contract's dollar value per point of movement — its <strong>multiplier</strong> — is fixed by the exchange (CME), not your broker. It never changes no matter which platform you trade it on.</p>
+      <div className="definition-grid">
+        <DefinitionCard title={`${NQ_SPEC.symbol} — ${NQ_SPEC.name}`}>${NQ_SPEC.pointValue} per index point, in ticks of {NQ_SPEC.tickSize} points worth ${NQ_SPEC.tickValue} each. The "full-size" Nasdaq-100 contract.</DefinitionCard>
+        <DefinitionCard title={`${MNQ_SPEC.symbol} — ${MNQ_SPEC.name}`}>${MNQ_SPEC.pointValue} per index point — exactly 1/10th of NQ. Same index, same {MNQ_SPEC.tickSize}-point tick size, same everything else — only the dollar multiplier is scaled down.</DefinitionCard>
+      </div>
+      <Callout label="The cost difference, in one number">
+        A 10-point move on the Nasdaq-100 is ${10 * NQ_SPEC.pointValue} of P&amp;L on one NQ contract — and just ${10 * MNQ_SPEC.pointValue} on one MNQ contract. Same market, same 10-point move, 10x the dollar swing. That is the entire reason MNQ exists: to let a trader size a position in the same market with a much smaller dollar step per contract.
+      </Callout>
+      <div className="lesson-diagram"><ContractLeverageCompare /></div>
+      <LessonHeading>Forex: lot size instead of contract count</LessonHeading>
+      <p>Forex has no exchange-fixed contract — instead, brokers quote a trade in <strong>units</strong> of the base currency, grouped into standard lot sizes. The bigger the lot, the more each pip of movement is worth.</p>
+      <div className="definition-grid">
+        {FOREX_LOTS.map((lot) => (
+          <DefinitionCard key={lot.id} title={`${lot.label} — ${lot.units.toLocaleString()} units`}>
+            Roughly ${lot.pipValue.toFixed(2)} per pip on a USD-quoted pair like EUR/USD. {lot.id === 'standard' ? 'The full-size lot institutional-style accounts are often quoted in.' : lot.id === 'nano' ? 'The smallest step most retail brokers offer — built for practicing with real (if tiny) money on the line.' : 'A common size for retail accounts learning to size positions deliberately.'}
+          </DefinitionCard>
+        ))}
+      </div>
+      <LessonHeading>Leverage — what it actually means</LessonHeading>
+      <Callout label="The formula">
+        Leverage = (notional value you control) ÷ (capital required to control it). It is a ratio, not a dollar amount — it tells you how much market exposure one dollar of your own capital is controlling.
+      </Callout>
+      <p>Worked example, using a hypothetical Nasdaq-100 level of 20,000 (not a live quote): one NQ contract would control 20,000 × ${NQ_SPEC.pointValue} = ${(20000 * NQ_SPEC.pointValue).toLocaleString()} of notional exposure. One MNQ contract controls 20,000 × ${MNQ_SPEC.pointValue} = ${(20000 * MNQ_SPEC.pointValue).toLocaleString()} — exactly 1/10th, matching the 1/10th margin a broker would typically require for it.</p>
+      <p className="muted tiny">Because both the notional exposure and the required margin scale by the same 10x between NQ and MNQ, the leverage ratio itself is identical on both — roughly 20-to-1 in this example, whichever one you pick. Contract size changes your dollar risk per point; it does not, by itself, change how leveraged you are.</p>
+      <p>Forex leverage works the same way but the ratio offered varies far more — commonly capped around 30-to-1 to 50-to-1 for major pairs at regulated U.S./E.U./U.K. brokers, and often much higher at offshore brokers. Higher available leverage is not a recommendation to use all of it — it only changes how little of your own capital a large position requires, not how much risk that position carries.</p>
+      <LessonHeading>See it live</LessonHeading>
+      <p>The Live Trading Simulator lets you flip between an NQ-sized and MNQ-sized position on the exact same chart and watch the balance/P&amp;L numbers move at 10x different speeds for the same price action — the fastest way to make this concept feel real instead of theoretical.</p>
+      <Callout label="Sizing an MNQ habit onto NQ">
+        A trader spends weeks building a comfortable, well-sized habit trading 5 MNQ contracts per trade with a $2,000 max drawdown in mind. They switch to NQ for "better fills" and keep the same "5 contracts" habit out of muscle memory — instantly trading a position 10x their intended dollar risk. A normal, expected pullback that would have cost $150 on 5 MNQ costs $1,500 on 5 NQ, most of an entire drawdown cushion in one trade. Position size in "number of contracts" is meaningless on its own — it only means something next to that contract's dollar multiplier.
+      </Callout>
+    </>
+  );
+}
+
 // ── Learning: module registry ──────────────────────────────────────────────────────
 const LEARNING_MODULES: LearningModule[] = [
   { id: 'welcome', level: 'Beginner', kind: 'lesson', title: 'Welcome to WickBetts', tagline: 'What this academy is, and the one trait that matters more than any indicator.', minutes: 4, xp: 40, icon: GraduationCap, body: bodyWelcome, videos: [
@@ -1961,6 +2254,8 @@ const LEARNING_MODULES: LearningModule[] = [
     { title: 'What Is The Simple Moving Average? (SMA) & How To Use It!', url: 'https://www.youtube.com/watch?v=TRy9InVeFc8', duration: '4:03' },
     { title: 'How to Use the Relative Strength Index (RSI)', url: 'https://www.youtube.com/watch?v=hbcCykbX14U', duration: '4:22' },
   ] },
+  { id: 'contract-sizing-leverage', level: 'Advanced', kind: 'lesson', title: 'Contracts, Lot Sizes & Leverage', tagline: 'NQ vs MNQ, forex lot sizes, and what leverage actually means — with a live cost comparison in the simulator.', minutes: 9, xp: 70, icon: GitCompare, body: bodyContractSizingLeverage },
+  { id: 'trading-simulator', level: 'Advanced', kind: 'game', title: 'Live Trading Simulator', tagline: 'A live-ticking candlestick chart, real bracket orders, and NQ vs MNQ sizing — all practice money.', minutes: 10, xp: 0, icon: Activity },
   { id: 'risk-and-psychology', level: 'Advanced', kind: 'lesson', title: "Risk & the Trader's Mindset", tagline: 'Position sizing, stops, and the patience that keeps an edge alive.', minutes: 8, xp: 60, icon: ShieldCheck, body: bodyRiskAndPsychology, videos: [
     { title: 'The Risk to Reward Ratio Explained in One Minute', url: 'https://www.youtube.com/watch?v=aKZsireNBIM', duration: '1:36' },
   ] },
@@ -2112,7 +2407,11 @@ function LearningPage() {
                   <p>{mod.tagline}</p>
                   <div className="module-meta">
                     {mod.kind === 'game'
-                      ? <span>Best score: {mod.id === 'candle-arcade' ? progress.candleGame.bestScore : progress.triviaGame.bestScore}</span>
+                      ? <span>{mod.id === 'candle-arcade'
+                          ? `Best score: ${progress.candleGame.bestScore}`
+                          : mod.id === 'trivia-arena'
+                          ? `Best score: ${progress.triviaGame.bestScore}`
+                          : `Best equity: ${simMoney(progress.liveSimGame.bestEquity)}`}</span>
                       : <span><Clock3 size={11} /> {mod.minutes} min · +{mod.xp} XP</span>}
                     {done && <span className="status-pill status-active"><Check size={10} /> Done</span>}
                   </div>
@@ -2136,7 +2435,9 @@ function LearningPage() {
           <button className="button button-outline" style={{ marginBottom: 20 }} onClick={backToOverview} data-testid="button-back-to-path"><ChevronLeft size={13} /> Back to path</button>
           {activeModule.id === 'candle-arcade'
             ? <CandleArcadeGame progress={progress} setProgress={setProgress} />
-            : <TriviaArenaGame progress={progress} setProgress={setProgress} />}
+            : activeModule.id === 'trivia-arena'
+            ? <TriviaArenaGame progress={progress} setProgress={setProgress} />
+            : <TradingSimulatorGame progress={progress} setProgress={setProgress} onOpenLesson={openModule} />}
         </div>
       ) : activeModule ? (
         <LessonView
@@ -2404,6 +2705,639 @@ function TriviaArenaGame({ progress, setProgress }: { progress: LearningProgress
           {round + 1 >= order.length ? 'See results' : 'Next question'} <ArrowRight size={13} />
         </button>
       )}
+    </div>
+  );
+}
+
+// ── Learning: live candlestick chart (TradingView-style) ─────────────────────────
+interface CandleIndicatorSeries { sma?: (number | null)[]; ema?: (number | null)[]; vwap?: (number | null)[] }
+const RSI_PANEL_HEIGHT = 56;
+const RSI_PANEL_GAP = 10;
+
+/**
+ * Live-scrolling candlestick chart for the Live Trading Simulator — a
+ * recessed dark plot panel, a faint ticker watermark, gridlines, a
+ * TradingView-style OHLC readout, optional MA/VWAP overlays, an optional
+ * take-profit/stop-loss bracket, and an optional RSI sub-panel. Plain inline
+ * SVG, no charting library — `width`/`height` are fully caller-controlled so
+ * the panel can be interactively resized (see the drag handle in
+ * TradingSimulatorGame below).
+ */
+function LiveCandleChart({
+  candles, width, height = 260, entryPrice, entrySide, takeProfitPrice, stopLossPrice, indicators, rsi, symbol,
+}: {
+  candles: SimCandle[]; width: number; height?: number;
+  entryPrice?: number | null; entrySide?: SimSide | null;
+  takeProfitPrice?: number | null; stopLossPrice?: number | null;
+  indicators?: CandleIndicatorSeries; rsi?: (number | null)[]; symbol?: string;
+}) {
+  const axisGutter = 58;
+  const bottomGutter = 20;
+  const topPad = 12;
+  const showRsi = !!rsi && rsi.some((v) => v != null);
+  const plotW = Math.max(0, width - axisGutter);
+  const plotH = Math.max(0, height - bottomGutter - topPad);
+
+  const layout = useMemo(() => {
+    if (candles.length === 0 || plotW <= 0 || plotH <= 0) return null;
+    let min = Infinity; let max = -Infinity;
+    for (const c of candles) { if (c.low < min) min = c.low; if (c.high > max) max = c.high; }
+    if (entryPrice != null) { min = Math.min(min, entryPrice); max = Math.max(max, entryPrice); }
+    if (takeProfitPrice != null) { min = Math.min(min, takeProfitPrice); max = Math.max(max, takeProfitPrice); }
+    if (stopLossPrice != null) { min = Math.min(min, stopLossPrice); max = Math.max(max, stopLossPrice); }
+    for (const series of [indicators?.sma, indicators?.ema, indicators?.vwap]) {
+      if (!series) continue;
+      for (const v of series) { if (v == null) continue; if (v < min) min = v; if (v > max) max = v; }
+    }
+    if (min === max) { min -= 1; max += 1; }
+    const padding = (max - min) * 0.08;
+    const rangeMin = min - padding;
+    const rangeMax = max + padding;
+    const range = rangeMax - rangeMin || 1;
+    const slot = plotW / candles.length;
+    const bodyW = Math.max(2, Math.min(12, slot * 0.62));
+    const yFor = (price: number) => topPad + ((rangeMax - price) / range) * plotH;
+    const xFor = (i: number) => i * slot + slot / 2;
+    const gridLines = 5;
+    const priceTicks = Array.from({ length: gridLines + 1 }, (_, i) => rangeMin + (range * i) / gridLines);
+    const timeStops = [0, Math.floor(candles.length / 4), Math.floor(candles.length / 2), Math.floor((candles.length * 3) / 4), candles.length - 1]
+      .filter((v, i, arr) => v >= 0 && arr.indexOf(v) === i);
+    return { rangeMin, rangeMax, range, slot, bodyW, yFor, xFor, priceTicks, timeStops };
+  }, [candles, plotW, plotH, entryPrice, takeProfitPrice, stopLossPrice, indicators]);
+
+  if (!layout) return null;
+  const { yFor, xFor, priceTicks, timeStops, bodyW } = layout;
+  const last = candles[candles.length - 1];
+  const lastBull = last.close >= last.open;
+  const lastColor = lastBull ? '#7AE2AA' : '#FB7185';
+
+  const formatPrice = (p: number) => p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const formatClock = (ms: number) => {
+    const d = new Date(ms);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+
+  const overlayPoints = (series: (number | null)[] | undefined) => {
+    if (!series) return null;
+    const pts: string[] = [];
+    for (let i = 0; i < series.length && i < candles.length; i++) {
+      const v = series[i];
+      if (v == null) continue;
+      pts.push(`${xFor(i)},${yFor(v)}`);
+    }
+    return pts.length >= 2 ? pts.join(' ') : null;
+  };
+  const smaPoints = overlayPoints(indicators?.sma);
+  const vwapPoints = overlayPoints(indicators?.vwap);
+
+  const rsiY = (v: number) => RSI_PANEL_HEIGHT - (Math.max(0, Math.min(100, v)) / 100) * RSI_PANEL_HEIGHT;
+  const rsiPoints = (() => {
+    if (!rsi) return null;
+    const pts: string[] = [];
+    for (let i = 0; i < rsi.length && i < candles.length; i++) {
+      const v = rsi[i];
+      if (v == null) continue;
+      pts.push(`${xFor(i)},${rsiY(v)}`);
+    }
+    return pts.length >= 2 ? pts.join(' ') : null;
+  })();
+
+  const bracketLine = (price: number, label: string, color: string) => (
+    <g key={label}>
+      <line x1={0} y1={yFor(price)} x2={plotW} y2={yFor(price)} stroke={color} strokeWidth={1} strokeDasharray="3 4" opacity={0.8} />
+      <rect x={4} y={yFor(price) - 8} width={26} height={16} rx={4} fill={color} opacity={0.9} />
+      <text x={17} y={yFor(price) + 4} fontSize={8} fontWeight={700} fill="#0B0714" textAnchor="middle">{label}</text>
+    </g>
+  );
+
+  return (
+    <div style={{ width }}>
+      <div style={{ width, height, borderRadius: 12, overflow: 'hidden', background: 'var(--background)', position: 'relative' }}>
+        <div style={{ position: 'absolute', top: 8, left: 10, zIndex: 1, display: 'flex', flexWrap: 'wrap', columnGap: 10, rowGap: 2 }}>
+          {symbol ? <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted-foreground)', marginRight: 2 }}>{symbol}</span> : null}
+          {([['O', last.open], ['H', last.high], ['L', last.low], ['C', last.close]] as const).map(([label, value]) => (
+            <span key={label} style={{ fontSize: 10, fontWeight: 600, color: label === 'C' ? lastColor : 'var(--muted-foreground)' }}>
+              {label} <span style={{ color: label === 'C' ? lastColor : 'var(--foreground)' }}>{formatPrice(value)}</span>
+            </span>
+          ))}
+        </div>
+        <svg width={width} height={height}>
+          {symbol ? (
+            <text x={plotW / 2} y={topPad + plotH / 2 + plotH * 0.09} fontSize={Math.min(plotW, plotH) * 0.42} fontWeight={700} fill="var(--border)" opacity={0.4} textAnchor="middle">
+              {symbol}
+            </text>
+          ) : null}
+          {timeStops.map((i) => (
+            <line key={`vgrid-${i}`} x1={xFor(i)} y1={topPad} x2={xFor(i)} y2={topPad + plotH} stroke="var(--border)" strokeWidth={1} opacity={0.35} />
+          ))}
+          {priceTicks.map((p, i) => {
+            const y = yFor(p);
+            return (
+              <g key={`grid-${i}`}>
+                <line x1={0} y1={y} x2={plotW} y2={y} stroke="var(--border)" strokeWidth={1} opacity={0.35} />
+                <text x={plotW + 8} y={y + 3} fontSize={9} fill="var(--muted-foreground)">{formatPrice(p)}</text>
+              </g>
+            );
+          })}
+          <line x1={plotW} y1={0} x2={plotW} y2={height - bottomGutter} stroke="var(--border)" strokeWidth={1} opacity={0.7} />
+          <line x1={0} y1={height - bottomGutter} x2={plotW} y2={height - bottomGutter} stroke="var(--border)" strokeWidth={1} opacity={0.7} />
+          {timeStops.map((i) => (
+            <text key={`time-${i}`} x={xFor(i)} y={height - 5} fontSize={9} fill="var(--muted-foreground)" textAnchor="middle">{formatClock(candles[i].time)}</text>
+          ))}
+          {candles.map((c, i) => {
+            const bull = c.close >= c.open;
+            const color = bull ? '#7AE2AA' : '#FB7185';
+            const cx = xFor(i);
+            const bodyTop = yFor(Math.max(c.open, c.close));
+            const bodyBottom = yFor(Math.min(c.open, c.close));
+            const bodyH = Math.max(1.5, bodyBottom - bodyTop);
+            return (
+              <g key={c.time}>
+                <line x1={cx} y1={yFor(c.high)} x2={cx} y2={yFor(c.low)} stroke={color} strokeWidth={1.4} strokeLinecap="round" />
+                <rect x={cx - bodyW / 2} y={bodyTop} width={bodyW} height={bodyH} fill={color} rx={1} />
+              </g>
+            );
+          })}
+          {vwapPoints ? <polyline points={vwapPoints} fill="none" stroke="#E2C25A" strokeWidth={1.6} opacity={0.85} /> : null}
+          {smaPoints ? <polyline points={smaPoints} fill="none" stroke="#60A5FA" strokeWidth={1.6} opacity={0.9} /> : null}
+          {entryPrice != null ? (
+            <g>
+              <line x1={0} y1={yFor(entryPrice)} x2={plotW} y2={yFor(entryPrice)} stroke={entrySide === 'short' ? '#FB7185' : '#7AE2AA'} strokeWidth={1} strokeDasharray="3 4" opacity={0.8} />
+              <rect x={4} y={yFor(entryPrice) - 8} width={38} height={16} rx={4} fill={entrySide === 'short' ? '#FB7185' : '#7AE2AA'} opacity={0.9} />
+              <text x={23} y={yFor(entryPrice) + 4} fontSize={8} fontWeight={700} fill="#0B0714" textAnchor="middle">ENTRY</text>
+            </g>
+          ) : null}
+          {takeProfitPrice != null ? bracketLine(takeProfitPrice, 'TP', '#7AE2AA') : null}
+          {stopLossPrice != null ? bracketLine(stopLossPrice, 'SL', '#FB7185') : null}
+          <line x1={0} y1={yFor(last.close)} x2={plotW} y2={yFor(last.close)} stroke="var(--primary)" strokeWidth={1} strokeDasharray="2 3" opacity={0.85} />
+          <rect x={plotW} y={yFor(last.close) - 9} width={axisGutter} height={18} rx={4} fill="var(--primary)" />
+          <text x={plotW + axisGutter / 2} y={yFor(last.close) + 4} fontSize={9} fontWeight={700} fill="var(--primary-foreground)" textAnchor="middle">{formatPrice(last.close)}</text>
+        </svg>
+      </div>
+      {showRsi ? (
+        <div style={{ width, height: RSI_PANEL_HEIGHT, marginTop: RSI_PANEL_GAP, borderRadius: 10, overflow: 'hidden', background: 'var(--background)' }}>
+          <svg width={width} height={RSI_PANEL_HEIGHT}>
+            {[30, 50, 70].map((level) => {
+              const y = rsiY(level);
+              return (
+                <g key={`rsi-grid-${level}`}>
+                  <line x1={0} y1={y} x2={plotW} y2={y} stroke="var(--border)" strokeWidth={1} opacity={level === 50 ? 0.35 : 0.55} strokeDasharray={level === 50 ? undefined : '3 3'} />
+                  <text x={plotW + 8} y={y + 3} fontSize={8} fill="var(--muted-foreground)">{level}</text>
+                </g>
+              );
+            })}
+            {rsiPoints ? <polyline points={rsiPoints} fill="none" stroke="#C084FC" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" /> : null}
+            <text x={6} y={11} fontSize={8} fontWeight={700} fill="var(--muted-foreground)">RSI (14)</text>
+          </svg>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ── Learning: Live Trading Simulator game ─────────────────────────────────────────
+// Companion lessons this game pairs with — chosen from web's own module
+// registry (mobile's Anatomy of an Evaluation is a funded-track lesson that
+// doesn't exist on web) so both links always resolve to a real module.
+const SIM_COMPANION_LESSON_IDS = ['contract-sizing-leverage', 'risk-and-psychology'];
+const SIM_MIN_WIDTH = 320;
+const SIM_MIN_HEIGHT = 160;
+const SIM_MAX_HEIGHT = 720;
+
+function pickMockTicker(): MockFuturesTicker { return MOCK_FUTURES_TICKERS[Math.floor(Math.random() * MOCK_FUTURES_TICKERS.length)]; }
+
+interface SimSessionSeed { ticker: MockFuturesTicker; startPrice: number; volatility: number; candles: SimCandle[] }
+function createSimSession(timeframe: SimTimeframe): SimSessionSeed {
+  const startPrice = randomSimStartPrice();
+  const volatility = volatilityForPrice(startPrice);
+  const config = SIM_TIMEFRAME_CONFIG[timeframe];
+  const candles = seedSimCandles(SIM_VISIBLE_CANDLES, startPrice, volatility * config.volatilityMultiplier, Date.now(), config.candleDurationMs);
+  return { ticker: pickMockTicker(), startPrice, volatility, candles };
+}
+
+function TradingSimulatorGame({
+  progress, setProgress, onOpenLesson,
+}: {
+  progress: LearningProgress;
+  setProgress: React.Dispatch<React.SetStateAction<LearningProgress>>;
+  onOpenLesson: (id: string) => void;
+}) {
+  const [timeframe, setTimeframe] = useState<SimTimeframe>('1m');
+  const [session, setSession] = useState<SimSessionSeed>(() => createSimSession('1m'));
+  const [candles, setCandles] = useState<SimCandle[]>(() => session.candles);
+  const [account, setAccount] = useState<SimAccountState>(() => blankSimAccount());
+  const [qty, setQty] = useState(1);
+  const [paused, setPaused] = useState(false);
+  const [status, setStatus] = useState<'live' | 'ended'>('live');
+  const [endedReason, setEndedReason] = useState<'breach' | 'manual'>('manual');
+  const [expanded, setExpanded] = useState(false);
+  const [customSize, setCustomSize] = useState<{ width: number; height: number } | null>(null);
+
+  const [instrument, setInstrument] = useState<SimInstrumentId>('MNQ');
+  const pointValue = SIM_INSTRUMENTS[instrument].pointValue;
+
+  const [tpOffset, setTpOffset] = useState(20);
+  const [slOffset, setSlOffset] = useState(10);
+  const [bracketMessage, setBracketMessage] = useState<string | null>(null);
+
+  const [maOn, setMaOn] = useState(false);
+  const [vwapOn, setVwapOn] = useState(false);
+  const [rsiOn, setRsiOn] = useState(false);
+
+  const [savedXp, setSavedXp] = useState(0);
+  const [saved, setSaved] = useState(false);
+
+  const ticksRef = useRef(0);
+  const peakEquityRef = useRef(SIM_STARTING_BALANCE);
+  const chartWrapRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(640);
+  const resizingRef = useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null);
+
+  // Auto-fit the chart to whatever width its column has — same idea as the
+  // mobile screen's onLayout measurement — unless the member has dragged a
+  // custom size, in which case we only clamp it down if the window shrinks.
+  useEffect(() => {
+    const el = chartWrapRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) setContainerWidth(Math.max(SIM_MIN_WIDTH, Math.floor(entry.contentRect.width)));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const defaultHeight = expanded ? 460 : 240;
+  const chartHeight = Math.max(SIM_MIN_HEIGHT, Math.min(SIM_MAX_HEIGHT, customSize?.height ?? defaultHeight));
+  const chartWidth = Math.max(SIM_MIN_WIDTH, Math.min(containerWidth, customSize?.width ?? containerWidth));
+
+  const onResizeStart = (e: React.PointerEvent) => {
+    e.preventDefault();
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    resizingRef.current = { startX: e.clientX, startY: e.clientY, startW: chartWidth, startH: chartHeight };
+  };
+  const onResizeMove = (e: React.PointerEvent) => {
+    if (!resizingRef.current) return;
+    const dx = e.clientX - resizingRef.current.startX;
+    const dy = e.clientY - resizingRef.current.startY;
+    const nextW = Math.max(SIM_MIN_WIDTH, Math.min(containerWidth, resizingRef.current.startW + dx));
+    const nextH = Math.max(SIM_MIN_HEIGHT, Math.min(SIM_MAX_HEIGHT, resizingRef.current.startH + dy));
+    setCustomSize({ width: nextW, height: nextH });
+  };
+  const onResizeEnd = (e: React.PointerEvent) => {
+    resizingRef.current = null;
+    try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* noop */ }
+  };
+  const resetChartSize = () => setCustomSize(null);
+
+  // Live ticking — re-paces itself the instant `timeframe` changes without
+  // resetting the account or chart history, so switching tabs visibly speeds
+  // up or slows down the exact same session.
+  useEffect(() => {
+    if (status !== 'live' || paused) return;
+    const config = SIM_TIMEFRAME_CONFIG[timeframe];
+    const interval = setInterval(() => {
+      setCandles((prev) => {
+        if (prev.length === 0) return prev;
+        const last = prev[prev.length - 1];
+        ticksRef.current += 1;
+        const tickVolatility = session.volatility * config.volatilityMultiplier;
+        if (ticksRef.current > config.ticksPerCandle) {
+          ticksRef.current = 1;
+          const opened = openSimCandle(last.close, last.time + config.candleDurationMs);
+          const ticked = tickSimCandle(opened, tickVolatility);
+          return [...prev.slice(1), ticked];
+        }
+        const ticked = tickSimCandle(last, tickVolatility);
+        return [...prev.slice(0, -1), ticked];
+      });
+    }, config.tickMs);
+    return () => clearInterval(interval);
+  }, [status, paused, timeframe, session.volatility]);
+
+  const lastCandle = candles[candles.length - 1];
+  const lastPrice = lastCandle ? lastCandle.close : session.startPrice;
+  const balance = simBalance(account);
+  const unrealized = simUnrealizedPnl(account, lastPrice, pointValue);
+  const equity = simEquity(account, lastPrice, pointValue);
+
+  useEffect(() => {
+    if (status !== 'live') return;
+    peakEquityRef.current = Math.max(peakEquityRef.current, equity);
+    if (isSimBreached(account, lastPrice, pointValue)) {
+      setStatus('ended');
+      setEndedReason('breach');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [equity, status]);
+
+  useEffect(() => {
+    if (status !== 'live' || !account.position) return;
+    const pos = account.position;
+    if (pos.takeProfit == null && pos.stopLoss == null) return;
+    const latest = candles[candles.length - 1];
+    if (!latest) return;
+    const hit = checkSimBracketHit(pos, latest);
+    if (!hit) return;
+    setAccount((prev) => closeSimPosition(prev, hit.price, Date.now(), pointValue));
+    setBracketMessage(hit.kind === 'takeProfit' ? `Take-profit filled at $${hit.price.toFixed(2)}` : `Stop-loss filled at $${hit.price.toFixed(2)}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candles]);
+
+  useEffect(() => {
+    if (!bracketMessage) return;
+    const t = setTimeout(() => setBracketMessage(null), 6000);
+    return () => clearTimeout(t);
+  }, [bracketMessage]);
+
+  const smaSeries = useMemo(() => (maOn ? computeSMA(candles, 20) : undefined), [maOn, candles]);
+  const vwapSeries = useMemo(() => (vwapOn ? computeSessionVwap(candles) : undefined), [vwapOn, candles]);
+  const rsiSeries = useMemo(() => (rsiOn ? computeRSI(candles, 14) : undefined), [rsiOn, candles]);
+
+  useEffect(() => {
+    if (status !== 'ended' || saved) return;
+    const grewPast = Math.max(0, peakEquityRef.current - SIM_STARTING_BALANCE);
+    const xpEarned = Math.max(20, 30 + Math.round(grewPast / 20) + (endedReason === 'manual' && equity >= SIM_STARTING_BALANCE ? 40 : 0));
+    setSavedXp(xpEarned);
+    setSaved(true);
+    setProgress((prev) => ({
+      ...prev,
+      xp: prev.xp + xpEarned,
+      completedModules: prev.completedModules.includes('trading-simulator') ? prev.completedModules : [...prev.completedModules, 'trading-simulator'],
+      liveSimGame: {
+        bestEquity: Math.max(prev.liveSimGame.bestEquity, peakEquityRef.current),
+        timesBreached: prev.liveSimGame.timesBreached + (endedReason === 'breach' ? 1 : 0),
+        plays: prev.liveSimGame.plays + 1,
+      },
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
+  const placeOrder = (side: SimSide) => {
+    if (status !== 'live') return;
+    setBracketMessage(null);
+    setAccount((prev) => placeSimMarketOrder(prev, side, qty, lastPrice, Date.now(), pointValue));
+  };
+  const handleClosePosition = () => {
+    if (status !== 'live' || !account.position) return;
+    setBracketMessage(null);
+    setAccount((prev) => closeSimPosition(prev, lastPrice, Date.now(), pointValue));
+  };
+  const applyBracket = () => {
+    const pos = account.position;
+    if (!pos) return;
+    const takeProfit = pos.side === 'long' ? pos.avgPrice + tpOffset : pos.avgPrice - tpOffset;
+    const stopLoss = pos.side === 'long' ? pos.avgPrice - slOffset : pos.avgPrice + slOffset;
+    setAccount((prev) => setSimBracket(prev, takeProfit, stopLoss));
+  };
+  const clearBracket = () => setAccount((prev) => setSimBracket(prev, null, null));
+  const endSessionManually = () => {
+    if (status !== 'live') return;
+    setStatus('ended');
+    setEndedReason('manual');
+  };
+  const resetSession = () => {
+    const next = createSimSession(timeframe);
+    setSession(next);
+    setCandles(next.candles);
+    setAccount(blankSimAccount());
+    setQty(1);
+    setStatus('live');
+    setEndedReason('manual');
+    setSaved(false);
+    setBracketMessage(null);
+    ticksRef.current = 0;
+    peakEquityRef.current = SIM_STARTING_BALANCE;
+  };
+  const adjustQty = (delta: number) => setQty((q) => Math.max(1, Math.min(50, q + delta)));
+
+  const companionLessons = SIM_COMPANION_LESSON_IDS.map((id) => LEARNING_MODULES.find((m) => m.id === id)).filter((m): m is LearningModule => !!m);
+
+  if (status === 'ended') {
+    const profitable = equity >= SIM_STARTING_BALANCE;
+    const manualBody = `You closed out at ${simMoney(equity)} equity, starting from ${simMoney(SIM_STARTING_BALANCE)}.`;
+    const outcome = endedReason === 'breach'
+      ? { Icon: AlertTriangle, color: '#FB7185', title: 'Max loss limit hit.', body: `Simulated equity hit ${simMoney(equity)}, at or below the $${SIM_MLL_FLOOR.toLocaleString()} floor. On a real evaluation, this ends the account immediately — no recovery, no second chance.` }
+      : profitable
+        ? { Icon: Trophy, color: '#7AE2AA', title: 'Session ended.', body: manualBody }
+        : { Icon: Flag, color: '#FDBA74', title: 'Session ended.', body: manualBody };
+    const OutcomeIcon = outcome.Icon;
+    return (
+      <div className="surface game-recap animate-in" data-testid="panel-simulator-recap">
+        <OutcomeIcon size={26} color={outcome.color} />
+        <h3>{outcome.title}</h3>
+        <p>{outcome.body}</p>
+        <div className="sim-recap-stats-row">
+          <div className="sim-recap-stat"><span className="tiny muted">FINAL EQUITY</span><strong>{simMoney(equity)}</strong></div>
+          <div className="sim-recap-stat"><span className="tiny muted">PEAK EQUITY</span><strong>{simMoney(peakEquityRef.current)}</strong></div>
+          <div className="sim-recap-stat"><span className="tiny muted">TRADES</span><strong>{account.trades.length}</strong></div>
+        </div>
+        <div className="status-pill status-active" style={{ marginTop: 6 }}><Zap size={11} /> +{savedXp} XP earned</div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+          <button className="button button-primary" onClick={resetSession} data-testid="button-restart-simulator"><RotateCcw size={13} /> Start new session</button>
+        </div>
+        <p className="muted tiny" style={{ marginTop: 16 }}>
+          Best equity ever: {simMoney(Math.max(progress.liveSimGame.bestEquity, peakEquityRef.current))} · {progress.liveSimGame.plays + 1} session(s) played
+        </p>
+      </div>
+    );
+  }
+
+  const position = account.position;
+
+  return (
+    <div className="sim-layout animate-in" data-testid="panel-trading-simulator">
+      <div className="sim-chart-column">
+        <div className="sim-badge surface-dark">
+          <FlaskConical size={13} />
+          <span>Live practice sim — every price is randomly generated in your browser. Not a real quote, a real fill, or a real funded account.</span>
+        </div>
+
+        {bracketMessage ? (
+          <div className="sim-bracket-banner surface-dark" data-testid="banner-bracket-message">
+            <Flag size={13} />
+            <span>{bracketMessage}</span>
+          </div>
+        ) : null}
+
+        <div className="surface sim-stats-card">
+          <div className="sim-stats-row">
+            <div className="sim-stat"><span className="eyebrow">BAL</span><strong>{simMoney(balance)}</strong></div>
+            <div className="sim-stat"><span className="eyebrow">MLL</span><strong>{simMoney(SIM_MLL_FLOOR)}</strong></div>
+            <div className="sim-stat"><span className="eyebrow">RP&amp;L</span><strong style={{ color: account.realizedPnl > 0 ? '#7AE2AA' : account.realizedPnl < 0 ? '#FB7185' : undefined }}>{simMoney(account.realizedPnl)}</strong></div>
+            <div className="sim-stat"><span className="eyebrow">UP&amp;L</span><strong style={{ color: unrealized > 0 ? '#7AE2AA' : unrealized < 0 ? '#FB7185' : undefined }}>{simMoney(unrealized)}</strong></div>
+          </div>
+        </div>
+
+        <div className="surface sim-chart-card">
+          <div className="sim-chart-head">
+            <div className="sim-ticker-badge"><span>{session.ticker.symbol}</span></div>
+            <div className="sim-ticker-info">
+              <strong>{session.ticker.name}</strong>
+              <span className="muted tiny">${lastPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <button className="icon-button sim-icon-button" onClick={() => setPaused((p) => !p)} aria-label={paused ? 'Resume' : 'Pause'} data-testid="button-pause-simulator">
+              {paused ? <Play size={16} /> : <Pause size={16} />}
+            </button>
+            <button className="icon-button sim-icon-button" onClick={resetSession} aria-label="Reset session" data-testid="button-reset-simulator">
+              <RotateCcw size={16} />
+            </button>
+            <button className="icon-button sim-icon-button" onClick={() => { setExpanded((e) => !e); setCustomSize(null); }} aria-label={expanded ? 'Collapse chart' : 'Expand chart'} data-testid="button-expand-simulator">
+              {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            </button>
+          </div>
+
+          <div className="sim-timeframe-row">
+            {SIM_TIMEFRAMES.map((tf) => (
+              <button key={tf} className={`sim-tab ${tf === timeframe ? 'sim-tab--active' : ''}`} onClick={() => setTimeframe(tf)} data-testid={`button-timeframe-${tf}`}>{tf}</button>
+            ))}
+          </div>
+
+          <div className="sim-instrument-row">
+            {SIM_INSTRUMENT_IDS.map((id) => {
+              const spec = SIM_INSTRUMENTS[id];
+              const active = id === instrument;
+              const locked = !!account.position && !active;
+              return (
+                <button
+                  key={id}
+                  disabled={locked}
+                  className={`sim-tab ${active ? 'sim-tab--active' : ''}`}
+                  style={locked ? { opacity: 0.4, cursor: 'default' } : undefined}
+                  onClick={() => setInstrument(id)}
+                  data-testid={`button-instrument-${id.toLowerCase()}`}
+                >
+                  {spec.symbol} · ${spec.pointValue}/pt
+                </button>
+              );
+            })}
+          </div>
+          <p className="muted tiny" style={{ margin: '6px 0 0' }}>
+            NQ's real CME multiplier is $20/point; MNQ is exactly 1/10th at $2/point — a 10-point move is {simMoney(10 * SIM_INSTRUMENTS.NQ.pointValue)} on NQ vs {simMoney(10 * SIM_INSTRUMENTS.MNQ.pointValue)} on MNQ.
+            {account.position ? ' Flatten your position to switch contracts.' : ''}
+          </p>
+
+          <div className="sim-indicator-row">
+            {([
+              { key: 'ma', label: 'MA(20)', active: maOn, toggle: () => setMaOn((v) => !v) },
+              { key: 'vwap', label: 'VWAP', active: vwapOn, toggle: () => setVwapOn((v) => !v) },
+              { key: 'rsi', label: 'RSI(14)', active: rsiOn, toggle: () => setRsiOn((v) => !v) },
+            ] as const).map((ind) => (
+              <button key={ind.key} className={`sim-tab sim-tab--small ${ind.active ? 'sim-tab--active' : ''}`} onClick={ind.toggle} data-testid={`button-indicator-${ind.key}`}>{ind.label}</button>
+            ))}
+          </div>
+
+          <div ref={chartWrapRef} className="sim-chart-wrap">
+            {chartWidth > 0 ? (
+              <LiveCandleChart
+                candles={candles}
+                width={chartWidth}
+                height={chartHeight}
+                entryPrice={position ? position.avgPrice : null}
+                entrySide={position ? position.side : null}
+                takeProfitPrice={position?.takeProfit ?? null}
+                stopLossPrice={position?.stopLoss ?? null}
+                indicators={{ sma: smaSeries, vwap: vwapSeries }}
+                rsi={rsiSeries}
+                symbol={session.ticker.symbol}
+              />
+            ) : null}
+            <div
+              className="sim-resize-handle"
+              onPointerDown={onResizeStart}
+              onPointerMove={onResizeMove}
+              onPointerUp={onResizeEnd}
+              role="separator"
+              aria-label="Drag to scale the chart"
+              data-testid="handle-resize-simulator-chart"
+            />
+          </div>
+          {customSize ? (
+            <button className="sim-reset-size-link" onClick={resetChartSize} data-testid="button-reset-chart-size">Reset chart size</button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="sim-order-column">
+        {companionLessons.map((lesson) => {
+          const Icon = lesson.icon;
+          return (
+            <div key={lesson.id} className="surface sim-lesson-card">
+              <div className="sim-lesson-head">
+                <div className="module-icon"><Icon size={18} /></div>
+                <div>
+                  <span className="eyebrow">Pairs with this module</span>
+                  <h3 style={{ margin: '2px 0 0', fontSize: 14 }}>{lesson.title}</h3>
+                </div>
+              </div>
+              <p className="muted tiny" style={{ margin: '10px 0 14px' }}>{lesson.tagline}</p>
+              <button className="button button-outline" style={{ width: '100%' }} onClick={() => onOpenLesson(lesson.id)} data-testid={`button-open-companion-${lesson.id}`}>
+                Continue lesson <ArrowRight size={13} />
+              </button>
+            </div>
+          );
+        })}
+
+        {position ? (
+          <div className="surface sim-position-card" data-testid="card-simulator-position">
+            <div className="sim-position-head">
+              <span className={`status-pill ${position.side === 'long' ? 'status-active' : 'status-stopped'}`}>{position.side === 'long' ? 'LONG' : 'SHORT'}</span>
+              <strong>{position.qty} @ {position.avgPrice.toFixed(2)}</strong>
+            </div>
+            <p style={{ fontWeight: 700, color: unrealized > 0 ? '#7AE2AA' : unrealized < 0 ? '#FB7185' : 'var(--foreground)', margin: '8px 0 12px' }}>
+              {unrealized >= 0 ? '+' : ''}{simMoney(unrealized)} unrealized
+            </p>
+            <button className="button button-outline" style={{ width: '100%' }} onClick={handleClosePosition} data-testid="button-close-position">
+              <X size={14} /> Close position
+            </button>
+
+            <div className="sim-bracket-section">
+              <span className="eyebrow">Take-profit / stop-loss</span>
+              {position.takeProfit != null || position.stopLoss != null ? (
+                <div className="sim-bracket-active-row">
+                  <span className="muted tiny">{position.takeProfit != null ? `TP $${position.takeProfit.toFixed(2)}` : 'TP off'} · {position.stopLoss != null ? `SL $${position.stopLoss.toFixed(2)}` : 'SL off'}</span>
+                  <button className="sim-clear-link" onClick={clearBracket} data-testid="button-clear-bracket">Clear</button>
+                </div>
+              ) : (
+                <>
+                  <div className="sim-bracket-row">
+                    <div className="sim-bracket-stepper-group">
+                      <span className="tiny muted">TP +{tpOffset}pt</span>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="sim-qty-stepper" onClick={() => setTpOffset((v) => Math.max(5, v - 5))} data-testid="button-tp-decrease"><Minus size={13} /></button>
+                        <button className="sim-qty-stepper" onClick={() => setTpOffset((v) => Math.min(300, v + 5))} data-testid="button-tp-increase"><Plus size={13} /></button>
+                      </div>
+                    </div>
+                    <div className="sim-bracket-stepper-group">
+                      <span className="tiny muted">SL -{slOffset}pt</span>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="sim-qty-stepper" onClick={() => setSlOffset((v) => Math.max(5, v - 5))} data-testid="button-sl-decrease"><Minus size={13} /></button>
+                        <button className="sim-qty-stepper" onClick={() => setSlOffset((v) => Math.min(300, v + 5))} data-testid="button-sl-increase"><Plus size={13} /></button>
+                      </div>
+                    </div>
+                  </div>
+                  <button className="button button-dark" style={{ width: '100%' }} onClick={applyBracket} data-testid="button-apply-bracket">Set TP/SL on this position</button>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="surface sim-order-card">
+          <span className="eyebrow">Market order</span>
+          <div className="sim-qty-row">
+            <button className="sim-qty-stepper" onClick={() => adjustQty(-1)} data-testid="button-qty-decrease"><Minus size={14} /></button>
+            {SIM_QTY_PRESETS.map((preset) => (
+              <button key={preset} className={`sim-qty-preset ${preset === qty ? 'sim-qty-preset--active' : ''}`} onClick={() => setQty(preset)} data-testid={`button-qty-${preset}`}>{preset}</button>
+            ))}
+            <button className="sim-qty-stepper" onClick={() => adjustQty(1)} data-testid="button-qty-increase"><Plus size={14} /></button>
+          </div>
+          <div className="sim-order-buttons">
+            <button className="sim-order-button sim-order-button--buy" onClick={() => placeOrder('long')} data-testid="button-buy-market">Buy +{qty} Market</button>
+            <button className="sim-order-button sim-order-button--sell" onClick={() => placeOrder('short')} data-testid="button-sell-market">Sell +{qty} Market</button>
+          </div>
+          <button className="sim-end-session-link" onClick={endSessionManually} data-testid="button-end-simulator-session">End session</button>
+        </div>
+      </div>
     </div>
   );
 }

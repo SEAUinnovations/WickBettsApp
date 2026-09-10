@@ -1,5 +1,6 @@
 import type { Ionicons } from '@expo/vector-icons';
 import type { DiagramKind } from '@/components/LessonDiagram';
+import { FOREX_LOTS, MNQ_SPEC, NQ_SPEC } from './contractSpecs';
 
 /**
  * Content + data model for the Learning tab (the academy). Ported from the
@@ -702,6 +703,32 @@ const bodyFundedPayouts: LessonBlock[] = [
   { type: 'scenario', title: 'Funded, then undone in a week', setup: 'A trader passes their evaluation and gets funded on a $50K account. In the excitement, they double their normal position size for the first week, reasoning the firm\'s capital is "not really their money" anyway.', whatHappened: "A string of three losing trades in one session — sized twice as large as the process that actually passed the evaluation — breaches the trailing drawdown four days after getting funded, before a single payout request was even eligible.", takeaway: "The exact process that passed the evaluation is the process that should run the funded account. Getting funded is not a signal to size up — the drawdown rules did not get more forgiving just because the account is now live." },
 ];
 
+const bodyContractSizingLeverage: LessonBlock[] = [
+  { type: 'p', text: 'Before position sizing means anything, you need to know what one unit of what you are trading is actually worth. A **contract** (futures) and a **lot** (forex) both answer that question — and picking the wrong size is one of the fastest ways to blow past a drawdown floor without meaning to.' },
+  { type: 'h3', text: 'Futures: one contract, a fixed multiplier' },
+  { type: 'p', text: "A futures contract's dollar value per point of movement — its **multiplier** — is fixed by the exchange (CME), not your broker. It never changes no matter which platform you trade it on." },
+  { type: 'definitions', items: [
+    { title: `${NQ_SPEC.symbol} — ${NQ_SPEC.name}`, text: `$${NQ_SPEC.pointValue} per index point, in ticks of ${NQ_SPEC.tickSize} points worth $${NQ_SPEC.tickValue} each. The "full-size" Nasdaq-100 contract.` },
+    { title: `${MNQ_SPEC.symbol} — ${MNQ_SPEC.name}`, text: `$${MNQ_SPEC.pointValue} per index point — exactly 1/10th of NQ. Same index, same ${MNQ_SPEC.tickSize}-point tick size, same everything else — only the dollar multiplier is scaled down.` },
+  ] },
+  { type: 'callout', label: 'The cost difference, in one number', text: `A 10-point move on the Nasdaq-100 is $${10 * NQ_SPEC.pointValue} of P&L on one NQ contract — and just $${10 * MNQ_SPEC.pointValue} on one MNQ contract. Same market, same 10-point move, 10x the dollar swing. That is the entire reason MNQ exists: to let a trader size a position in the same market with a much smaller dollar step per contract.` },
+  { type: 'diagram', kind: 'contract-leverage-compare', caption: 'One NQ contract vs. one MNQ contract, and the four forex lot sizes, drawn to relative scale.' },
+  { type: 'h3', text: 'Forex: lot size instead of contract count' },
+  { type: 'p', text: 'Forex has no exchange-fixed contract — instead, brokers quote a trade in **units** of the base currency, grouped into standard lot sizes. The bigger the lot, the more each pip of movement is worth.' },
+  { type: 'definitions', items: FOREX_LOTS.map((lot) => ({
+    title: `${lot.label} — ${lot.units.toLocaleString()} units`,
+    text: `Roughly $${lot.pipValue.toFixed(2)} per pip on a USD-quoted pair like EUR/USD. ${lot.id === 'standard' ? 'The full-size lot institutional-style accounts are often quoted in.' : lot.id === 'nano' ? 'The smallest step most retail brokers offer — built for practicing with real (if tiny) money on the line.' : 'A common size for retail accounts learning to size positions deliberately.'}`,
+  })) },
+  { type: 'h3', text: 'Leverage — what it actually means' },
+  { type: 'callout', label: 'The formula', text: 'Leverage = (notional value you control) ÷ (capital required to control it). It is a ratio, not a dollar amount — it tells you how much market exposure one dollar of your own capital is controlling.' },
+  { type: 'p', text: `Worked example, using a hypothetical Nasdaq-100 level of 20,000 (not a live quote): one NQ contract would control 20,000 × $${NQ_SPEC.pointValue} = $${(20000 * NQ_SPEC.pointValue).toLocaleString()} of notional exposure. One MNQ contract controls 20,000 × $${MNQ_SPEC.pointValue} = $${(20000 * MNQ_SPEC.pointValue).toLocaleString()} — exactly 1/10th, matching the 1/10th margin a broker would typically require for it.` },
+  { type: 'note', text: "Because both the notional exposure and the required margin scale by the same 10x between NQ and MNQ, the **leverage ratio itself is identical** on both — roughly 20-to-1 in this example, whichever one you pick. Contract size changes your dollar risk per point; it does not, by itself, change how leveraged you are." },
+  { type: 'p', text: 'Forex leverage works the same way but the ratio offered varies far more — commonly capped around 30-to-1 to 50-to-1 for major pairs at regulated U.S./E.U./U.K. brokers, and often much higher at offshore brokers. Higher available leverage is not a recommendation to use all of it — it only changes how little of your own capital a large position requires, not how much risk that position carries.' },
+  { type: 'h3', text: 'See it live' },
+  { type: 'p', text: 'The Live Trading Simulator below lets you flip between an NQ-sized and MNQ-sized position on the exact same chart and watch the balance/P&L numbers move at 10x different speeds for the same price action — the fastest way to make this concept feel real instead of theoretical.' },
+  { type: 'scenario', title: 'Sizing an MNQ habit onto NQ', setup: 'A trader spends weeks building a comfortable, well-sized habit trading 5 MNQ contracts per trade on a funded evaluation with a $2,000 max drawdown.', whatHappened: 'They switch to NQ for "better fills" and keep the same "5 contracts" habit out of muscle memory — instantly trading a position 10x their intended dollar risk. A normal, expected pullback that would have cost $150 on 5 MNQ costs $1,500 on 5 NQ, most of the entire drawdown cushion in one trade.', takeaway: 'Position size in "number of contracts" is meaningless on its own — it only means something next to that contract\'s dollar multiplier. Changing instruments without re-doing the size math is one of the fastest ways to accidentally 10x your risk.' },
+];
+
 const bodyFundedRiskManagement: LessonBlock[] = [
   { type: 'p', text: 'On a funded account, risk management is not a best practice — it is the literal rulebook. One breach of a drawdown floor ends the account permanently, with no recovery and no second chance intraday. Every idea from Module 7 applies here, just with a hard, mechanical enforcement mechanism attached to it.' },
   { type: 'definitions', items: [
@@ -806,6 +833,7 @@ export const LEARNING_MODULES: LearningModule[] = [
   { id: 'evaluation-anatomy', level: 'Advanced', kind: 'lesson', title: 'Anatomy of an Evaluation', tagline: 'Profit targets, trailing vs. EOD drawdowns, consistency rules — every piece explained.', minutes: 9, xp: 70, icon: 'analytics-outline', specialization: 'funded', body: bodyEvaluationAnatomy },
   { id: 'top-firms-compared', level: 'Advanced', kind: 'lesson', title: 'Top Firms Compared', tagline: 'Topstep, Lucid Trading Co, and MyFundedFutures — rules and payouts side by side.', minutes: 9, xp: 70, icon: 'git-compare-outline', specialization: 'funded', body: bodyTopFirmsCompared },
   { id: 'funded-payouts', level: 'Advanced', kind: 'lesson', title: 'Payouts & Getting Paid', tagline: 'Profit splits, payout minimums, and the habit that decides whether you ever see one.', minutes: 7, xp: 60, icon: 'cash-outline', specialization: 'funded', body: bodyFundedPayouts },
+  { id: 'contract-sizing-leverage', level: 'Advanced', kind: 'lesson', title: 'Contracts, Lot Sizes & Leverage', tagline: 'NQ vs MNQ, forex lot sizes, and what leverage actually means — with a live cost comparison in the simulator.', minutes: 9, xp: 70, icon: 'git-compare-outline', specialization: 'funded', body: bodyContractSizingLeverage },
   { id: 'funded-risk-management', level: 'Expert', kind: 'lesson', title: 'Risk Management for Funded Traders', tagline: 'The rulebook has teeth now — a practical position-sizing framework for a live evaluation.', minutes: 10, xp: 80, icon: 'shield-checkmark-outline', specialization: 'funded', body: bodyFundedRiskManagement },
   { id: 'trading-through-history', level: 'Expert', kind: 'lesson', title: 'A Short History of Trading', tagline: 'From Amsterdam warehouses to algorithms — how markets got here.', minutes: 8, xp: 70, icon: 'hourglass-outline', body: bodyTradingThroughHistory, videos: [
     { title: 'The Hidden History Behind the New York Stock Exchange', url: 'https://www.youtube.com/shorts/2_KM19rvW94', duration: '1:35' },

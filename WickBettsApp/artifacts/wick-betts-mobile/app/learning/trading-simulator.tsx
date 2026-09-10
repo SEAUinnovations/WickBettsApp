@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -8,9 +8,11 @@ import { BrokerLinksCard } from '@/components/BrokerLinksCard';
 import { LiveCandleChart } from '@/components/LiveCandleChart';
 import { useColors } from '@/hooks/useColors';
 import { useAuth } from '@/context/AuthContext';
-import { LEARNING_MODULES, MOCK_FUTURES_TICKERS, type MockTicker } from '@/lib/learningData';
+import { LEARNING_MODULES, MOCK_FUTURES_TICKERS, type LearningModule, type MockTicker } from '@/lib/learningData';
 import { loadLearningProgress, saveLearningProgress, type LearningProgress } from '@/lib/learningStorage';
 import {
+  SIM_INSTRUMENTS,
+  SIM_INSTRUMENT_IDS,
   SIM_MLL_FLOOR,
   SIM_QTY_PRESETS,
   SIM_STARTING_BALANCE,
@@ -18,12 +20,17 @@ import {
   SIM_TIMEFRAME_CONFIG,
   SIM_VISIBLE_CANDLES,
   blankSimAccount,
+  checkSimBracketHit,
   closeSimPosition,
+  computeRSI,
+  computeSMA,
+  computeSessionVwap,
   isSimBreached,
   openSimCandle,
   placeSimMarketOrder,
   randomSimStartPrice,
   seedSimCandles,
+  setSimBracket,
   simBalance,
   simEquity,
   simUnrealizedPnl,
@@ -31,6 +38,7 @@ import {
   volatilityForPrice,
   type SimAccountState,
   type SimCandle,
+  type SimInstrumentId,
   type SimSide,
   type SimTimeframe,
 } from '@/lib/liveSimEngine';
@@ -38,10 +46,11 @@ import {
 type Status = 'live' | 'ended';
 type EndedReason = 'breach' | 'manual';
 
-// The lesson this module pairs with — profit targets, drawdown mechanics,
-// and consistency rules are exactly what a member is watching play out
-// live on the chart above the order ticket.
-const COMPANION_LESSON_ID = 'evaluation-anatomy';
+// The two lessons this module pairs with — profit targets/drawdown
+// mechanics from Anatomy of an Evaluation, and the contract-sizing/leverage
+// math from Contracts, Lot Sizes & Leverage — are exactly what a member is
+// watching play out live on the chart above the order ticket.
+const COMPANION_LESSON_IDS = ['evaluation-anatomy', 'contract-sizing-leverage'];
 
 const money = (n: number) => `${n < 0 ? '-' : ''}$${Math.abs(Math.round(n)).toLocaleString()}`;
 
@@ -89,6 +98,33 @@ export default function TradingSimulatorScreen() {
   // (TradingView's own "expand chart" behavior) — the order ticket drops
   // below instead of sitting beside it while this is on.
   const [expanded, setExpanded] = useState(false);
+  // A drag handle on the chart panel's corner lets the member continuously
+  // scale it beyond the expand/collapse preset — same "scale the chart"
+  // control the web app's simulator has. Width is still capped to the
+  // panel's own measured container width so it never overflows the layout.
+  const [customChartSize, setCustomChartSize] = useState<{ width: number; height: number } | null>(null);
+  const chartResizeStart = useRef<{ width: number; height: number } | null>(null);
+
+  // Which real futures contract the sim's dollar math is based on — MNQ by
+  // default (smaller, beginner-friendly size). The multiplier ($20 vs $2 per
+  // point) is the real CME contract spec; the chart's price itself is still
+  // a random walk, not a live index quote — same "not real data" rule the
+  // rest of the sim already follows.
+  const [instrument, setInstrument] = useState<SimInstrumentId>('MNQ');
+  const pointValue = SIM_INSTRUMENTS[instrument].pointValue;
+
+  // Take-profit / stop-loss bracket, expressed as a point offset from entry
+  // (converted to an actual price when applied) — and a brief banner shown
+  // after one auto-fills.
+  const [tpOffset, setTpOffset] = useState(20);
+  const [slOffset, setSlOffset] = useState(10);
+  const [bracketMessage, setBracketMessage] = useState<string | null>(null);
+
+  // Indicator overlay toggles — off by default so a first-time member sees
+  // a clean chart, same as a real platform.
+  const [maOn, setMaOn] = useState(false);
+  const [vwapOn, setVwapOn] = useState(false);
+  const [rsiOn, setRsiOn] = useState(false);
 
   const [prevProgress, setPrevProgress] = useState<LearningProgress | null>(null);
   const [savedXp, setSavedXp] = useState(0);
@@ -140,21 +176,57 @@ export default function TradingSimulatorScreen() {
   const lastCandle = candles[candles.length - 1];
   const lastPrice = lastCandle ? lastCandle.close : session.startPrice;
   const balance = simBalance(account);
-  const unrealized = simUnrealizedPnl(account, lastPrice);
-  const equity = simEquity(account, lastPrice);
+  const unrealized = simUnrealizedPnl(account, lastPrice, pointValue);
+  const equity = simEquity(account, lastPrice, pointValue);
 
   // Track this run's peak equity for the recap, and flip to 'ended' the
   // instant simulated equity touches the max-loss floor.
   useEffect(() => {
     if (status !== 'live') return;
     peakEquityRef.current = Math.max(peakEquityRef.current, equity);
-    if (isSimBreached(account, lastPrice)) {
+    if (isSimBreached(account, lastPrice, pointValue)) {
       setStatus('ended');
       setEndedReason('breach');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [equity, status]);
+
+  // Bracket watcher — every time the forming (or freshly-closed) candle
+  // updates, checks its high/low range against the open position's TP/SL.
+  // Uses the range rather than just the close so a level is caught the
+  // instant price touches it, the way a resting order would fill.
+  useEffect(() => {
+    if (status !== 'live' || !account.position) return;
+    const pos = account.position;
+    if (pos.takeProfit == null && pos.stopLoss == null) return;
+    const latest = candles[candles.length - 1];
+    if (!latest) return;
+    const hit = checkSimBracketHit(pos, latest);
+    if (!hit) return;
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setAccount((prev) => closeSimPosition(prev, hit.price, Date.now(), pointValue));
+    setBracketMessage(
+      hit.kind === 'takeProfit'
+        ? `Take-profit filled at $${hit.price.toFixed(2)}`
+        : `Stop-loss filled at $${hit.price.toFixed(2)}`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candles]);
+
+  useEffect(() => {
+    if (!bracketMessage) return;
+    const t = setTimeout(() => setBracketMessage(null), 6000);
+    return () => clearTimeout(t);
+  }, [bracketMessage]);
+
+  // Indicator overlays — recomputed only while their toggle is on, straight
+  // from the pure functions in liveSimEngine.ts. A 20-period MA/RSI fits the
+  // 44-candle visible window better than the 50/200 lengths the Indicators
+  // 101 lesson uses for a full daily chart.
+  const smaSeries = useMemo(() => (maOn ? computeSMA(candles, 20) : undefined), [maOn, candles]);
+  const vwapSeries = useMemo(() => (vwapOn ? computeSessionVwap(candles) : undefined), [vwapOn, candles]);
+  const rsiSeries = useMemo(() => (rsiOn ? computeRSI(candles, 14) : undefined), [rsiOn, candles]);
 
   useEffect(() => {
     if (status !== 'ended' || saved) return;
@@ -186,13 +258,29 @@ export default function TradingSimulatorScreen() {
   const placeOrder = (side: SimSide) => {
     if (status !== 'live') return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setAccount((prev) => placeSimMarketOrder(prev, side, qty, lastPrice, Date.now()));
+    setBracketMessage(null);
+    setAccount((prev) => placeSimMarketOrder(prev, side, qty, lastPrice, Date.now(), pointValue));
   };
 
   const handleClosePosition = () => {
     if (status !== 'live' || !account.position) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setAccount((prev) => closeSimPosition(prev, lastPrice, Date.now()));
+    setBracketMessage(null);
+    setAccount((prev) => closeSimPosition(prev, lastPrice, Date.now(), pointValue));
+  };
+
+  const applyBracket = () => {
+    const pos = account.position;
+    if (!pos) return;
+    void Haptics.selectionAsync();
+    const takeProfit = pos.side === 'long' ? pos.avgPrice + tpOffset : pos.avgPrice - tpOffset;
+    const stopLoss = pos.side === 'long' ? pos.avgPrice - slOffset : pos.avgPrice + slOffset;
+    setAccount((prev) => setSimBracket(prev, takeProfit, stopLoss));
+  };
+
+  const clearBracket = () => {
+    void Haptics.selectionAsync();
+    setAccount((prev) => setSimBracket(prev, null, null));
   };
 
   const endSessionManually = () => {
@@ -212,6 +300,7 @@ export default function TradingSimulatorScreen() {
     setStatus('live');
     setEndedReason('manual');
     setSaved(false);
+    setBracketMessage(null);
     ticksRef.current = 0;
     peakEquityRef.current = SIM_STARTING_BALANCE;
   };
@@ -221,7 +310,9 @@ export default function TradingSimulatorScreen() {
     setQty((q) => Math.max(1, Math.min(50, q + delta)));
   };
 
-  const companionLesson = LEARNING_MODULES.find((m) => m.id === COMPANION_LESSON_ID);
+  const companionLessons = COMPANION_LESSON_IDS.map((id) => LEARNING_MODULES.find((m) => m.id === id)).filter(
+    (m): m is LearningModule => !!m,
+  );
 
   const backRow = (
     <View style={styles.backRow}>
@@ -285,8 +376,45 @@ export default function TradingSimulatorScreen() {
   const posBg = position ? (position.side === 'long' ? '#11271E' : '#2B1418') : colors.secondary;
 
   // Expanded mode takes the full row width (on wide layouts) and a much
-  // taller panel, mirroring TradingView's own "expand chart" control.
+  // taller panel, mirroring TradingView's own "expand chart" control. A
+  // manual drag (customChartSize) overrides this preset until reset.
   const chartHeight = expanded ? (isWide ? 520 : 400) : 240;
+  const CHART_MIN_WIDTH = 220;
+  const CHART_MIN_HEIGHT = 160;
+  const CHART_MAX_HEIGHT = 720;
+  const displayChartWidth = Math.max(CHART_MIN_WIDTH, Math.min(chartWidth || CHART_MIN_WIDTH, customChartSize?.width ?? chartWidth));
+  const displayChartHeight = Math.max(CHART_MIN_HEIGHT, Math.min(CHART_MAX_HEIGHT, customChartSize?.height ?? chartHeight));
+
+  // Refs mirror the latest measured/derived sizes so the PanResponder's
+  // long-lived closures (created once via useRef) always read current
+  // values instead of the ones from whichever render first mounted them.
+  const chartWidthRef = useRef(chartWidth);
+  chartWidthRef.current = chartWidth;
+  const chartSizeRef = useRef({ width: displayChartWidth, height: displayChartHeight });
+  chartSizeRef.current = { width: displayChartWidth, height: displayChartHeight };
+
+  const chartPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_evt, gesture) => Math.abs(gesture.dx) > 2 || Math.abs(gesture.dy) > 2,
+      onPanResponderGrant: () => {
+        chartResizeStart.current = chartSizeRef.current;
+      },
+      onPanResponderMove: (_evt, gesture) => {
+        if (!chartResizeStart.current) return;
+        const containerWidth = chartWidthRef.current || CHART_MIN_WIDTH;
+        const nextWidth = Math.max(CHART_MIN_WIDTH, Math.min(containerWidth, chartResizeStart.current.width + gesture.dx));
+        const nextHeight = Math.max(CHART_MIN_HEIGHT, Math.min(CHART_MAX_HEIGHT, chartResizeStart.current.height + gesture.dy));
+        setCustomChartSize({ width: nextWidth, height: nextHeight });
+      },
+      onPanResponderRelease: () => { chartResizeStart.current = null; },
+      onPanResponderTerminate: () => { chartResizeStart.current = null; },
+    }),
+  ).current;
+  const resetChartSize = () => {
+    void Haptics.selectionAsync();
+    setCustomChartSize(null);
+  };
 
   const chartColumn = (
     <View style={{ flex: isWide && !expanded ? 1.6 : undefined, gap: 14 }}>
@@ -296,6 +424,13 @@ export default function TradingSimulatorScreen() {
           Live practice sim — every price is randomly generated on-device. Not a real quote, a real fill, or a real funded account.
         </Text>
       </View>
+
+      {bracketMessage ? (
+        <View style={[styles.bracketBanner, { backgroundColor: colors.secondary, borderColor: colors.primary }]}>
+          <Ionicons name="flag-outline" size={12} color={colors.primary} />
+          <Text style={[styles.bracketBannerText, { color: colors.foreground }]}>{bracketMessage}</Text>
+        </View>
+      ) : null}
 
       <Card style={styles.statsCard}>
         <View style={styles.statsRow}>
@@ -337,6 +472,7 @@ export default function TradingSimulatorScreen() {
             onPress={() => {
               void Haptics.selectionAsync();
               setExpanded((e) => !e);
+              setCustomChartSize(null);
             }}
             style={[styles.iconToggle, { backgroundColor: colors.secondary, borderColor: colors.border, marginLeft: 8 }]}
             accessibilityRole="button"
@@ -369,26 +505,108 @@ export default function TradingSimulatorScreen() {
           })}
         </View>
 
+        <View style={styles.instrumentRow}>
+          {SIM_INSTRUMENT_IDS.map((id) => {
+            const spec = SIM_INSTRUMENTS[id];
+            const active = id === instrument;
+            // Locked while a position is open — the dollar math for an
+            // already-open trade is based on whichever contract was
+            // selected at fill time, so switching mid-trade would silently
+            // change what that position is worth. Flatten first, same as
+            // you would on a real platform's order ticket.
+            const locked = !!account.position && !active;
+            return (
+              <Pressable
+                key={id}
+                disabled={locked}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  setInstrument(id);
+                }}
+                style={[
+                  styles.instrumentTab,
+                  { borderColor: active ? colors.primary : colors.border },
+                  active && { backgroundColor: colors.secondary },
+                  locked && { opacity: 0.4 },
+                ]}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.instrumentTabText, { color: active ? colors.primary : colors.mutedForeground }]}>
+                  {spec.symbol} · ${spec.pointValue}/pt
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={[styles.instrumentHint, { color: colors.mutedForeground }]}>
+          NQ's real CME multiplier is $20/point; MNQ is exactly 1/10th at $2/point — a 10-point move is {money(10 * SIM_INSTRUMENTS.NQ.pointValue)} on NQ vs{' '}
+          {money(10 * SIM_INSTRUMENTS.MNQ.pointValue)} on MNQ. The multiplier is real; this chart's price is still a random walk, not a live index quote.
+          {account.position ? ' Flatten your position to switch contracts.' : ''}
+        </Text>
+
+        <View style={styles.indicatorRow}>
+          {(
+            [
+              { key: 'ma', label: 'MA(20)', active: maOn, toggle: () => setMaOn((v) => !v) },
+              { key: 'vwap', label: 'VWAP', active: vwapOn, toggle: () => setVwapOn((v) => !v) },
+              { key: 'rsi', label: 'RSI(14)', active: rsiOn, toggle: () => setRsiOn((v) => !v) },
+            ] as const
+          ).map((ind) => (
+            <Pressable
+              key={ind.key}
+              onPress={() => {
+                void Haptics.selectionAsync();
+                ind.toggle();
+              }}
+              style={[styles.indicatorTab, { borderColor: ind.active ? colors.primary : colors.border }, ind.active && { backgroundColor: colors.secondary }]}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.indicatorTabText, { color: ind.active ? colors.primary : colors.mutedForeground }]}>{ind.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+
         <View onLayout={(e) => setChartWidth(e.nativeEvent.layout.width)} style={{ marginTop: 6 }}>
           {chartWidth > 0 ? (
-            <LiveCandleChart
-              candles={candles}
-              width={chartWidth}
-              height={chartHeight}
-              entryPrice={position ? position.avgPrice : null}
-              entrySide={position ? position.side : null}
-              symbol={session.ticker.symbol}
-            />
+            <View style={{ width: displayChartWidth }}>
+              <LiveCandleChart
+                candles={candles}
+                width={displayChartWidth}
+                height={displayChartHeight}
+                entryPrice={position ? position.avgPrice : null}
+                entrySide={position ? position.side : null}
+                takeProfitPrice={position?.takeProfit ?? null}
+                stopLossPrice={position?.stopLoss ?? null}
+                indicators={{ sma: smaSeries, vwap: vwapSeries }}
+                rsi={rsiSeries}
+                symbol={session.ticker.symbol}
+              />
+              {/* Drag this corner to continuously scale the chart panel —
+                  the same "scale the chart" control the web app exposes. */}
+              <View
+                {...chartPanResponder.panHandlers}
+                style={[styles.chartResizeHandle, { borderColor: colors.border, backgroundColor: colors.secondary }]}
+                accessibilityRole="adjustable"
+                accessibilityLabel="Drag to scale the chart"
+              >
+                <Ionicons name="resize-outline" size={12} color={colors.mutedForeground} />
+              </View>
+            </View>
           ) : null}
         </View>
+        {customChartSize ? (
+          <Pressable onPress={resetChartSize} accessibilityRole="button" style={{ alignSelf: 'flex-start', marginTop: 8 }}>
+            <Text style={[styles.resetSizeText, { color: colors.primary }]}>Reset chart size</Text>
+          </Pressable>
+        ) : null}
       </Card>
     </View>
   );
 
   const orderColumn = (
     <View style={{ flex: isWide ? 1 : undefined, gap: 14 }}>
-      {companionLesson ? (
-        <Card>
+      {companionLessons.map((companionLesson) => (
+        <Card key={companionLesson.id}>
           <View style={styles.lessonHead}>
             <View style={[styles.lessonIcon, { backgroundColor: colors.secondary }]}>
               <Ionicons name={companionLesson.icon} size={18} color={colors.primary} />
@@ -408,7 +626,7 @@ export default function TradingSimulatorScreen() {
             <Ionicons name="arrow-forward" size={14} color={colors.foreground} />
           </Pressable>
         </Card>
-      ) : null}
+      ))}
 
       {position ? (
         <Card>
@@ -425,6 +643,50 @@ export default function TradingSimulatorScreen() {
             <Ionicons name="close-circle-outline" size={16} color={colors.foreground} />
             <Text style={[styles.closeButtonText, { color: colors.foreground }]}>Close position</Text>
           </Pressable>
+
+          <View style={styles.bracketSection}>
+            <Text style={[styles.orderLabel, { color: colors.mutedForeground, marginBottom: 8 }]}>TAKE-PROFIT / STOP-LOSS</Text>
+            {position.takeProfit != null || position.stopLoss != null ? (
+              <View style={styles.bracketActiveRow}>
+                <Text style={[styles.bracketActiveText, { color: colors.mutedForeground }]}>
+                  {position.takeProfit != null ? `TP $${position.takeProfit.toFixed(2)}` : 'TP off'} · {position.stopLoss != null ? `SL $${position.stopLoss.toFixed(2)}` : 'SL off'}
+                </Text>
+                <Pressable onPress={clearBracket} accessibilityRole="button" hitSlop={8}>
+                  <Text style={[styles.bracketClearText, { color: colors.primary }]}>Clear</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <>
+                <View style={styles.bracketRow}>
+                  <View style={styles.bracketStepperGroup}>
+                    <Text style={[styles.bracketStepperLabel, { color: colors.mutedForeground }]}>TP +{tpOffset}pt</Text>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      <Pressable onPress={() => setTpOffset((v) => Math.max(5, v - 5))} style={[styles.qtyStepper, { borderColor: colors.border }]} accessibilityRole="button">
+                        <Ionicons name="remove" size={14} color={colors.foreground} />
+                      </Pressable>
+                      <Pressable onPress={() => setTpOffset((v) => Math.min(300, v + 5))} style={[styles.qtyStepper, { borderColor: colors.border }]} accessibilityRole="button">
+                        <Ionicons name="add" size={14} color={colors.foreground} />
+                      </Pressable>
+                    </View>
+                  </View>
+                  <View style={styles.bracketStepperGroup}>
+                    <Text style={[styles.bracketStepperLabel, { color: colors.mutedForeground }]}>SL -{slOffset}pt</Text>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      <Pressable onPress={() => setSlOffset((v) => Math.max(5, v - 5))} style={[styles.qtyStepper, { borderColor: colors.border }]} accessibilityRole="button">
+                        <Ionicons name="remove" size={14} color={colors.foreground} />
+                      </Pressable>
+                      <Pressable onPress={() => setSlOffset((v) => Math.min(300, v + 5))} style={[styles.qtyStepper, { borderColor: colors.border }]} accessibilityRole="button">
+                        <Ionicons name="add" size={14} color={colors.foreground} />
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+                <Pressable onPress={applyBracket} style={[styles.bracketApplyButton, { backgroundColor: colors.secondary }]} accessibilityRole="button">
+                  <Text style={[styles.bracketApplyText, { color: colors.foreground }]}>Set TP/SL on this position</Text>
+                </Pressable>
+              </>
+            )}
+          </View>
         </Card>
       ) : null}
 
@@ -492,6 +754,11 @@ const styles = StyleSheet.create({
   statsCard: {},
   statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   chartCard: {},
+  chartResizeHandle: {
+    position: 'absolute', right: 2, bottom: 2, width: 22, height: 22, borderRadius: 6,
+    borderWidth: 1, alignItems: 'center', justifyContent: 'center', opacity: 0.85,
+  },
+  resetSizeText: { fontSize: 11, fontFamily: 'Inter_700Bold', textDecorationLine: 'underline' },
   chartHead: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   tickerBadge: { minWidth: 48, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
   tickerSymbol: { fontSize: 12, fontFamily: 'Inter_700Bold' },
@@ -501,6 +768,24 @@ const styles = StyleSheet.create({
   timeframeRow: { flexDirection: 'row', gap: 6, marginBottom: 4 },
   timeframeTab: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
   timeframeTabText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
+  instrumentRow: { flexDirection: 'row', gap: 6, marginTop: 10 },
+  instrumentTab: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
+  instrumentTabText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
+  instrumentHint: { fontSize: 10, lineHeight: 14, fontFamily: 'Inter_400Regular', marginTop: 6 },
+  indicatorRow: { flexDirection: 'row', gap: 6, marginTop: 10 },
+  indicatorTab: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
+  indicatorTabText: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  bracketBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9 },
+  bracketBannerText: { flex: 1, fontSize: 11, lineHeight: 15, fontFamily: 'Inter_600SemiBold' },
+  bracketSection: { marginTop: 14 },
+  bracketRow: { flexDirection: 'row', gap: 20, marginBottom: 12 },
+  bracketStepperGroup: { gap: 6 },
+  bracketStepperLabel: { fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  bracketApplyButton: { minHeight: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  bracketApplyText: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
+  bracketActiveRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  bracketActiveText: { fontSize: 11, fontFamily: 'Inter_500Medium', flex: 1 },
+  bracketClearText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
   lessonHead: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   lessonIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   lessonEyebrow: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1, marginBottom: 3 },

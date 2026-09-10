@@ -12,6 +12,8 @@
  * owning the simulation rules.
  */
 
+import { MNQ_SPEC, NQ_SPEC, type FuturesContractSpec } from './contractSpecs';
+
 export type SimTimeframe = '1m' | '5m' | '15m' | '30m' | '1h';
 export const SIM_TIMEFRAMES: SimTimeframe[] = ['1m', '5m', '15m', '30m', '1h'];
 
@@ -30,6 +32,18 @@ export interface SimPosition {
   side: SimSide;
   qty: number;
   avgPrice: number;
+  /**
+   * Optional bracket levels the member has set on this position. Checked
+   * against every forming candle's high/low (not just the latest close) —
+   * the first one crossed auto-closes the position at that trigger price,
+   * the same way a resting broker order would fill. Cleared automatically
+   * whenever the position is opened, added to, or flipped, since a bracket
+   * set for one size/avgPrice doesn't necessarily still make sense for the
+   * next one — the member re-sets it after any change, same as on a real
+   * platform after a fill changes the position.
+   */
+  takeProfit?: number | null;
+  stopLoss?: number | null;
 }
 
 export interface SimTradeLog {
@@ -62,11 +76,22 @@ export const SIM_MAX_LOSS = 2_000;
 export const SIM_MLL_FLOOR = SIM_STARTING_BALANCE - SIM_MAX_LOSS;
 
 // Abstracted dollars of P&L per 1.00 of price movement, per contract/unit —
-// not modeled on any single real instrument's actual multiplier, so the
-// numbers stay legible without implying a specific product.
+// the default used when no real instrument is selected. Kept for backward
+// compatibility with every P&L function below (all take an optional
+// `pointValue` override now).
 export const SIM_POINT_VALUE = 5;
 
 export const SIM_QTY_PRESETS = [1, 3, 5, 10, 15] as const;
+
+// Real, exchange-defined futures contracts the member can trade the sim
+// against — same NQ vs MNQ specs taught in the "Contracts, Lot Sizes &
+// Leverage" lesson (see lib/contractSpecs.ts), so picking one here uses the
+// real $20/point vs $2/point multiplier instead of the abstracted
+// SIM_POINT_VALUE, and the balance/P&L math on screen matches the lesson's
+// worked examples exactly.
+export type SimInstrumentId = 'NQ' | 'MNQ';
+export const SIM_INSTRUMENTS: Record<SimInstrumentId, FuturesContractSpec> = { NQ: NQ_SPEC, MNQ: MNQ_SPEC };
+export const SIM_INSTRUMENT_IDS: SimInstrumentId[] = ['NQ', 'MNQ'];
 
 // How many candles stay in the visible rolling window.
 export const SIM_VISIBLE_CANDLES = 44;
@@ -169,19 +194,19 @@ export function simBalance(account: SimAccountState): number {
   return account.startingBalance + account.realizedPnl;
 }
 
-export function simUnrealizedPnl(account: SimAccountState, price: number): number {
+export function simUnrealizedPnl(account: SimAccountState, price: number, pointValue: number = SIM_POINT_VALUE): number {
   if (!account.position) return 0;
   const diff = price - account.position.avgPrice;
   const signed = account.position.side === 'long' ? diff : -diff;
-  return signed * account.position.qty * SIM_POINT_VALUE;
+  return signed * account.position.qty * pointValue;
 }
 
-export function simEquity(account: SimAccountState, price: number): number {
-  return simBalance(account) + simUnrealizedPnl(account, price);
+export function simEquity(account: SimAccountState, price: number, pointValue: number = SIM_POINT_VALUE): number {
+  return simBalance(account) + simUnrealizedPnl(account, price, pointValue);
 }
 
-export function isSimBreached(account: SimAccountState, price: number): boolean {
-  return simEquity(account, price) <= SIM_MLL_FLOOR;
+export function isSimBreached(account: SimAccountState, price: number, pointValue: number = SIM_POINT_VALUE): boolean {
+  return simEquity(account, price, pointValue) <= SIM_MLL_FLOOR;
 }
 
 /**
@@ -194,7 +219,14 @@ export function isSimBreached(account: SimAccountState, price: number): boolean 
  *     (realizing its P&L) and flips into a fresh position with the leftover
  *     qty in the new direction, so one order can act like close-and-reverse.
  */
-export function placeSimMarketOrder(account: SimAccountState, side: SimSide, qty: number, price: number, time: number): SimAccountState {
+export function placeSimMarketOrder(
+  account: SimAccountState,
+  side: SimSide,
+  qty: number,
+  price: number,
+  time: number,
+  pointValue: number = SIM_POINT_VALUE,
+): SimAccountState {
   if (qty <= 0) return account;
   const pos = account.position;
 
@@ -220,7 +252,7 @@ export function placeSimMarketOrder(account: SimAccountState, side: SimSide, qty
   const closingQty = Math.min(qty, pos.qty);
   const diff = price - pos.avgPrice;
   const signed = pos.side === 'long' ? diff : -diff;
-  const realized = signed * closingQty * SIM_POINT_VALUE;
+  const realized = signed * closingQty * pointValue;
   const remainderQty = qty - closingQty;
   const leftoverPosQty = pos.qty - closingQty;
 
@@ -240,16 +272,124 @@ export function placeSimMarketOrder(account: SimAccountState, side: SimSide, qty
 }
 
 /** Flattens the current position entirely at the given price — the "Close Position" button, distinct from a market order that might only partially close or flip. */
-export function closeSimPosition(account: SimAccountState, price: number, time: number): SimAccountState {
+export function closeSimPosition(account: SimAccountState, price: number, time: number, pointValue: number = SIM_POINT_VALUE): SimAccountState {
   const pos = account.position;
   if (!pos) return account;
   const diff = price - pos.avgPrice;
   const signed = pos.side === 'long' ? diff : -diff;
-  const realized = signed * pos.qty * SIM_POINT_VALUE;
+  const realized = signed * pos.qty * pointValue;
   return {
     ...account,
     realizedPnl: account.realizedPnl + realized,
     position: null,
     trades: [...account.trades, { side: 'flat', qty: pos.qty, price, pnl: realized, time }],
   };
+}
+
+/** Sets or clears the take-profit / stop-loss trigger prices on the currently open position. Pass null for either to clear just that one. No-op if flat. */
+export function setSimBracket(account: SimAccountState, takeProfit: number | null, stopLoss: number | null): SimAccountState {
+  if (!account.position) return account;
+  return { ...account, position: { ...account.position, takeProfit, stopLoss } };
+}
+
+/**
+ * Checks whether a candle's high/low range crossed either of the position's
+ * bracket levels — using the full range rather than just the latest close,
+ * so a brief intra-candle spike through the level still triggers it, the
+ * way a real resting order would fill. Stop-loss is checked first on the
+ * rare candle that could plausibly touch both.
+ */
+export function checkSimBracketHit(position: SimPosition, candle: SimCandle): { kind: 'takeProfit' | 'stopLoss'; price: number } | null {
+  const { side, takeProfit, stopLoss } = position;
+  if (side === 'long') {
+    if (stopLoss != null && candle.low <= stopLoss) return { kind: 'stopLoss', price: stopLoss };
+    if (takeProfit != null && candle.high >= takeProfit) return { kind: 'takeProfit', price: takeProfit };
+  } else {
+    if (stopLoss != null && candle.high >= stopLoss) return { kind: 'stopLoss', price: stopLoss };
+    if (takeProfit != null && candle.low <= takeProfit) return { kind: 'takeProfit', price: takeProfit };
+  }
+  return null;
+}
+
+// ── Indicators ───────────────────────────────────────────────────────────
+// Pure functions over a candle array, each returning one value per candle
+// (null where there isn't enough history yet) so the chart can zip the
+// result directly against `candles` for an overlay — no React, same as
+// everything else in this file.
+
+/** Simple moving average of closes over `period` candles. */
+export function computeSMA(candles: SimCandle[], period: number): (number | null)[] {
+  const out: (number | null)[] = [];
+  let sum = 0;
+  for (let i = 0; i < candles.length; i++) {
+    sum += candles[i].close;
+    if (i >= period) sum -= candles[i - period].close;
+    out.push(i >= period - 1 ? sum / period : null);
+  }
+  return out;
+}
+
+/** Exponential moving average of closes, seeded with a simple average of the first `period` closes. */
+export function computeEMA(candles: SimCandle[], period: number): (number | null)[] {
+  const out: (number | null)[] = [];
+  const k = 2 / (period + 1);
+  let prevEma: number | null = null;
+  for (let i = 0; i < candles.length; i++) {
+    if (prevEma == null) {
+      if (i >= period - 1) {
+        const seedSlice = candles.slice(i - period + 1, i + 1);
+        prevEma = seedSlice.reduce((s, c) => s + c.close, 0) / period;
+        out.push(prevEma);
+      } else {
+        out.push(null);
+      }
+      continue;
+    }
+    prevEma = candles[i].close * k + prevEma * (1 - k);
+    out.push(prevEma);
+  }
+  return out;
+}
+
+/** Wilder's RSI — a 0-100 momentum oscillator over candle-to-candle changes. */
+export function computeRSI(candles: SimCandle[], period: number = 14): (number | null)[] {
+  const out: (number | null)[] = new Array(candles.length).fill(null);
+  if (candles.length < period + 1) return out;
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 1; i <= period; i++) {
+    const change = candles[i].close - candles[i - 1].close;
+    if (change >= 0) avgGain += change;
+    else avgLoss -= change;
+  }
+  avgGain /= period;
+  avgLoss /= period;
+  out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  for (let i = period + 1; i < candles.length; i++) {
+    const change = candles[i].close - candles[i - 1].close;
+    const gain = change > 0 ? change : 0;
+    const loss = change < 0 ? -change : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return out;
+}
+
+/**
+ * A simplified session VWAP: a running, equally-weighted average of each
+ * candle's typical price ((high + low + close) / 3). The simulator has no
+ * real volume series to weight by, so this is an approximation, not a
+ * genuine volume-weighted price — it still teaches the shape VWAP is known
+ * for: a steady line price stretches away from and tends to revert back to.
+ */
+export function computeSessionVwap(candles: SimCandle[]): (number | null)[] {
+  const out: (number | null)[] = [];
+  let sum = 0;
+  for (let i = 0; i < candles.length; i++) {
+    const typical = (candles[i].high + candles[i].low + candles[i].close) / 3;
+    sum += typical;
+    out.push(sum / (i + 1));
+  }
+  return out;
 }

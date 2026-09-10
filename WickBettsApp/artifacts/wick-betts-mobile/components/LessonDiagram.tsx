@@ -19,7 +19,8 @@ export type DiagramKind =
   | 'orb'
   | 'support-resistance-zone'
   | 'vwap-reversion'
-  | 'options-payoff';
+  | 'options-payoff'
+  | 'contract-leverage-compare';
 
 const GREEN = '#7AE2AA';
 const RED = '#FB7185';
@@ -55,6 +56,8 @@ export function LessonDiagram({ kind }: { kind: DiagramKind }) {
       return <VwapReversion />;
     case 'options-payoff':
       return <OptionsPayoff />;
+    case 'contract-leverage-compare':
+      return <ContractLeverageCompare />;
     default:
       return null;
   }
@@ -246,6 +249,53 @@ function VwapReversion() {
       <GridLabel x={130} y={26} color="#8A8299">STRETCHED</GridLabel>
       <Circle cx={222} cy={78} r={4.5} fill={GREEN} />
       <GridLabel x={222} y={94} anchor="middle" color={GREEN}>REVERTS TO VWAP</GridLabel>
+    </Svg>
+  );
+}
+
+// Side-by-side size comparison: on the left, one NQ contract next to one
+// MNQ contract — MNQ's bar is exactly 1/10th NQ's height, matching the real
+// $2 vs $20 per-point multiplier. On the right, the four forex lot sizes as
+// stepped bars (log-scaled so Nano is still visible next to Standard),
+// labeled with each one's approximate pip value. Purely a picture of the
+// same two comparisons the lesson's prose and worked examples walk through.
+function ContractLeverageCompare() {
+  const w = 300;
+  const h = 150;
+  const baseline = 130;
+
+  const nqTop = 30; // 100px tall bar
+  const mnqTop = 120; // 10px tall bar — exactly 1/10th
+
+  const lotUnits = [100_000, 10_000, 1_000, 100];
+  const lotLabels = ['STD', 'MINI', 'MICRO', 'NANO'];
+  const lotPipValues = ['$10', '$1', '$0.10', '$0.01'];
+  const lotX = [166, 194, 222, 250];
+  // log-scaled bar height so a 1000x unit range still reads as four visible bars.
+  const lotTop = lotUnits.map((u) => baseline - (10 + ((Math.log10(u) - 2) / 3) * 90));
+
+  return (
+    <Svg viewBox={`0 0 ${w} ${h}`} width={w} height={h}>
+      <GridLabel x={4} y={12} color="#8A8299">FUTURES · 1 CONTRACT EACH</GridLabel>
+      <Line x1={0} y1={baseline} x2={140} y2={baseline} stroke={GRID} strokeWidth={1.2} />
+      <Rect x={20} y={nqTop} width={30} height={baseline - nqTop} fill={BLUE} rx={2} />
+      <GridLabel x={35} y={nqTop - 6} anchor="middle" color={BLUE}>$20/pt</GridLabel>
+      <GridLabel x={35} y={142} anchor="middle" color="#8A8299">NQ</GridLabel>
+      <Rect x={70} y={mnqTop} width={30} height={baseline - mnqTop} fill={GOLD} rx={2} />
+      <GridLabel x={85} y={mnqTop - 6} anchor="middle" color={GOLD}>$2/pt</GridLabel>
+      <GridLabel x={85} y={142} anchor="middle" color="#8A8299">MNQ</GridLabel>
+
+      <Line x1={150} y1={10} x2={150} y2={140} stroke={GRID} strokeWidth={1} />
+
+      <GridLabel x={156} y={12} color="#8A8299">FOREX · LOT SIZE</GridLabel>
+      <Line x1={156} y1={baseline} x2={296} y2={baseline} stroke={GRID} strokeWidth={1.2} />
+      {lotUnits.map((_, i) => (
+        <React.Fragment key={lotLabels[i]}>
+          <Rect x={lotX[i]} y={lotTop[i]} width={18} height={baseline - lotTop[i]} fill={i === 0 ? GREEN : i === 1 ? BLUE : i === 2 ? GOLD : ORANGE} rx={2} />
+          <GridLabel x={lotX[i] + 9} y={lotTop[i] - 5} anchor="middle" color="#8A8299">{lotPipValues[i]}</GridLabel>
+          <GridLabel x={lotX[i] + 9} y={142} anchor="middle" color="#8A8299">{lotLabels[i]}</GridLabel>
+        </React.Fragment>
+      ))}
     </Svg>
   );
 }
