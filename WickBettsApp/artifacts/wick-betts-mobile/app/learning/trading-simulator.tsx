@@ -105,6 +105,52 @@ export default function TradingSimulatorScreen() {
   const [customChartSize, setCustomChartSize] = useState<{ width: number; height: number } | null>(null);
   const chartResizeStart = useRef<{ width: number; height: number } | null>(null);
 
+  // Expanded mode takes the full row width (on wide layouts) and a much
+  // taller panel, mirroring TradingView's own "expand chart" control. A
+  // manual drag (customChartSize) overrides this preset until reset. Kept
+  // (along with every hook below) unconditionally before the `status ===
+  // 'ended'` early return further down, so the same hooks fire on every
+  // render regardless of which branch that return takes — putting hook
+  // calls after a conditional return breaks React's hooks-order rule the
+  // instant the component crosses between the two branches.
+  const chartHeight = expanded ? (isWide ? 520 : 400) : 240;
+  const CHART_MIN_WIDTH = 220;
+  const CHART_MIN_HEIGHT = 160;
+  const CHART_MAX_HEIGHT = 720;
+  const displayChartWidth = Math.max(CHART_MIN_WIDTH, Math.min(chartWidth || CHART_MIN_WIDTH, customChartSize?.width ?? chartWidth));
+  const displayChartHeight = Math.max(CHART_MIN_HEIGHT, Math.min(CHART_MAX_HEIGHT, customChartSize?.height ?? chartHeight));
+
+  // Refs mirror the latest measured/derived sizes so the PanResponder's
+  // long-lived closures (created once via useRef) always read current
+  // values instead of the ones from whichever render first mounted them.
+  const chartWidthRef = useRef(chartWidth);
+  chartWidthRef.current = chartWidth;
+  const chartSizeRef = useRef({ width: displayChartWidth, height: displayChartHeight });
+  chartSizeRef.current = { width: displayChartWidth, height: displayChartHeight };
+
+  const chartPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_evt, gesture) => Math.abs(gesture.dx) > 2 || Math.abs(gesture.dy) > 2,
+      onPanResponderGrant: () => {
+        chartResizeStart.current = chartSizeRef.current;
+      },
+      onPanResponderMove: (_evt, gesture) => {
+        if (!chartResizeStart.current) return;
+        const containerWidth = chartWidthRef.current || CHART_MIN_WIDTH;
+        const nextWidth = Math.max(CHART_MIN_WIDTH, Math.min(containerWidth, chartResizeStart.current.width + gesture.dx));
+        const nextHeight = Math.max(CHART_MIN_HEIGHT, Math.min(CHART_MAX_HEIGHT, chartResizeStart.current.height + gesture.dy));
+        setCustomChartSize({ width: nextWidth, height: nextHeight });
+      },
+      onPanResponderRelease: () => { chartResizeStart.current = null; },
+      onPanResponderTerminate: () => { chartResizeStart.current = null; },
+    }),
+  ).current;
+  const resetChartSize = () => {
+    void Haptics.selectionAsync();
+    setCustomChartSize(null);
+  };
+
   // Which real futures contract the sim's dollar math is based on — MNQ by
   // default (smaller, beginner-friendly size). The multiplier ($20 vs $2 per
   // point) is the real CME contract spec; the chart's price itself is still
@@ -374,47 +420,6 @@ export default function TradingSimulatorScreen() {
   const position = account.position;
   const posColor = position ? (position.side === 'long' ? '#7AE2AA' : '#FB7185') : colors.foreground;
   const posBg = position ? (position.side === 'long' ? '#11271E' : '#2B1418') : colors.secondary;
-
-  // Expanded mode takes the full row width (on wide layouts) and a much
-  // taller panel, mirroring TradingView's own "expand chart" control. A
-  // manual drag (customChartSize) overrides this preset until reset.
-  const chartHeight = expanded ? (isWide ? 520 : 400) : 240;
-  const CHART_MIN_WIDTH = 220;
-  const CHART_MIN_HEIGHT = 160;
-  const CHART_MAX_HEIGHT = 720;
-  const displayChartWidth = Math.max(CHART_MIN_WIDTH, Math.min(chartWidth || CHART_MIN_WIDTH, customChartSize?.width ?? chartWidth));
-  const displayChartHeight = Math.max(CHART_MIN_HEIGHT, Math.min(CHART_MAX_HEIGHT, customChartSize?.height ?? chartHeight));
-
-  // Refs mirror the latest measured/derived sizes so the PanResponder's
-  // long-lived closures (created once via useRef) always read current
-  // values instead of the ones from whichever render first mounted them.
-  const chartWidthRef = useRef(chartWidth);
-  chartWidthRef.current = chartWidth;
-  const chartSizeRef = useRef({ width: displayChartWidth, height: displayChartHeight });
-  chartSizeRef.current = { width: displayChartWidth, height: displayChartHeight };
-
-  const chartPanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_evt, gesture) => Math.abs(gesture.dx) > 2 || Math.abs(gesture.dy) > 2,
-      onPanResponderGrant: () => {
-        chartResizeStart.current = chartSizeRef.current;
-      },
-      onPanResponderMove: (_evt, gesture) => {
-        if (!chartResizeStart.current) return;
-        const containerWidth = chartWidthRef.current || CHART_MIN_WIDTH;
-        const nextWidth = Math.max(CHART_MIN_WIDTH, Math.min(containerWidth, chartResizeStart.current.width + gesture.dx));
-        const nextHeight = Math.max(CHART_MIN_HEIGHT, Math.min(CHART_MAX_HEIGHT, chartResizeStart.current.height + gesture.dy));
-        setCustomChartSize({ width: nextWidth, height: nextHeight });
-      },
-      onPanResponderRelease: () => { chartResizeStart.current = null; },
-      onPanResponderTerminate: () => { chartResizeStart.current = null; },
-    }),
-  ).current;
-  const resetChartSize = () => {
-    void Haptics.selectionAsync();
-    setCustomChartSize(null);
-  };
 
   const chartColumn = (
     <View style={{ flex: isWide && !expanded ? 1.6 : undefined, gap: 14 }}>
