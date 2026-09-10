@@ -71,24 +71,37 @@ export const SIM_QTY_PRESETS = [1, 3, 5, 10, 15] as const;
 // How many candles stay in the visible rolling window.
 export const SIM_VISIBLE_CANDLES = 44;
 
-// Each timeframe has two independent notions of "time" that must not be
-// conflated:
+// Each timeframe has three independent notions of "time"/"scale" that must
+// not be conflated:
 //   - tickMs / ticksPerCandle: wall-clock pacing — how often a live tick
 //     nudges the forming candle, and how many ticks make up one candle
-//     before it closes and a new one opens. Slower timeframes take a bit
-//     longer per candle so switching tabs feels distinct, without actually
-//     making the member wait real minutes per candle.
+//     before it closes and a new one opens. These now spread out a lot more
+//     across timeframes than a single ~2-3s/candle band: 1m plays fast
+//     (~1.3s/candle) and 1h plays noticeably slower (~6s/candle), so tapping
+//     a different tab is immediately, visibly a different playback speed —
+//     without actually making the member wait real minutes per candle.
 //   - candleDurationMs: the simulated time-axis increment each candle
 //     represents — i.e. what the '1m'/'5m'/'15m'/'30m'/'1h' label actually
 //     means. This is what advances a candle's `time` field (via
 //     seedSimCandles' stepMs and openSimCandle's time argument), completely
 //     independent of how fast it's rendered ticking on screen.
-export const SIM_TIMEFRAME_CONFIG: Record<SimTimeframe, { tickMs: number; ticksPerCandle: number; candleDurationMs: number }> = {
-  '1m': { tickMs: 450, ticksPerCandle: 5, candleDurationMs: 60_000 },
-  '5m': { tickMs: 500, ticksPerCandle: 6, candleDurationMs: 5 * 60_000 },
-  '15m': { tickMs: 550, ticksPerCandle: 7, candleDurationMs: 15 * 60_000 },
-  '30m': { tickMs: 600, ticksPerCandle: 8, candleDurationMs: 30 * 60_000 },
-  '1h': { tickMs: 650, ticksPerCandle: 9, candleDurationMs: 60 * 60_000 },
+//   - volatilityMultiplier: how much bigger a single candle's range is on
+//     this timeframe, applied on top of the session's base per-tick
+//     volatility (see tickSimCandle). A real 1h bar compresses an hour's
+//     worth of movement into one candle, so it visibly dwarfs a 1m bar's
+//     range — this multiplier is a dampened power-law scaling of
+//     candleDurationMs (ratio^0.3, so 60x the duration is ~3.4x the range,
+//     not a literal 60x) that reproduces that look without candles
+//     occasionally rocketing off the visible chart.
+export const SIM_TIMEFRAME_CONFIG: Record<
+  SimTimeframe,
+  { tickMs: number; ticksPerCandle: number; candleDurationMs: number; volatilityMultiplier: number }
+> = {
+  '1m': { tickMs: 220, ticksPerCandle: 6, candleDurationMs: 60_000, volatilityMultiplier: 1 },
+  '5m': { tickMs: 260, ticksPerCandle: 7, candleDurationMs: 5 * 60_000, volatilityMultiplier: 1.62 },
+  '15m': { tickMs: 320, ticksPerCandle: 8, candleDurationMs: 15 * 60_000, volatilityMultiplier: 2.25 },
+  '30m': { tickMs: 420, ticksPerCandle: 9, candleDurationMs: 30 * 60_000, volatilityMultiplier: 2.77 },
+  '1h': { tickMs: 600, ticksPerCandle: 10, candleDurationMs: 60 * 60_000, volatilityMultiplier: 3.41 },
 };
 
 /** Box-Muller transform — a plain uniform random walk makes candle bodies look spiky and unnatural; this gives a bell curve of step sizes like a real (simulated) price series. */

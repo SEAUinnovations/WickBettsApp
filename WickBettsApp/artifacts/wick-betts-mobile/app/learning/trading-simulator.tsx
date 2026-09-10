@@ -59,7 +59,11 @@ interface SessionSeed {
 function createSession(timeframe: SimTimeframe): SessionSeed {
   const startPrice = randomSimStartPrice();
   const volatility = volatilityForPrice(startPrice);
-  const candles = seedSimCandles(SIM_VISIBLE_CANDLES, startPrice, volatility, Date.now(), SIM_TIMEFRAME_CONFIG[timeframe].candleDurationMs);
+  const config = SIM_TIMEFRAME_CONFIG[timeframe];
+  // Seed the initial window at this timeframe's own candle "size" (see
+  // volatilityMultiplier's doc comment in liveSimEngine.ts) so a session
+  // that starts on, say, 1h doesn't open with 1m-sized candle bodies.
+  const candles = seedSimCandles(SIM_VISIBLE_CANDLES, startPrice, volatility * config.volatilityMultiplier, Date.now(), config.candleDurationMs);
   return { ticker: pickTicker(), startPrice, volatility, candles };
 }
 
@@ -81,6 +85,10 @@ export default function TradingSimulatorScreen() {
   const [status, setStatus] = useState<Status>('live');
   const [endedReason, setEndedReason] = useState<EndedReason>('manual');
   const [chartWidth, setChartWidth] = useState(0);
+  // Maximizes the chart panel to the full row width and a much taller height
+  // (TradingView's own "expand chart" behavior) — the order ticket drops
+  // below instead of sitting beside it while this is on.
+  const [expanded, setExpanded] = useState(false);
 
   const [prevProgress, setPrevProgress] = useState<LearningProgress | null>(null);
   const [savedXp, setSavedXp] = useState(0);
@@ -111,13 +119,18 @@ export default function TradingSimulatorScreen() {
         if (prev.length === 0) return prev;
         const last = prev[prev.length - 1];
         ticksRef.current += 1;
+        // Scaling by the timeframe's volatilityMultiplier is what makes a 1h
+        // candle's range visibly dwarf a 1m candle's, same as a real chart —
+        // without it, every timeframe tab just relabeled the same-sized
+        // candles at a barely-different tick rate.
+        const tickVolatility = session.volatility * config.volatilityMultiplier;
         if (ticksRef.current > config.ticksPerCandle) {
           ticksRef.current = 1;
           const opened = openSimCandle(last.close, last.time + config.candleDurationMs);
-          const ticked = tickSimCandle(opened, session.volatility);
+          const ticked = tickSimCandle(opened, tickVolatility);
           return [...prev.slice(1), ticked];
         }
-        const ticked = tickSimCandle(last, session.volatility);
+        const ticked = tickSimCandle(last, tickVolatility);
         return [...prev.slice(0, -1), ticked];
       });
     }, config.tickMs);
@@ -271,8 +284,12 @@ export default function TradingSimulatorScreen() {
   const posColor = position ? (position.side === 'long' ? '#7AE2AA' : '#FB7185') : colors.foreground;
   const posBg = position ? (position.side === 'long' ? '#11271E' : '#2B1418') : colors.secondary;
 
+  // Expanded mode takes the full row width (on wide layouts) and a much
+  // taller panel, mirroring TradingView's own "expand chart" control.
+  const chartHeight = expanded ? (isWide ? 520 : 400) : 240;
+
   const chartColumn = (
-    <View style={{ flex: isWide ? 1.6 : undefined, gap: 14 }}>
+    <View style={{ flex: isWide && !expanded ? 1.6 : undefined, gap: 14 }}>
       <View style={[styles.simBadge, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
         <Ionicons name="flask-outline" size={12} color={colors.primary} />
         <Text style={[styles.simBadgeText, { color: colors.mutedForeground }]}>
@@ -316,6 +333,17 @@ export default function TradingSimulatorScreen() {
           >
             <Ionicons name="refresh-outline" size={18} color={colors.foreground} />
           </Pressable>
+          <Pressable
+            onPress={() => {
+              void Haptics.selectionAsync();
+              setExpanded((e) => !e);
+            }}
+            style={[styles.iconToggle, { backgroundColor: colors.secondary, borderColor: colors.border, marginLeft: 8 }]}
+            accessibilityRole="button"
+            accessibilityLabel={expanded ? 'Collapse chart' : 'Expand chart'}
+          >
+            <Ionicons name={expanded ? 'contract-outline' : 'expand-outline'} size={18} color={colors.foreground} />
+          </Pressable>
         </View>
 
         <View style={styles.timeframeRow}>
@@ -328,7 +356,11 @@ export default function TradingSimulatorScreen() {
                   void Haptics.selectionAsync();
                   setTimeframe(tf);
                 }}
-                style={[styles.timeframeTab, active && { backgroundColor: colors.secondary }]}
+                style={[
+                  styles.timeframeTab,
+                  { borderColor: active ? colors.primary : 'transparent' },
+                  active && { backgroundColor: colors.secondary },
+                ]}
                 accessibilityRole="button"
               >
                 <Text style={[styles.timeframeTabText, { color: active ? colors.primary : colors.mutedForeground }]}>{tf}</Text>
@@ -342,9 +374,10 @@ export default function TradingSimulatorScreen() {
             <LiveCandleChart
               candles={candles}
               width={chartWidth}
-              height={240}
+              height={chartHeight}
               entryPrice={position ? position.avgPrice : null}
               entrySide={position ? position.side : null}
+              symbol={session.ticker.symbol}
             />
           ) : null}
         </View>
@@ -441,7 +474,7 @@ export default function TradingSimulatorScreen() {
   return (
     <Screen contentStyle={styles.content}>
       {backRow}
-      <View style={{ flexDirection: isWide ? 'row' : 'column', gap: 14 }}>
+      <View style={{ flexDirection: isWide && !expanded ? 'row' : 'column', gap: 14 }}>
         {chartColumn}
         {orderColumn}
       </View>
@@ -466,7 +499,7 @@ const styles = StyleSheet.create({
   tickerPrice: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 },
   iconToggle: { width: 34, height: 34, borderRadius: 17, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   timeframeRow: { flexDirection: 'row', gap: 6, marginBottom: 4 },
-  timeframeTab: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  timeframeTab: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1 },
   timeframeTabText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
   lessonHead: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   lessonIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
