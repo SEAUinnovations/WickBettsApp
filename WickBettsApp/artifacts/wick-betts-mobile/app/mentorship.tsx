@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -25,6 +25,8 @@ export default function MentorshipScreen() {
   const { days, bookings, loading, booking, error, gateBlocked, requestBooking, cancelBooking } = useMentorship(true);
   const [selected, setSelected] = useState<{ day: string; date: string; slot: string } | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+  const [requestSuccess, setRequestSuccess] = useState<string | null>(null);
 
   // The server is the source of truth for access (403 MENTORSHIP_REQUIRED
   // unless the member has an active mentorship subscription, or is an
@@ -35,35 +37,37 @@ export default function MentorshipScreen() {
   const weeklyUsed = bookings.length;
   const weeklyLimit = 2;
 
+  // requestSuccess drives an inline banner rather than Alert.alert — this
+  // screen runs inside embeds (e.g. a sandboxed preview webview) where
+  // Alert.alert silently no-ops, so a request could go through with zero
+  // visible confirmation, making a working tap look broken.
   const request = async () => {
     if (!selected) return;
+    setRequestSuccess(null);
     const ok = await requestBooking(selected);
     if (ok) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setSelected(null);
-      Alert.alert('Request sent', "Your one-hour session request is awaiting confirmation. We'll email you as soon as it's confirmed.");
-    } else if (error) {
-      Alert.alert('Could not request session', error);
+      setRequestSuccess("Your one-hour session request is awaiting confirmation. We'll email you as soon as it's confirmed.");
     }
+    // On failure, `error` (from the hook) is already rendered inline below —
+    // no separate alert needed.
   };
 
+  // Same reasoning as the delete-button fix on the admin panel: window.confirm
+  // is silently blocked in the same sandboxed embed, so a "Cancel"/"Withdraw"
+  // tap could do nothing at all with no error shown. cancel() just opens an
+  // inline confirm row on the card instead of a browser/native dialog.
   const cancel = (item: MentorshipBooking) => {
-    const label = item.status === 'confirmed' ? 'Cancel this confirmed session?' : 'Withdraw this pending request?';
-    const run = async () => {
-      setCancellingId(item.id);
-      const ok = await cancelBooking(item.id);
-      setCancellingId(null);
-      if (ok) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      else if (error) Alert.alert('Could not cancel', error);
-    };
-    if (Platform.OS === 'web') {
-      if (window.confirm(label)) void run();
-      return;
-    }
-    Alert.alert(label, "This can't be undone.", [
-      { text: 'Keep it', style: 'cancel' },
-      { text: item.status === 'confirmed' ? 'Cancel session' : 'Withdraw request', style: 'destructive', onPress: () => void run() },
-    ]);
+    setConfirmCancelId(item.id);
+  };
+
+  const doCancel = async (item: MentorshipBooking) => {
+    setConfirmCancelId(null);
+    setCancellingId(item.id);
+    const ok = await cancelBooking(item.id);
+    setCancellingId(null);
+    if (ok) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
   const heroBackRow = (
@@ -147,22 +151,46 @@ export default function MentorshipScreen() {
                 <Text style={[styles.requestNote, { color: colors.mutedForeground }]}>
                   {isPending ? 'Awaiting admin confirmation — this time is held for you in the meantime.' : "You're on the calendar for this one."}
                 </Text>
-                <Pressable
-                  onPress={() => cancel(b)}
-                  disabled={cancellingId === b.id}
-                  style={[styles.cancelChip, { borderColor: colors.border }, cancellingId === b.id && { opacity: 0.5 }]}
-                  accessibilityRole="button"
-                  testID={`cancel-request-${b.id}`}
-                >
-                  {cancellingId === b.id ? (
-                    <ActivityIndicator size="small" color={colors.destructive} />
-                  ) : (
-                    <>
+                {confirmCancelId === b.id ? (
+                  <View style={styles.confirmRow}>
+                    <Pressable
+                      onPress={() => void doCancel(b)}
+                      style={[styles.cancelChip, { borderColor: colors.destructive }]}
+                      accessibilityRole="button"
+                      testID={`confirm-cancel-request-${b.id}`}
+                    >
                       <Ionicons name="close-circle" size={14} color={colors.destructive} />
-                      <Text style={[styles.cancelChipText, { color: colors.destructive }]}>{isPending ? 'Withdraw request' : 'Cancel session'}</Text>
-                    </>
-                  )}
-                </Pressable>
+                      <Text style={[styles.cancelChipText, { color: colors.destructive }]}>
+                        {isPending ? 'Confirm withdraw' : 'Confirm cancel'}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => setConfirmCancelId(null)}
+                      style={[styles.cancelChip, { borderColor: colors.border }]}
+                      accessibilityRole="button"
+                      testID={`keep-request-${b.id}`}
+                    >
+                      <Text style={[styles.cancelChipText, { color: colors.mutedForeground }]}>Keep it</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={() => cancel(b)}
+                    disabled={cancellingId === b.id}
+                    style={[styles.cancelChip, { borderColor: colors.border }, cancellingId === b.id && { opacity: 0.5 }]}
+                    accessibilityRole="button"
+                    testID={`cancel-request-${b.id}`}
+                  >
+                    {cancellingId === b.id ? (
+                      <ActivityIndicator size="small" color={colors.destructive} />
+                    ) : (
+                      <>
+                        <Ionicons name="close-circle" size={14} color={colors.destructive} />
+                        <Text style={[styles.cancelChipText, { color: colors.destructive }]}>{isPending ? 'Withdraw request' : 'Cancel session'}</Text>
+                      </>
+                    )}
+                  </Pressable>
+                )}
               </Card>
             );
           })}
@@ -215,6 +243,12 @@ export default function MentorshipScreen() {
           </PrimaryButton>
         </View>
       )}
+      {requestSuccess ? (
+        <View style={[styles.successBanner, { backgroundColor: colors.secondary, borderColor: colors.border }]}>
+          <Ionicons name="checkmark-circle" size={16} color={colors.primary} />
+          <Text style={[styles.successBannerText, { color: colors.foreground }]}>{requestSuccess}</Text>
+        </View>
+      ) : null}
       {error ? <Text style={[styles.footnote, { color: colors.destructive }]}>{error}</Text> : null}
       <Text style={[styles.footnote, { color: colors.mutedForeground }]}>Every request needs an admin's confirmation before it's an actual scheduled call. You can withdraw a pending request or cancel a confirmed one anytime above.</Text>
     </Screen>
@@ -247,6 +281,9 @@ const styles = StyleSheet.create({
   requestNote: { fontSize: 11, lineHeight: 16, fontFamily: 'Inter_400Regular', marginTop: 10 },
   cancelChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 8, alignSelf: 'flex-start', marginTop: 12 },
   cancelChipText: { fontSize: 11, fontFamily: 'Inter_700Bold' },
+  confirmRow: { flexDirection: 'row', gap: 8 },
+  successBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: 13, paddingHorizontal: 14, paddingVertical: 12, marginTop: 14 },
+  successBannerText: { flex: 1, fontSize: 12, lineHeight: 17, fontFamily: 'Inter_500Medium' },
   emptyCard: { alignItems: 'center', paddingVertical: 28, marginBottom: 14 },
   emptyTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', marginTop: 10 },
   emptyText: { fontSize: 11, lineHeight: 16, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 5, paddingHorizontal: 12 },
