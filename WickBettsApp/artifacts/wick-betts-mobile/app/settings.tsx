@@ -30,6 +30,13 @@ const STATUS_LABELS: Record<string, string> = {
 
 const ACTIVE_STATUSES = ['active', 'trialing'];
 
+// AI-agent signal feed (api-server routes/mcp.ts). Hidden unless the build
+// sets EXPO_PUBLIC_MCP_ENABLED=true — flip it together with the API's
+// MCP_ENABLED once the private beta is ready.
+const MCP_UI_ENABLED = process.env.EXPO_PUBLIC_MCP_ENABLED === 'true';
+const MCP_URL = process.env.EXPO_PUBLIC_MCP_URL || 'https://wickbetts.com/api/mcp';
+const AGENT_FEED_PLANS = ['signals', 'mentorship'];
+
 function formatRenewalDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -188,6 +195,24 @@ export default function SettingsScreen() {
         {error ? <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
       </Card>
 
+      {MCP_UI_ENABLED && isActive && subscription && AGENT_FEED_PLANS.includes(subscription.plan) ? (
+        <>
+          <SectionLabel>Connect your AI</SectionLabel>
+          <Card style={styles.card}>
+            <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
+              Add Wick signals to your own AI assistant. Paste this URL as a custom connector, then sign in with your Wick Betts account.
+            </Text>
+            <Text selectable style={[styles.mcpUrl, { color: colors.foreground, backgroundColor: colors.muted }]}>{MCP_URL}</Text>
+            <Text style={[styles.mcpStep, { color: colors.mutedForeground }]}>• Claude: Settings → Connectors → Add custom connector</Text>
+            <Text style={[styles.mcpStep, { color: colors.mutedForeground }]}>• ChatGPT: Settings → Apps & Connectors → Developer mode → Create</Text>
+            <Text style={[styles.mcpStep, { color: colors.mutedForeground }]}>• Cursor / Claude Code: add the URL to your MCP config</Text>
+            <Text style={[styles.subtitle, styles.mcpNote, { color: colors.mutedForeground }]}>
+              To trade, connect your broker's own agent tools (e.g. Robinhood Agentic) to the same assistant. Wick Betts is read-only: it never sees your brokerage account or places orders. Signals are general research, not personalized advice — you and your assistant decide what to do.
+            </Text>
+          </Card>
+        </>
+      ) : null}
+
       <SectionLabel>Billing</SectionLabel>
       <Card style={styles.card}>
         {subscription ? (
@@ -247,6 +272,9 @@ const styles = StyleSheet.create({
   noMargin: { marginBottom: 0, marginTop: 3 },
   billingHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14, gap: 10 },
   planName: { fontSize: 14, fontFamily: 'Inter_700Bold' },
+  mcpUrl: { fontSize: 13, fontFamily: 'Inter_600SemiBold', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12 },
+  mcpStep: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 18 },
+  mcpNote: { marginTop: 12, marginBottom: 4, fontSize: 11 },
   billingActions: { marginBottom: 14 },
   timezoneList: { gap: 10 },
   timezoneRow: {

@@ -316,6 +316,17 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 }
 
 /**
+ * Clerk user id → local users row (JIT-provisioned exactly like requireAuth),
+ * for callers that authenticate with something other than an app session —
+ * e.g. an OAuth access token on the MCP agent feed (routes/mcp.ts).
+ */
+export async function resolveDbUserByClerkId(clerkUserId: string) {
+  const identity = await resolveClerkIdentity(clerkUserId);
+  if (!identity) return null;
+  return jitProvisionUser(identity);
+}
+
+/**
  * Admin-only gate — must follow requireAuth in the middleware chain.
  */
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {

@@ -13,6 +13,7 @@ import {
 } from "./middlewares/clerkProxyMiddleware.js";
 import { logger } from "./lib/logger.js";
 import router from "./routes/index.js";
+import { authServerMetadata, protectedResourceMetadata } from "./routes/mcp.js";
 import { securityHeaders } from "./middlewares/securityHeaders.js";
 import { apiRateLimit } from "./middlewares/rateLimit.js";
 
@@ -179,6 +180,12 @@ if (clerkAuthEnabled) {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use("/api", router);
+
+// ── OAuth discovery for the MCP agent feed (routes/mcp.ts) ───────────────────
+// Must be registered before the SPA catch-all below. Return 404 unless
+// MCP_ENABLED=true. The Cloudflare Worker forwards these paths too.
+app.get(/^\/\.well-known\/oauth-protected-resource(\/.*)?$/, protectedResourceMetadata);
+app.get("/.well-known/oauth-authorization-server", (req, res) => void authServerMetadata(req, res));
 
 // ── Static web app (single-domain deployment) ────────────────────────────────
 if (fs.existsSync(webDistDir)) {

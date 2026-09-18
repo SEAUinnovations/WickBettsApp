@@ -58,12 +58,14 @@ export async function requireActiveSubscription(req: Request, res: Response, nex
 // Community/News/Market/Trade Reviews stay on "any active plan" as before.
 const SIGNALS_FEED_PLANS = ["signals", "mentorship"] as const;
 
-export async function requireSignalsPlan(req: Request, res: Response, next: () => void) {
-  const user = req.dbUser!;
-  if (user.role === "admin") {
-    next();
-    return;
-  }
+export type SignalsPlanStatus = "ok" | "SUBSCRIPTION_REQUIRED" | "SIGNALS_PLAN_REQUIRED";
+
+/**
+ * Entitlement check behind requireSignalsPlan, exported so non-Express
+ * callers (the MCP agent feed, routes/mcp.ts) use the exact same rule.
+ */
+export async function signalsPlanStatus(user: { id: string; role: string }): Promise<SignalsPlanStatus> {
+  if (user.role === "admin") return "ok";
 
   const subs = await db
     .select()
@@ -81,12 +83,20 @@ export async function requireSignalsPlan(req: Request, res: Response, next: () =
   const hasAnyEntitledSub = subs.some(isEntitled);
   const hasSignalsPlan = subs.some((s) => (SIGNALS_FEED_PLANS as readonly string[]).includes(s.plan) && isEntitled(s));
 
-  if (hasSignalsPlan) {
+  if (hasSignalsPlan) return "ok";
+  return hasAnyEntitledSub ? "SIGNALS_PLAN_REQUIRED" : "SUBSCRIPTION_REQUIRED";
+}
+
+export async function requireSignalsPlan(req: Request, res: Response, next: () => void) {
+  const user = req.dbUser!;
+  const status = await signalsPlanStatus(user);
+
+  if (status === "ok") {
     next();
     return;
   }
 
-  if (!hasAnyEntitledSub) {
+  if (status === "SUBSCRIPTION_REQUIRED") {
     logger.warn({ userId: user.id }, "Signals gate blocked access — no active or grace-period subscription");
     res.status(403).json({ error: "Active subscription required", code: "SUBSCRIPTION_REQUIRED" });
     return;
@@ -144,7 +154,7 @@ router.get("/", requireAuth, requireSignalsPlan, async (req: Request, res: Respo
 // (member feed excludes Watching; admin sees everything) rather than a
 // second query, so admins and members see stats consistent with the rows
 // they're actually looking at.
-function computeScoreboardStats(rows: { status: string; resultTag: string }[]) {
+export function computeScoreboardStats(rows: { status: string; resultTag: string }[]) {
   const decided = rows.filter((s) => s.resultTag === "Green" || s.resultTag === "Missed");
   const green = decided.filter((s) => s.resultTag === "Green").length;
   const missed = decided.length - green;

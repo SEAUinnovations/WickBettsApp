@@ -14,7 +14,13 @@ function isClerkProxy(pathname) {
 }
 
 function shouldProxy(pathname) {
-  return pathname === '/healthz' || pathname.startsWith('/api/');
+  return (
+    pathname === '/healthz' ||
+    pathname.startsWith('/api/') ||
+    // OAuth discovery for the MCP agent feed (api-server routes/mcp.ts)
+    pathname.startsWith('/.well-known/oauth-protected-resource') ||
+    pathname === '/.well-known/oauth-authorization-server'
+  );
 }
 
 async function proxyToClerk(request, env) {

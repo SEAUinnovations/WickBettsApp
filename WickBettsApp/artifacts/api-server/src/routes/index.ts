@@ -13,6 +13,7 @@ import tradeReviewsRouter from "./tradeReviews.js";
 import supportRouter from "./support.js";
 import referralsRouter from "./referrals.js";
 import notificationsRouter from "./notifications.js";
+import mcpRouter from "./mcp.js";
 import "../services/signalScanner.js"; // self-starting scheduler(s), side-effect import only — swing/LEAPS (2-day) + day-trade (daily)
 import "../services/emailDigestScheduler.js"; // self-starting weekly ops digest, side-effect import only
 import "../services/referralRewardScheduler.js"; // self-starting referral credit issuance, side-effect import only
@@ -33,5 +34,6 @@ router.use("/trade-reviews", tradeReviewsRouter);
 router.use("/support", supportRouter);
 router.use("/referrals", referralsRouter);
 router.use("/notifications", notificationsRouter);
+router.use("/mcp", mcpRouter); // AI-agent signal feed (MCP) — see routes/mcp.ts
 
 export default router;
