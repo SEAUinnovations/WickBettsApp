@@ -880,33 +880,46 @@ export function sampleArr<T>(arr: T[], n: number): T[] {
 // ── Broker / platform onboarding links ──────────────────────────────────────
 // Shown at the end of every lesson and arcade game as a "here's where to
 // actually do this" pointer once the member has learned the material. These
-// are plain outbound links to each company's own official site — WickBetts
-// doesn't operate, embed, or get a cut of any signup here, and none of this
-// is a recommendation or personalized advice; see BrokerLinksCard.tsx for
-// the disclaimer shown alongside them.
-export type BrokerCategory = 'stocks-options' | 'crypto' | 'funded';
+// are outbound links to each company's own site — WickBetts doesn't operate
+// or embed any of them, and none of this is personalized advice. Entries
+// marked `partner: true` are WickBetts referral links (WickBetts may earn a
+// commission); BrokerLinksCard.tsx labels them "Partner" and discloses that.
+export type BrokerCategory = 'stocks-options' | 'crypto' | 'forex' | 'funded';
 
 export interface BrokerLink {
   name: string;
   blurb: string;
   url: string;
+  /** Company's own domain — used only to fetch its logo (see lib/brokerLogos.ts). */
+  domain: string;
+  /** WickBetts referral/partner link — shown with a "Partner" tag and commission disclosure. */
+  partner?: boolean;
 }
 
 export const BROKER_LINKS: Record<BrokerCategory, BrokerLink[]> = {
   'stocks-options': [
-    { name: 'Robinhood', blurb: 'Commission-free stocks, ETFs, and options.', url: 'https://robinhood.com' },
-    { name: 'Webull', blurb: 'Stocks, ETFs, and options with deeper charting tools.', url: 'https://www.webull.com' },
+    { name: 'Robinhood', blurb: 'Commission-free stocks, ETFs, and options.', url: 'https://robinhood.com', domain: 'robinhood.com' },
+    { name: 'Webull', blurb: 'Stocks, ETFs, and options with deeper charting tools.', url: 'https://www.webull.com', domain: 'webull.com' },
   ],
   crypto: [
-    { name: 'Coinbase', blurb: 'A regulated, beginner-friendly exchange to buy your first crypto.', url: 'https://www.coinbase.com' },
-    { name: 'Phantom', blurb: 'A self-custody wallet for Solana and other chains.', url: 'https://phantom.com' },
-    { name: 'MetaMask', blurb: 'The most widely used self-custody wallet for Ethereum and EVM chains.', url: 'https://metamask.io' },
+    { name: 'Coinbase', blurb: 'A regulated, beginner-friendly exchange to buy your first crypto.', url: 'https://www.coinbase.com', domain: 'coinbase.com' },
+    { name: 'Phantom', blurb: 'A self-custody wallet for Solana and other chains.', url: 'https://phantom.com', domain: 'phantom.com' },
+    { name: 'MetaMask', blurb: 'The most widely used self-custody wallet for Ethereum and EVM chains.', url: 'https://metamask.io', domain: 'metamask.io' },
+  ],
+  forex: [
+    {
+      name: 'Genesis FX Markets',
+      blurb: 'Forex and CFD trading on the TradeLocker platform. WickBetts partner.',
+      url: 'https://dashboard.genesisfxmarkets.com/auth/register?ref=GFX11D25B98',
+      domain: 'genesisfxmarkets.com',
+      partner: true,
+    },
   ],
   funded: [
-    { name: 'Topstep', blurb: 'The original futures funded-account evaluation.', url: 'https://www.topstep.com' },
-    { name: 'Lucid Trading Co', blurb: 'A futures prop firm known for fast payouts.', url: 'https://lucidtrading.com' },
-    { name: 'TakeProfitTrader', blurb: 'A trader-first futures prop firm, often shortened to TPT.', url: 'https://takeprofittrader.com' },
-    { name: 'Tradeify', blurb: 'A futures prop firm with instant-funding options.', url: 'https://tradeify.co' },
+    { name: 'Topstep', blurb: 'The original futures funded-account evaluation.', url: 'https://www.topstep.com', domain: 'topstep.com' },
+    { name: 'Lucid Trading Co', blurb: 'A futures prop firm known for fast payouts.', url: 'https://lucidtrading.com', domain: 'lucidtrading.com' },
+    { name: 'TakeProfitTrader', blurb: 'A trader-first futures prop firm, often shortened to TPT.', url: 'https://takeprofittrader.com', domain: 'takeprofittrader.com' },
+    { name: 'Tradeify', blurb: 'A futures prop firm with instant-funding options.', url: 'https://tradeify.co', domain: 'tradeify.co' },
   ],
 };
 
@@ -914,7 +927,10 @@ export const BROKER_LINKS: Record<BrokerCategory, BrokerLink[]> = {
  * Which broker/firm group(s) to show for a module's specialization.
  *   - stocks & options -> Robinhood / Webull
  *   - crypto -> Coinbase / Phantom / MetaMask
- *   - futures & funded -> Topstep / Lucid / TakeProfitTrader / Tradeify
+ *   - futures & funded -> Genesis FX Markets (forex, partner link) first,
+ *     then Topstep / Lucid / TakeProfitTrader / Tradeify. The Funded track
+ *     is also where the forex lot-size/leverage lessons live, so the forex
+ *     group rides along with it.
  *     (this app's own Funded Accounts track is entirely futures-evaluation
  *     content, so futures and funded share one group rather than splitting
  *     out a separate plain-futures-broker list nobody asked for)
@@ -924,6 +940,6 @@ export const BROKER_LINKS: Record<BrokerCategory, BrokerLink[]> = {
 export function brokerCategoriesForSpecialization(spec: Specialization | undefined): BrokerCategory[] {
   if (spec === 'stocks' || spec === 'options') return ['stocks-options'];
   if (spec === 'crypto') return ['crypto'];
-  if (spec === 'funded' || spec === 'futures') return ['funded'];
-  return ['stocks-options', 'crypto', 'funded'];
+  if (spec === 'funded' || spec === 'futures') return ['forex', 'funded'];
+  return ['stocks-options', 'crypto', 'forex', 'funded'];
 }

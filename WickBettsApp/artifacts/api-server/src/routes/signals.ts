@@ -8,6 +8,7 @@ import { fanOutSignalEmail, fanOutNewsEmail } from "../utils/emailNotifications.
 import { requireAuth, requireAdmin } from "../middlewares/requireAuth.js";
 import { resolveLogoUrl } from "./market.js";
 import { verifySignalMove, SCOREBOARD_TARGET_PERCENT } from "../services/signalScoreboard.js";
+import { buildBrokerLinks } from "../services/brokerLinks.js";
 
 export async function requireActiveSubscription(req: Request, res: Response, next: () => void) {
   const user = req.dbUser!;
@@ -122,7 +123,18 @@ router.get("/", requireAuth, requireSignalsPlan, async (req: Request, res: Respo
   // lookup (see resolveLogoUrl in routes/market.ts) that should reflect
   // whatever the live ticker/logo mapping knows right now, not whatever it
   // knew at signal-creation time.
-  const signals = rows.map((s) => ({ ...s, logoUrl: resolveLogoUrl(s.asset) }));
+  //
+  // brokerLinks: plain "open this ticker on Webull/Robinhood" links for
+  // Active stock/crypto/options calls (see services/brokerLinks.ts). Only
+  // on this Signals-plan feed — not on /community-starred — so the feature
+  // stays part of the Signals and Mentorship plans.
+  const signals = await Promise.all(
+    rows.map(async (s) => ({
+      ...s,
+      logoUrl: resolveLogoUrl(s.asset),
+      brokerLinks: await buildBrokerLinks(s),
+    }))
+  );
   res.json({ signals, stats: computeScoreboardStats(rows) });
 });
 

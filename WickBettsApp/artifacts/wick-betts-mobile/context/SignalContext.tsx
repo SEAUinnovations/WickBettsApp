@@ -25,6 +25,12 @@ export type SignalStyle = 'Day Trade' | 'Swing' | 'Buy & Hold' | 'LEAPS';
  *  server-side). 'Green' means the underlying moved 20%+ in the called
  *  direction since entry, confirmed either automatically or by an admin. */
 export type SignalResultTag = 'Pending' | 'Green' | 'Missed';
+export type BrokerId = 'webull' | 'robinhood';
+export interface BrokerLink {
+  broker: BrokerId;
+  label: string;
+  url: string;
+}
 
 export interface Signal {
   id: string;
@@ -68,6 +74,8 @@ export interface Signal {
   newsAlertNote?: string;
   /** Best-effort logo image URL for `asset`, resolved server-side; null/absent falls back to an initials badge. */
   logoUrl?: string | null;
+  /** Outbound "open this ticker on your broker" links (Active stock/crypto/options only; server-built — see api-server services/brokerLinks.ts). Never a prefilled order. */
+  brokerLinks?: BrokerLink[];
   /** Admin-curated "featured in Community" flag — shows in the Community tab's Signals feed for every member (capped at 4 at once server-side). Distinct from `newsAlert`. */
   communityStarred?: boolean;
   /** Scoreboard tag — see SignalResultTag above. Defaults 'Pending' server-side; optional here so creating a signal never has to specify it. */
@@ -135,6 +143,7 @@ interface ApiSignal {
   newsAlert?: boolean;
   newsAlertNote?: string;
   logoUrl?: string | null;
+  brokerLinks?: BrokerLink[];
   communityStarred?: boolean;
   resultTag?: string;
   resultSource?: string | null;
@@ -216,6 +225,7 @@ function mapApiSignal(s: ApiSignal): Signal {
     newsAlert: s.newsAlert,
     newsAlertNote: s.newsAlertNote,
     logoUrl: s.logoUrl,
+    brokerLinks: s.brokerLinks ?? [],
     communityStarred: s.communityStarred,
     resultTag: (s.resultTag as SignalResultTag) ?? 'Pending',
     resultSource: s.resultSource,

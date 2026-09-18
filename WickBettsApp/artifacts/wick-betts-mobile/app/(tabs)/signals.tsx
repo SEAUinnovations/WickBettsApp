@@ -5,6 +5,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Card, Header, Metric, Screen, SectionLabel, Tag } from '@/components/WickUI';
 import { TickerIcon } from '@/components/TickerIcon';
+import { TradeOnBroker } from '@/components/TradeOnBroker';
 import { LapsedRecovery, SubscribePanel, UpgradeSignalsButton } from '@/components/Billing';
 import { useColors } from '@/hooks/useColors';
 import { useAuth, type Plan } from '@/context/AuthContext';
@@ -534,6 +535,9 @@ function SignalCard({
       {!signal.stop && signal.style === 'Buy & Hold' ? (
         <Text style={[styles.noStopNote, { color: colors.mutedForeground }]}>No hard stop — long-term thesis, not a swing trade.</Text>
       ) : null}
+      {/* Renders nothing unless the API attached brokerLinks (Active,
+          non-futures stock/crypto/options signals only). */}
+      <TradeOnBroker signal={signal} />
       {expanded ? (
         <>
           {signal.isOption ? <Greeks signal={signal} /> : null}
